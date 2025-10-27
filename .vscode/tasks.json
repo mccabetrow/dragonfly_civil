@@ -37,6 +37,35 @@
         "--dry-run"
       ],
       "problemMatcher": []
+    },
+    {
+      "label": "Publish: Validate & Push (Fork)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/publish.ps1"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Publish: Validate & Push (Origin)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/publish.ps1",
+        "-Origin"
+      ],
+      "problemMatcher": []
     }
   ]
 }
