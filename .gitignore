@@ -1,0 +1,11 @@
+# runtime & temp
+logs/
+supabase/.temp/
+
+# generated artifacts
+data/simplicity_status_export.csv
+
+# OS/venv
+*.log
+.venv/
+.DS_Store
