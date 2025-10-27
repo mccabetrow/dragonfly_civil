@@ -1,0 +1,4 @@
+case_number,case_status,court_name,county,state,filing_date,judgment_date,judgment_amount,judgment_balance,party_role,party_type,party_name,party_phone,contact_type,party_email
+NY12345-2023,open,New York Supreme Court,Queens,NY,01/05/2023,03/15/2023,12500.00,8200.50,judgment debtor,individual,John A. Doe,(718) 555-0111,phone,john.doe@example.com
+NY54321-2022,enforcement_pending,Kings County Civil Court,Kings,NY,09/18/2022,11/01/2022,9800.50,4500.00,judgment debtor,individual,Maria-Luisa Gomez,,email,maria.gomez@example.com
+CA99887-2021,closed,Los Angeles Superior Court,Los Angeles,CA,03/22/2021,07/10/2021,3500.00,0.00,garnishee,business,Riverside Holdings LLC,(213) 555-7788,phone,collections@riversideholdings.com

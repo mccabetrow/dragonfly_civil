@@ -1,0 +1,10 @@
+# Core ETL dependencies
+# psycopg v3 (psycopg[binary]) is preferred; keep psycopg2-binary temporarily for compatibility
+psycopg[binary]
+psycopg2-binary
+pandas
+python-dotenv
+phonenumbers
+typer
+pydantic<2
+loguru

@@ -1,0 +1,3 @@
+LeadID,LeadSource,Court,IndexNumber,CaseType,JudgmentDate,JudgmentAmount,Status,County,State,PlaintiffName,PlaintiffAddress,DefendantName,DefendantAddress,Phone,Email,BestContactMethod,AssignedAgent
+101,Import,Queens Supreme Court,QSC-2023-1234,Civil,03/15/2023,15000.00,Open,Queens,NY,ABC Collections,"123 Main St, Queens, NY",Jane Doe,"456 Oak Ave, Queens, NY",(718) 555-1111,jane.doe@example.com,Phone,Agent X
+102,Import,Kings County Court,KC-2022-5678,Small Claims,11/22/2022,4500.50,Closed,Kings,NY,XYZ Recovery,"789 Court St, Brooklyn, NY",John Smith,"321 Pine Rd, Brooklyn, NY",,,Email,Agent Y

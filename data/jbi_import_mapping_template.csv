@@ -1,0 +1,16 @@
+source,target,transform,required
+case_number,case.case_number,normalize_docket,1
+case_status,case.case_status,,0
+court_name,case.court_name,,0
+county,case.county,,1
+state,case.state,,1
+filing_date,case.filing_date,to_date:%m/%d/%Y,0
+judgment_date,judgment.judgment_date,to_date:%m/%d/%Y,1
+judgment_amount,judgment.amount_awarded,,1
+judgment_balance,judgment.amount_remaining,,0
+party_role,party.party_role,,1
+party_type,party.party_type,,1
+party_name,party.name_full,namecase,1
+party_phone,contact.contact_value,normalize_phone,0
+contact_type,contact.contact_type,,0
+party_email,contact.contact_value,,0

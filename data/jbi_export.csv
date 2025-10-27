@@ -1,0 +1,4 @@
+LeadID,LeadSource,Court,IndexNumber,CaseType,JudgmentDate,JudgmentAmount,Status,County,State,PlaintiffName,PlaintiffAddress,DefendantName,DefendantAddress,Phone,Email,BestContactMethod,AssignedAgent
+1,Import,SF Superior Court,CGC-21-123456,Civil,01/15/2023,12500.00,Open,San Francisco,CA,Acme Collections,"123 Market St, San Francisco, CA",John Doe,"456 Pine St, San Francisco, CA",(415) 555-1234,john.doe@example.com,Phone,Agent A
+2,Import,LA Superior Court,21STCV45678,Civil,03/22/2022,9800.50,Enforcement Pending,Los Angeles,CA,Bay Financial,"10 Ocean Blvd, Los Angeles, CA",Mary Smith,"44 Sunset Ave, Los Angeles, CA",,mary.smith@example.com,Email,Agent B
+3,Import,Riverside Superior Court,XYZ-998877,Small Claims,06/05/2021,3500.00,Closed,Riverside,CA,Capital Recovery,"88 Mission Rd, Riverside, CA",Jose Garcia,"12 Palm St, Riverside, CA",(951) 555-8888,,Phone,Agent A
