@@ -1,0 +1,42 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Simplicity: Full Validation",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "validate_simplicity"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Simplicity: Export",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "etl.sync_simplicity",
+        "export",
+        "--out",
+        "data/simplicity_status_export.csv"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Simplicity: Import (Dry-Run)",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "etl.sync_simplicity",
+        "import",
+        "--file",
+        "data/simplicity_export.csv",
+        "--dry-run"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

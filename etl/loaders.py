@@ -67,12 +67,13 @@ JUDGMENT_UPSERT_SQL = """
         %(amount_remaining)s, %(interest_rate)s, %(judgment_type)s, %(judgment_status)s,
         %(renewal_date)s, %(expiration_date)s, %(notes)s, %(metadata)s, %(ingestion_run_id)s
     )
-    ON CONFLICT (case_id, judgment_date, amount_awarded) DO UPDATE SET
+    ON CONFLICT (case_id, judgment_date, amount_awarded)
+    WHERE amount_awarded IS NOT NULL DO UPDATE SET
         judgment_number = COALESCE(EXCLUDED.judgment_number, judgments.judgments.judgment_number),
         amount_remaining = COALESCE(EXCLUDED.amount_remaining, judgments.judgments.amount_remaining),
         interest_rate = COALESCE(EXCLUDED.interest_rate, judgments.judgments.interest_rate),
         judgment_type = COALESCE(EXCLUDED.judgment_type, judgments.judgments.judgment_type),
-    judgment_status = COALESCE(EXCLUDED.judgment_status, judgments.judgments.judgment_status),
+        judgment_status = COALESCE(EXCLUDED.judgment_status, judgments.judgments.judgment_status),
         renewal_date = COALESCE(EXCLUDED.renewal_date, judgments.judgments.renewal_date),
         expiration_date = COALESCE(EXCLUDED.expiration_date, judgments.judgments.expiration_date),
         notes = COALESCE(EXCLUDED.notes, judgments.judgments.notes),
@@ -102,8 +103,9 @@ PARTY_UPSERT_SQL = """
         %(address_line1)s, %(address_line2)s, %(city)s, %(state)s, %(zip)s,
         %(phone)s, %(email)s, %(metadata)s, %(ingestion_run_id)s
     )
-    ON CONFLICT (case_id, party_role, name_normalized) DO UPDATE SET
-    party_type = COALESCE(EXCLUDED.party_type, judgments.parties.party_type),
+    ON CONFLICT (case_id, party_role, name_normalized)
+    WHERE party_role IS NOT NULL AND name_normalized IS NOT NULL DO UPDATE SET
+        party_type = COALESCE(EXCLUDED.party_type, judgments.parties.party_type),
         is_business = EXCLUDED.is_business,
         name_full = COALESCE(EXCLUDED.name_full, judgments.parties.name_full),
         name_first = COALESCE(EXCLUDED.name_first, judgments.parties.name_first),
@@ -141,7 +143,8 @@ CONTACT_UPSERT_SQL = """
         %(is_verified)s, %(is_primary)s, %(source)s, %(last_verified_at)s,
         %(notes)s, %(metadata)s, %(ingestion_run_id)s
     )
-    ON CONFLICT (party_id, contact_type, contact_value) DO UPDATE SET
+    ON CONFLICT (party_id, contact_type, contact_value)
+    WHERE contact_type IS NOT NULL AND contact_value IS NOT NULL DO UPDATE SET
         contact_label = COALESCE(EXCLUDED.contact_label, judgments.contacts.contact_label),
         is_verified = EXCLUDED.is_verified,
         is_primary = EXCLUDED.is_primary,
