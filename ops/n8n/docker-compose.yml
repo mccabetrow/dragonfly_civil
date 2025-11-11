@@ -1,0 +1,31 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${N8N_DB_POSTGRESDB_DATABASE}
+      POSTGRES_USER: ${N8N_DB_POSTGRESDB_USER}
+      POSTGRES_PASSWORD: ${N8N_DB_POSTGRESDB_PASSWORD}
+    volumes:
+      - n8n_db:/var/lib/postgresql/data
+  n8n:
+    image: n8nio/n8n:latest
+    ports: ["${N8N_PORT}:5678"]
+    env_file: .env
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PROTOCOL=http
+      - N8N_PORT=${N8N_PORT}
+      - GENERIC_TIMEZONE=UTC
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_DATABASE=${N8N_DB_POSTGRESDB_DATABASE}
+      - DB_POSTGRESDB_HOST=${N8N_DB_POSTGRESDB_HOST}
+      - DB_POSTGRESDB_PORT=${N8N_DB_POSTGRESDB_PORT}
+      - DB_POSTGRESDB_USER=${N8N_DB_POSTGRESDB_USER}
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_POSTGRESDB_PASSWORD}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on: [db]
+volumes:
+  n8n_db: {}
+  n8n_data: {}

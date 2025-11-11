@@ -15,16 +15,6 @@
       "label": "ETL: Dry-run (sample)",
       "type": "shell",
       "command": "python -m etl.jbi_import --file .\\data\\jbi_export_valid_sample.csv --dry-run --limit 5"
-    },
-    {
-      "label": "Sync: Import from Simplicity",
-      "type": "shell",
-      "command": "python -m etl.sync_simplicity --direction import --since 24h --dry-run --limit 50 --file .\\data\\simplicity_export.csv"
-    },
-    {
-      "label": "Sync: Export status to Simplicity",
-      "type": "shell",
-      "command": "python -m etl.sync_simplicity --direction export --since 24h --out .\\data\\simplicity_status_export.csv"
     }
   ]
 }

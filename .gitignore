@@ -9,3 +9,5 @@ data/simplicity_status_export.csv
 *.log
 .venv/
 .DS_Store
+.env
+__pycache__/

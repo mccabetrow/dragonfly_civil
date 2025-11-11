@@ -2,70 +2,122 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Simplicity: Full Validation",
-      "type": "shell",
-      "command": "python",
-      "args": [
-        "-m",
-        "validate_simplicity"
-      ],
-      "problemMatcher": []
-    },
-    {
-      "label": "Simplicity: Export",
-      "type": "shell",
-      "command": "python",
-      "args": [
-        "-m",
-        "etl.sync_simplicity",
-        "export",
-        "--out",
-        "data/simplicity_status_export.csv"
-      ],
-      "problemMatcher": []
-    },
-    {
-      "label": "Simplicity: Import (Dry-Run)",
-      "type": "shell",
-      "command": "python",
-      "args": [
-        "-m",
-        "etl.sync_simplicity",
-        "import",
-        "--file",
-        "data/simplicity_export.csv",
-        "--dry-run"
-      ],
-      "problemMatcher": []
-    },
-    {
-      "label": "Publish: Validate & Push (Fork)",
+      "label": "DB: Push",
       "type": "shell",
       "command": "powershell",
       "args": [
-        "-NoLogo",
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "scripts/publish.ps1"
+        "scripts/bootstrap.ps1",
+        "-Mode",
+        "push"
       ],
-      "problemMatcher": []
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
-      "label": "Publish: Validate & Push (Origin)",
+      "label": "DB: Preflight",
       "type": "shell",
       "command": "powershell",
       "args": [
-        "-NoLogo",
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "scripts/publish.ps1",
-        "-Origin"
+        "scripts/preflight.ps1"
       ],
-      "problemMatcher": []
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "REST: Reload",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/bootstrap.ps1",
+        "-Mode",
+        "reload"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Smoke: View",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/bootstrap.ps1",
+        "-Mode",
+        "smoke"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Insert: Case",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "etl.src.collector_v1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Insert: Composite",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "etl.src.collector_v1",
+        "--composite"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Tests: PyTest",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     }
   ]
 }

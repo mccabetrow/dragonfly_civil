@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import re
 import subprocess
 import sys
@@ -10,7 +11,9 @@ from typing import List, Tuple
 PY = sys.executable
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
-LOG = ROOT / f"validation_{datetime.now().strftime('%Y%m%d')}.txt"
+RUN_STARTED = datetime.now()
+LOG = ROOT / f"validation_{RUN_STARTED.strftime('%Y%m%d')}.txt"
+AUDIT = ROOT / "logs" / "validation_history.csv"
 
 STAGES: List[Tuple[str, bool, str]] = []
 
@@ -49,8 +52,40 @@ def write_log() -> None:
     print(f"[OK] Wrote {LOG}")
 
 
+def append_audit(passed: int, failed: int, rows_exported: int, inserted: int, updated: int, errors: int) -> None:
+    AUDIT.parent.mkdir(parents=True, exist_ok=True)
+    wrote_header = not AUDIT.exists()
+    with AUDIT.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        if wrote_header:
+            writer.writerow(["timestamp", "passed", "failed", "rows_exported", "inserted", "updated", "errors"])
+        writer.writerow(
+            [
+                datetime.utcnow().isoformat(),
+                passed,
+                failed,
+                rows_exported,
+                inserted,
+                updated,
+                errors,
+            ]
+        )
+    print(f"[OK] Appended audit row to {AUDIT}")
+
+
+def _parse_import_stats(output: str) -> Tuple[int, int, int]:
+    match = re.search(r"inserted=(\d+),\s*updated=(\d+),\s*errors=(\d+)", output.lower())
+    if not match:
+        return 0, 0, 0
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
 def main() -> int:
     exit_code = 0
+    rows_exported = 0
+    commit_inserted = 0
+    commit_updated = 0
+    commit_errors = 0
     try:
         # Stage: migrations
         try:
@@ -75,7 +110,9 @@ def main() -> int:
                 header_ok = lines[0].strip() == (
                     "LeadID,Status,UpdatedAt,Docket,County,State,JudgmentDate,Amount"
                 )
-                row_count_ok = len(lines) >= 3
+                total_rows = max(len(lines) - 1, 0)
+                row_count_ok = total_rows >= 2
+                rows_exported = total_rows
         mark("export", rc == 0 and header_ok and row_count_ok, f"file={out_csv}")
 
         # Stage: mapping
@@ -98,7 +135,6 @@ def main() -> int:
                 "import",
                 "--file",
                 "data/simplicity_export.csv",
-                "--dry-run",
             ],
             check=False,
         )
@@ -114,10 +150,13 @@ def main() -> int:
                 "import",
                 "--file",
                 "data/simplicity_export.csv",
+                "--commit",
             ],
             check=False,
         )
         commit_ok = rc == 0 and "errors=0" in out.lower()
+        if commit_ok:
+            commit_inserted, commit_updated, commit_errors = _parse_import_stats(out)
         mark("commit_import", commit_ok)
 
         # Stage: idempotency
@@ -129,6 +168,7 @@ def main() -> int:
                 "import",
                 "--file",
                 "data/simplicity_export.csv",
+                "--commit",
             ],
             check=False,
         )
@@ -157,6 +197,7 @@ def main() -> int:
         write_log()
         passed = sum(1 for _, ok, _ in STAGES if ok)
         failed = sum(1 for _, ok, _ in STAGES if not ok)
+        append_audit(passed, failed, rows_exported, commit_inserted, commit_updated, commit_errors)
         print(f"[SUMMARY] passed={passed} failed={failed}")
     if any(not ok for _, ok, _ in STAGES):
         exit_code = 1

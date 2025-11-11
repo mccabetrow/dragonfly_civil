@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS judgments.cases (
   case_number text,
   case_type text,
   case_status text,
-  case_url text,
   filing_date date,
   owner text,
   metadata jsonb,
@@ -64,7 +63,6 @@ CREATE TABLE IF NOT EXISTS judgments.judgments (
   judgment_status text DEFAULT 'unsatisfied',
   renewal_date date,
   expiration_date date,
-  notes text,
   metadata jsonb,
   ingestion_run_id uuid REFERENCES ingestion.runs(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now()
@@ -81,20 +79,8 @@ CREATE TABLE IF NOT EXISTS judgments.parties (
   party_role text,
   party_type text,
   name_full text,
-  name_first text,
-  name_last text,
-  name_business text,
   name_normalized text,
   address_raw text,
-  address_line1 text,
-  address_line2 text,
-  city text,
-  state text,
-  zip text,
-  is_business boolean DEFAULT false,
-  phone text,
-  email text,
-  metadata jsonb,
   created_at timestamptz DEFAULT now()
 );
 DO $$ BEGIN
@@ -115,8 +101,6 @@ CREATE TABLE IF NOT EXISTS judgments.contacts (
   is_verified boolean DEFAULT false,
   is_primary boolean DEFAULT false,
   source text,
-  last_verified_at timestamptz,
-  notes text,
   metadata jsonb,
   ingestion_run_id uuid REFERENCES ingestion.runs(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now()

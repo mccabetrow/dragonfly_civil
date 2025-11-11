@@ -118,9 +118,6 @@ CREATE TABLE IF NOT EXISTS judgments.cases (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_cases_state_county_docket
 	ON judgments.cases (state, county, docket_number);
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_cases_state_county_case
-	ON judgments.cases (state, county, case_number);
-
 CREATE INDEX IF NOT EXISTS ix_cases_external_id
 	ON judgments.cases (external_id);
 
@@ -197,10 +194,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_judgments_case_date_amount
 CREATE INDEX IF NOT EXISTS ix_judgments_case
 	ON judgments.judgments (case_id);
 
-DROP INDEX IF EXISTS judgments.ux_judgments_case_date_awarded;
-CREATE UNIQUE INDEX ux_judgments_case_date_awarded
-	ON judgments.judgments (case_id, judgment_date, amount_awarded);
-
 ALTER TABLE judgments.judgments
 	ADD COLUMN IF NOT EXISTS amount_awarded numeric(12, 2),
 	ADD COLUMN IF NOT EXISTS amount_remaining numeric(12, 2),
@@ -276,10 +269,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_parties_case_role_name
 
 CREATE INDEX IF NOT EXISTS ix_parties_case
 	ON judgments.parties (case_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_parties_case_partyrole_name
-	ON judgments.parties (case_id, party_role, name_normalized)
-	WHERE party_role IS NOT NULL AND name_normalized IS NOT NULL;
 
 ALTER TABLE judgments.parties
 	ADD COLUMN IF NOT EXISTS party_role text,

@@ -354,14 +354,23 @@ def _mapping_path() -> Path:
 @app.command("import")
 def import_command(
     file: Path = typer.Option(..., "--file", help="CSV file exported from Simplicity"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Rollback changes after processing"),
+    dry_run: bool = typer.Option(True, "--dry-run/--commit", help="Dry-run by default; use --commit to persist"),
     limit: Optional[int] = typer.Option(None, "--limit", help="Limit rows processed"),
+    i_understand: bool = typer.Option(
+        False,
+        "--i-understand",
+        help="Acknowledge irreversible writes when ENV=prod",
+    ),
 ) -> None:
     """Import Simplicity CSV into Dragonfly."""
     configure_logging()
     load_env()
     status_mapping = load_status_mapping(_mapping_path())
     conn = get_conn(get_pg_url())
+
+    env_name = (os.getenv("ENV") or os.getenv("ENVIRONMENT") or "").lower()
+    if not dry_run and env_name == "prod" and not i_understand:
+        raise RuntimeError("Refusing to commit without --i-understand flag in prod")
 
     try:
         stats = run_import(file, status_mapping, conn, dry_run, limit)

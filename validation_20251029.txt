@@ -1,0 +1,8 @@
+VALIDATION RUN 2025-10-29T14:39:56.867195
+[PASS] migrations - supabase CLI not found - assuming applied
+[PASS] export - file=C:\Users\mccab\dragonfly_civil\data\simplicity_status_export.csv
+[PASS] mapping
+[PASS] dry_run
+[PASS] commit_import
+[PASS] idempotency - re-import inserted=0
+[PASS] tasks - tasks.json present

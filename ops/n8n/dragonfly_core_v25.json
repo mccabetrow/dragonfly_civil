@@ -1,0 +1,517 @@
+{
+  "name": "Dragonfly Core v2.5",
+  "nodes": [
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "SUPABASE_REF",
+              "value": "abcd1234"
+            },
+            {
+              "name": "SUPABASE_SERVICE_ROLE_KEY",
+              "value": "TODO"
+            },
+            {
+              "name": "PDL_API_KEY",
+              "value": "TODO"
+            },
+            {
+              "name": "APOLLO_API_KEY",
+              "value": "TODO"
+            },
+            {
+              "name": "WHITEPAGES_API_KEY",
+              "value": "TODO"
+            },
+            {
+              "name": "LOB_API_KEY",
+              "value": "TODO"
+            },
+            {
+              "name": "TWILIO_SID",
+              "value": "TODO"
+            },
+            {
+              "name": "TWILIO_AUTH",
+              "value": "TODO"
+            },
+            {
+              "name": "POSTMARK_KEY",
+              "value": "TODO"
+            }
+          ],
+          "boolean": [
+            {
+              "name": "DRY_RUN",
+              "value": true
+            }
+          ]
+        }
+      },
+      "id": "0",
+      "name": "Secrets",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "triggerTimes": [
+          {
+            "mode": "everyHour",
+            "hourInterval": 1
+          }
+        ]
+      },
+      "id": "1",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const secrets = $json;\nconst supabaseRestUrl = `https://${secrets.SUPABASE_REF}.supabase.co/rest/v1`;\nconst supabaseRpcUrl = `${supabaseRestUrl}/rpc`;\nconst twilioAuthHeader = secrets.TWILIO_SID && secrets.TWILIO_AUTH\n  ? 'Basic ' + Buffer.from(`${secrets.TWILIO_SID}:${secrets.TWILIO_AUTH}`).toString('base64')\n  : '';\nconst queue = [{\n  collectorUrl: 'http://localhost:4000/source-collector',\n  supabaseRestUrl,\n  supabaseRpcUrl,\n  postgresConnection: secrets.POSTGRES_CONNECTION ?? '',\n  SUPABASE_SERVICE_ROLE_KEY: secrets.SUPABASE_SERVICE_ROLE_KEY,\n  PDL_API_KEY: secrets.PDL_API_KEY,\n  APOLLO_API_KEY: secrets.APOLLO_API_KEY,\n  WHITEPAGES_API_KEY: secrets.WHITEPAGES_API_KEY,\n  LOB_API_KEY: secrets.LOB_API_KEY,\n  TWILIO_SID: secrets.TWILIO_SID,\n  TWILIO_AUTH: secrets.TWILIO_AUTH,\n  TWILIO_AUTH_HEADER: twilioAuthHeader,\n  POSTMARK_KEY: secrets.POSTMARK_KEY,\n  DRY_RUN: secrets.DRY_RUN === undefined ? true : secrets.DRY_RUN\n}];\nreturn queue.map(item => ({ json: item }));"
+      },
+      "id": "2",
+      "name": "Build Source Queue",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        0,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"collectorUrl\"]}}",
+        "options": {
+          "timeout": 30
+        }
+      },
+      "id": "3",
+      "name": "HTTP Collector",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        240,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"supabaseRestUrl\"]}}/cases",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {
+          "timeout": 30
+        },
+        "bodyParametersJson": "{\n  \"status\": \"new\",\n  \"source\": \"n8n\",\n  \"payload\": {{ $json.data || {} }}\n}",
+        "headerParametersJson": "{\n  \"apikey\": \"{{ $json.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Authorization\": \"Bearer {{ $json.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Content-Profile\": \"judgments\",\n  \"Prefer\": \"return=representation\"\n}"
+      },
+      "id": "4",
+      "name": "Supabase Upsert (REST)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        480,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select case_id from judgments.cases order by created_at desc limit 10;"
+      },
+      "id": "5",
+      "name": "Postgres Select Recent Cases",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        720,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:4100/pdl",
+        "jsonParameters": true,
+        "headerParametersJson": "{\n  \"X-API-Key\": \"{{ $json.PDL_API_KEY }}\"\n}",
+        "bodyParametersJson": "{\n  \"case_id\": {{ $json.case_id }}\n}"
+      },
+      "id": "6",
+      "name": "HTTP PDL Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:4200/apollo",
+        "jsonParameters": true,
+        "headerParametersJson": "{\n  \"X-API-Key\": \"{{ $json.APOLLO_API_KEY }}\"\n}",
+        "bodyParametersJson": "{\n  \"case_id\": {{ $json.case_id }}\n}"
+      },
+      "id": "7",
+      "name": "HTTP Apollo Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:4300/whitepages",
+        "jsonParameters": true,
+        "headerParametersJson": "{\n  \"X-API-Key\": \"{{ $json.WHITEPAGES_API_KEY }}\"\n}",
+        "bodyParametersJson": "{\n  \"case_id\": {{ $json.case_id }}\n}"
+      },
+      "id": "8",
+      "name": "HTTP Whitepages Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "wait"
+      },
+      "id": "9",
+      "name": "Merge PDL & Apollo",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "wait"
+      },
+      "id": "10",
+      "name": "Merge Enrichment",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"supabaseRpcUrl\"]}}/upsert_enrichment_bundle",
+        "method": "POST",
+        "jsonParameters": true,
+        "headerParametersJson": "{\n  \"apikey\": \"{{ $json.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Authorization\": \"Bearer {{ $json.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Accept-Profile\": \"enrichment\"\n}",
+        "bodyParametersJson": "{{ $json }}"
+      },
+      "id": "11",
+      "name": "RPC upsert_enrichment_bundle",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update enrichment.collectability\n   set identity_score = 80,\n       contactability_score = 70,\n       asset_score = 65,\n       recency_amount_score = 50,\n       adverse_penalty = 0\n where case_id = {{ $json.case_id }}\n returning case_id, total_score, tier;"
+      },
+      "id": "12",
+      "name": "Postgres Update Scores",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2160,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "propertyName": "={{$json[\"tier\"]}}",
+        "dataType": "string",
+        "rules": [
+          {
+            "operation": "equal",
+            "value": "A"
+          },
+          {
+            "operation": "equal",
+            "value": "B"
+          },
+          {
+            "operation": "equal",
+            "value": "C"
+          }
+        ]
+      },
+      "id": "13",
+      "name": "Switch Tier Routing",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.DRY_RUN ? 'http://localhost:5100/lob' : 'https://api.lob.com/v1/letters' }}",
+        "jsonParameters": true,
+        "headerParametersJson": "{\n  \"Authorization\": \"Bearer {{ $json.LOB_API_KEY }}\"\n}",
+        "bodyParametersJson": "{\n  \"case_id\": {{ $json.case_id }},\n  \"tier\": {{ $json.tier }}\n}"
+      },
+      "id": "14",
+      "name": "HTTP Lob",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.DRY_RUN ? 'http://localhost:5100/twilio' : 'https://api.twilio.com/2010-04-01/Accounts/' + $json.TWILIO_SID + '/Messages.json' }}",
+        "jsonParameters": true,
+  "headerParametersJson": "{\n  \"Authorization\": \"{{ $json.DRY_RUN ? 'Dry-Run' : $json.TWILIO_AUTH_HEADER }}\"\n}",
+        "bodyParametersJson": "{\n  \"case_id\": {{ $json.case_id }},\n  \"tier\": {{ $json.tier }}\n}"
+      },
+      "id": "15",
+      "name": "HTTP Twilio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.DRY_RUN ? 'http://localhost:5100/postmark' : 'https://api.postmarkapp.com/email' }}",
+        "jsonParameters": true,
+        "headerParametersJson": "{\n  \"X-Postmark-Server-Token\": \"{{ $json.POSTMARK_KEY }}\"\n}",
+        "bodyParametersJson": "{\n  \"case_id\": {{ $json.case_id }},\n  \"tier\": {{ $json.tier }}\n}"
+      },
+      "id": "16",
+      "name": "HTTP Postmark",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        680
+      ]
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Secrets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Secrets": {
+      "main": [
+        [
+          {
+            "node": "Build Source Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Source Queue": {
+      "main": [
+        [
+          {
+            "node": "HTTP Collector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Collector": {
+      "main": [
+        [
+          {
+            "node": "Supabase Upsert (REST)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Upsert (REST)": {
+      "main": [
+        [
+          {
+            "node": "Postgres Select Recent Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Select Recent Cases": {
+      "main": [
+        [
+          {
+            "node": "HTTP PDL Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Apollo Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Whitepages Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP PDL Lookup": {
+      "main": [
+        [
+          {
+            "node": "Merge PDL & Apollo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Apollo Lookup": {
+      "main": [
+        [
+          {
+            "node": "Merge PDL & Apollo",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge PDL & Apollo": {
+      "main": [
+        [
+          {
+            "node": "Merge Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Whitepages Lookup": {
+      "main": [
+        [
+          {
+            "node": "Merge Enrichment",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Enrichment": {
+      "main": [
+        [
+          {
+            "node": "RPC upsert_enrichment_bundle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RPC upsert_enrichment_bundle": {
+      "main": [
+        [
+          {
+            "node": "Postgres Update Scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Update Scores": {
+      "main": [
+        [
+          {
+            "node": "Switch Tier Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Tier Routing": {
+      "main": [
+        [
+          {
+            "node": "HTTP Lob",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Twilio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Postmark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "regular"
+  },
+  "staticData": {},
+  "pinData": {},
+  "id": "DragonflyCoreV25",
+  "version": 2
+}

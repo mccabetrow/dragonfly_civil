@@ -1,0 +1,45 @@
+{
+  "name": "Insert Case With Entities",
+  "notes": "Requires SUPABASE_URL and SUPABASE_ANON_KEY environment variables configured in n8n.",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Insert Case With Entities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        600,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/rpc/insert_case_with_entities",
+        "responseFormat": "json",
+        "jsonParameters": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_ANON_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_ANON_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "bodyParametersJson": "{\n  \"payload\": {\n    \"case\": {\n      \"case_number\": \"SMOKE-COMPOSITE-001\",\n      \"source\": \"n8n\",\n      \"title\": \"Omega v. Sigma\",\n      \"court\": \"NYC Civil Court\",\n      \"amount_awarded\": 2500.00\n    },\n    \"entities\": [\n      {\n        \"role\":\"plaintiff\",\n        \"name_full\":\"Plaintiff One\",\n        \"emails\":[\"p1@example.com\"]\n      },\n      {\n        \"role\":\"defendant\",\n        \"name_full\":\"Defendant One\",\n        \"phones\":[\"555-0199\"]\n      }\n    ]\n  }\n}"
+      },
+      "notesInMarkdown": "This node calls Supabase's insert_case_with_entities RPC. Ensure SUPABASE_URL and SUPABASE_ANON_KEY are set as environment variables in n8n before running."
+    }
+  ],
+  "connections": {}
+}
