@@ -1,0 +1,10 @@
+{
+  "file": "watcher_test.csv",
+  "sha256": "49e070323d7934bf863485ec6edd44996a40b544145127e6cdca7b3e104cdbd4",
+  "row_count": 3,
+  "error": {
+    "message": "{'message': \"Could not find the 'filing_date' column of 'judgments' in the schema cache\", 'code': 'PGRST204', 'hint': None, 'details': None}",
+    "type": "APIError"
+  },
+  "created_at": "2025-11-13T20:02:45.386315+00:00"
+}

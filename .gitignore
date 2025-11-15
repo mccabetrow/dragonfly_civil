@@ -1,6 +1,9 @@
 # runtime & temp
 logs/
 supabase/.temp/
+etl/src/auth/session.json
+*.playwright/
+playwright/.auth/**
 
 # generated artifacts
 data/simplicity_status_export.csv

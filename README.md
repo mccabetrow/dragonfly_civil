@@ -1,104 +1,39 @@
-# Dragonfly
+# Dragonfly Quickstart
 
-Civil-judgment enforcement automation system.
+1. Activate a virtual environment:
+   - Windows: `python -m venv .venv && .\.venv\Scripts\Activate.ps1`
+   - macOS/Linux: `python -m venv .venv && source .venv/bin/activate`
+2. Install dependencies: `pip install -r requirements.txt`
+3. Copy `.env.example` to `.env` and fill in values (no quotes).
+4. Generate a session key if needed later:
+   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+5. Run the Supabase smoke test: `make smoke`
+6. Drop CSV files containing a `case_number` column into `data_in/`.
+7. Start the ingestion watcher: `make watcher`
+8. Watch the logs to confirm processing and Supabase uploads.
+9. Confirm processed files move to `data_processed/` (errors land in `data_error/`).
+10. Run `supabase db push` only when you add or change migrations.
 
-## Supabase Quickstart
+## n8n Workflow Stub
 
-1. **Activate virtualenv**
+1. Open the n8n editor and go to **Settings → Import**.
+2. Choose `n8n/flows/ingestion_stub.json` and import the workflow.
+3. Replace the placeholder Supabase URL and keys in the HTTP Request node with environment references or credentials (do not hard-code secrets).
+4. Set up n8n credentials for Supabase with the service role key and update the node to use them.
+5. Activate the workflow once your Supabase project values are configured.
 
-	```powershell
-	.\.venv\Scripts\Activate.ps1
-	```
+## Runbook: Handling `data_error/` Files
 
-2. **Load environment variables**
+- **Investigate**: Open the accompanying `.err.json` file in `data_error/` to review the failure reason and the chunk preview.
+- **Fix**: Correct the CSV source data (or adjust schema/transforms) so the problematic rows conform to expected types.
+- **Reprocess**: Delete the file’s SHA-256 entry from `state/manifest.jsonl`, place the corrected CSV back into `data_in/`, and rerun the watcher (or invoke `python judgment_ingestor/main.py --once --interval 0`).
+- **Verify**: Confirm the file moves to `data_processed/` and the manifest records the new hash.
 
-	```powershell
-	.\scripts\load_env.ps1
-	```
+## CI / One-Off Runs
 
-3. **Apply SQL (if needed) and reload PostgREST**
+- To process the current queue once in CI or a local pipeline without polling, run: `python judgment_ingestor/main.py --once --interval 0`
 
-	Paste any SQL directly into the Supabase SQL Editor, then reload the API:
+## Schema Changes Checklist
 
-	```powershell
-	$BASE=$env:SUPABASE_URL; $K=$env:SUPABASE_SERVICE_ROLE_KEY
-	Invoke-RestMethod -Method Post -Uri ($BASE.TrimEnd('/') + '/rest/v1/rpc/pgrst_reload') -Headers @{apikey=$K; Authorization="Bearer $K"} | Out-Null
-	```
-
-4. **Insert the demo composite bundle (idempotent)**
-
-	```powershell
-	python -m etl.src.collector_v1 --composite --use-idempotent-composite --case-number SMOKE-DEMO-0001
-	```
-
-5. **Tail the ingestion audit view**
-
-	```powershell
-	Invoke-RestMethod -Uri "$BASE/rest/v1/v_ingestion_runs?select=run_id,event,source_code,ref_id,created_at&limit=5" -Headers @{apikey=$K; Authorization="Bearer $K"}
-	```
-
-### Public REST surface toggle
-
-Set `USE_PUBLIC_WRAPPERS=true` to use `/rest/v1/public.v_*` plus public RPC wrappers (no dashboard changes required).
-Set `USE_PUBLIC_WRAPPERS=false` to call schema-backed endpoints directly (requires exposing schemas in Supabase API settings).
-
-## Front Door (Cases + Entities)
-
-**.env keys**
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_PROJECT_REF`
-
-**Link, push, reload**
-```bash
-supabase link --project-ref $SUPABASE_PROJECT_REF
-make db.push
-make reload
-```
-
-**Collector smoke insert**
-```bash
-python -m etl.collector_v1 --case --entity --composite
-```
-
-**Composite RPC (Python)**
-```bash
-python - <<'PY'
-import os, json, httpx, uuid
-from dotenv import load_dotenv
-
-load_dotenv()
-base = os.environ['SUPABASE_URL'].rstrip('/')
-key = os.environ['SUPABASE_ANON_KEY']
-headers = {
-	'apikey': key,
-	'Authorization': f'Bearer {key}',
-	'Content-Type': 'application/json',
-	'Prefer': 'return=representation',
-}
-case_number = f'SMOKE-COMPOSITE-{uuid.uuid4().hex[:6].upper()}'
-payload = {
-	'payload': {
-		'case': {
-			'case_number': case_number,
-			'source': 'python',
-			'title': 'Alpha v. Beta',
-			'court': 'NYC Civil Court',
-		},
-		'entities': [
-			{'role': 'plaintiff', 'name_full': 'Plaintiff One', 'emails': ['p1@example.com']},
-			{'role': 'defendant', 'name_full': 'Defendant One', 'phones': ['555-0100']},
-		],
-	}
-}
-resp = httpx.post(f"{base}/rest/v1/rpc/insert_case_with_entities", headers=headers, json=payload, timeout=30)
-resp.raise_for_status()
-print(json.dumps(resp.json(), indent=2))
-PY
-```
-
-**Composite RPC (n8n)**
-- Import `docs/n8n_insert_case_with_entities.json`
-- Configure env vars `SUPABASE_URL` and `SUPABASE_ANON_KEY`
-- Execute the HTTP Request node
+- Update column mappings or defaults in `config/schema_map.yaml` whenever the external CSV schema evolves.
+- Add corresponding Supabase migrations under `supabase/migrations/` (and `supabase/schema.sql` if needed) before pushing database changes.

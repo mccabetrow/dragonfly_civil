@@ -1,6 +1,7 @@
 import os
 import asyncio
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 from dotenv import load_dotenv
@@ -11,6 +12,9 @@ from .models import CaseIn
 load_dotenv()
 BASE = os.environ["SUPABASE_URL"].rstrip("/")
 ANON = os.environ["SUPABASE_ANON_KEY"]
+SERVICE_ROLE = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+logger = logging.getLogger(__name__)
 
 INSERT_CASE_URL = f"{BASE}/rest/v1/rpc/insert_case"
 INSERT_CASE_UPSERT_URL = f"{BASE}/rest/v1/rpc/insert_or_get_case"
@@ -19,6 +23,7 @@ INSERT_COMPOSITE_URL = f"{BASE}/rest/v1/rpc/insert_case_with_entities"
 INSERT_IDEMPOTENT_COMPOSITE_URL = (
     f"{BASE}/rest/v1/rpc/insert_or_get_case_with_entities"
 )
+QUEUE_JOB_URL = f"{BASE}/rest/v1/rpc/queue_job"
 CASES_VIEW_URL = f"{BASE}/rest/v1/v_cases_with_org"
 ENTITIES_VIEW_URL = f"{BASE}/rest/v1/v_entities_simple"
 
@@ -32,6 +37,15 @@ def _headers() -> Dict[str, str]:
         "Content-Type": "application/json",
         "Accept": "application/json",
         "Prefer": "return=representation",
+    }
+
+
+def _service_headers() -> Dict[str, str]:
+    return {
+        "apikey": SERVICE_ROLE,
+        "Authorization": f"Bearer {SERVICE_ROLE}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
     }
 
 
@@ -54,9 +68,15 @@ def _extract_value(data: Any, key: str) -> str:
     raise ValueError(f"Unexpected response payload: {data!r}")
 
 
-async def _post_json(url: str, json_payload: Dict[str, Any]) -> Any:
+async def _post_json(
+    url: str,
+    json_payload: Dict[str, Any],
+    *,
+    headers: Dict[str, str] | None = None,
+) -> Any:
+    request_headers = headers or _headers()
     async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(url, headers=_headers(), json=json_payload)
+        response = await client.post(url, headers=request_headers, json=json_payload)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:  # pragma: no cover - smoke helper
@@ -64,6 +84,40 @@ async def _post_json(url: str, json_payload: Dict[str, Any]) -> Any:
                 f"Supabase RPC {url.rsplit('/', 1)[-1]} failed: {exc.response.text}"
             ) from exc
         return response.json()
+
+
+async def _queue_job(kind: str, payload: Dict[str, Any], idempotency_key: str) -> int:
+    envelope = {
+        "kind": kind,
+        "payload": payload,
+        "idempotency_key": idempotency_key,
+    }
+    data = await _post_json(QUEUE_JOB_URL, {"payload": envelope}, headers=_service_headers())
+    if isinstance(data, dict):
+        msg_id = data.get("queue_job") or next(iter(data.values()), None)
+    else:
+        msg_id = data
+    if msg_id is None:
+        raise RuntimeError("Queue job RPC returned no message id")
+    return int(msg_id)
+
+async def _enqueue_enrich_job(
+    case_payload: Dict[str, Any],
+    case_id: str | None,
+) -> None:
+    case_number = case_payload.get("case_number")
+    if not case_number:
+        return
+    source = (case_payload.get("source") or "collector").lower()
+    idempotency_key = f"{source}:{case_number}"
+    try:
+        job_payload: Dict[str, Any] = {"case_number": case_number}
+        if case_id:
+            job_payload["case_id"] = case_id
+        msg_id = await _queue_job("enrich", job_payload, idempotency_key)
+        logger.info("Queued enrich job %s for case %s", msg_id, case_number)
+    except Exception as exc:
+        logger.warning("Failed to enqueue enrich job for %s: %s", case_number, exc)
 
 
 async def _fetch_case_record(case_number: str, source: str) -> Dict[str, Any] | None:
@@ -189,6 +243,8 @@ async def insert_case(case: CaseIn, force_insert: bool = False) -> tuple[str, st
     if not force_insert:
         status = await _determine_case_status(payload_json)
 
+    await _enqueue_enrich_job(payload_json, case_id)
+
     return case_id, status
 
 
@@ -204,11 +260,26 @@ async def insert_case_with_entities(
         INSERT_IDEMPOTENT_COMPOSITE_URL if idempotent else INSERT_COMPOSITE_URL
     )
     data = await _post_json(rpc_url, {"payload": payload})
+    case_payload = payload.get("case") if isinstance(payload, dict) else None
+    case_id: str | None = None
+
     if isinstance(data, dict):
+        try:
+            case_id = _extract_value(data, "case_id")
+        except ValueError:
+            case_id = None
+        if isinstance(case_payload, dict):
+            await _enqueue_enrich_job(case_payload, case_id)
         return data
     if isinstance(data, list) and data:
         first = data[0]
         if isinstance(first, dict):
+            try:
+                case_id = _extract_value(first, "case_id")
+            except ValueError:
+                case_id = None
+            if isinstance(case_payload, dict):
+                await _enqueue_enrich_job(case_payload, case_id)
             return first
     raise ValueError(f"Unexpected composite response payload: {data!r}")
 
@@ -300,6 +371,7 @@ async def do_case_only(case_number_override: str | None) -> None:
     case = make_smoke_case(case_number_override)
     case_id, status = await insert_case(case)
     print(f"{status} case_id:", case_id)
+    # enqueue as part of insert_case, no extra call needed
 
 
 async def main(

@@ -1,0 +1,10 @@
+version: "3.9"
+
+services:
+  collector:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./etl/src/auth:/app/etl/src/auth
+    command: ["python", "-m", "etl.src.collector_v2", "--dry-run"]

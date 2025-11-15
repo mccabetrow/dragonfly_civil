@@ -1,22 +1,26 @@
 param(
-  [string]$EnvFile = ".env"
+    [string]$EnvFile = "$PSScriptRoot/../.env"
 )
 
-if (!(Test-Path $EnvFile)) {
-  Write-Error "No .env found at $EnvFile"
-  exit 1
+if (-not (Test-Path -LiteralPath $EnvFile)) {
+    Write-Host "No .env file found at $EnvFile" -ForegroundColor Yellow
+    return
 }
 
-Get-Content $EnvFile | ForEach-Object {
-  if ($_ -match '^\s*#') { return }
-  if ($_ -match '^\s*$') { return }
-  if ($_ -match '^\s*([^=]+)\s*=\s*(.*)\s*$') {
-    $key = $matches[1].Trim()
-    $val = $matches[2].Trim().Trim("'`"").Trim()
-    if ($val -match '^(.*?)(\s+#.*)$') { $val = $matches[1].Trim() }
-    Set-Item -Path "Env:$key" -Value $val
-  }
-}
+Write-Host "Loading environment variables from $EnvFile" -ForegroundColor Cyan
 
-Write-Host "Loaded env: SUPABASE_PROJECT_REF=$($env:SUPABASE_PROJECT_REF)"
-Write-Host "Loaded env: SUPABASE_SERVICE_ROLE_KEY (length)=$($env:SUPABASE_SERVICE_ROLE_KEY.Length)"
+Get-Content -Path $EnvFile | ForEach-Object {
+    if (-not $_ -or $_.TrimStart().StartsWith('#')) { return }
+    $parts = $_ -split '=', 2
+    if ($parts.Count -ne 2) { return }
+    $key = $parts[0].Trim()
+    $value = $parts[1].Trim()
+    $value = $value.Trim("'")
+    $value = $value.Trim('"')
+    [Environment]::SetEnvironmentVariable($key, $value)
+    if ($key -match 'KEY|SECRET|PASS|TOKEN') {
+        Write-Host "  $key=***" -ForegroundColor Gray
+    } else {
+        Write-Host "  $key=$value" -ForegroundColor Gray
+    }
+}

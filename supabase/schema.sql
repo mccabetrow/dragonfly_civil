@@ -45,6 +45,7 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 CREATE EXTENSION IF NOT EXISTS "btree_gin";
+CREATE EXTENSION IF NOT EXISTS "pgmq";
 
 -- Schemas -----------------------------------------------------------------
 CREATE SCHEMA IF NOT EXISTS judgments;
@@ -417,4 +418,216 @@ CREATE TRIGGER trg_contacts_touch_updated
 	BEFORE UPDATE ON judgments.contacts
 	FOR EACH ROW
 	EXECUTE FUNCTION public.touch_updated_at();
+
+-- ========================================================================
+-- judgments.foil_responses
+-- ========================================================================
+CREATE TABLE IF NOT EXISTS judgments.foil_responses (
+	id            bigserial PRIMARY KEY,
+	case_id       uuid NOT NULL REFERENCES judgments.cases(case_id) ON DELETE CASCADE,
+	created_at    timestamptz NOT NULL DEFAULT timezone('utc', now()),
+	received_date date,
+	agency        text,
+	payload       jsonb NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_judgments_foil_responses_case_id
+	ON judgments.foil_responses (case_id);
+CREATE INDEX IF NOT EXISTS idx_judgments_foil_responses_agency_date
+	ON judgments.foil_responses (agency, received_date);
+
+ALTER TABLE judgments.foil_responses ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1
+		FROM pg_policies
+		WHERE schemaname = 'judgments'
+		  AND tablename = 'foil_responses'
+		  AND policyname = 'service_foil_responses_rw'
+	) THEN
+		CREATE POLICY service_foil_responses_rw ON judgments.foil_responses
+			FOR ALL
+			USING (auth.role() = 'service_role')
+			WITH CHECK (auth.role() = 'service_role');
+	END IF;
+END;
+$$;
+
+REVOKE ALL ON judgments.foil_responses FROM public;
+REVOKE ALL ON judgments.foil_responses FROM anon;
+REVOKE ALL ON judgments.foil_responses FROM authenticated;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON judgments.foil_responses TO service_role;
+
+DO $$
+BEGIN
+	IF EXISTS (
+		SELECT 1
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind = 'S'
+		  AND n.nspname = 'judgments'
+		  AND c.relname = 'foil_responses_id_seq'
+	) THEN
+		EXECUTE 'GRANT USAGE, SELECT ON SEQUENCE judgments.foil_responses_id_seq TO service_role';
+	END IF;
+END;
+$$;
+
+-- ========================================================================
+-- public.foil_responses
+-- ========================================================================
+CREATE OR REPLACE VIEW public.foil_responses AS
+SELECT
+	id,
+	case_id,
+	created_at,
+	received_date,
+	agency,
+	payload
+FROM judgments.foil_responses;
+
+REVOKE ALL ON public.foil_responses FROM public;
+REVOKE ALL ON public.foil_responses FROM anon;
+REVOKE ALL ON public.foil_responses FROM authenticated;
+GRANT SELECT ON public.foil_responses TO anon;
+GRANT SELECT ON public.foil_responses TO authenticated;
+GRANT SELECT ON public.foil_responses TO service_role;
+
+-- ========================================================================
+-- judgments.v_collectability_snapshot
+-- ========================================================================
+CREATE OR REPLACE VIEW judgments.v_collectability_snapshot AS
+WITH latest_enrichment AS (
+	SELECT
+		er.case_id,
+		er.created_at,
+		er.status,
+		ROW_NUMBER() OVER (
+			PARTITION BY er.case_id
+			ORDER BY er.created_at DESC, er.id DESC
+		) AS row_num
+	FROM judgments.enrichment_runs er
+)
+SELECT
+	c.case_id,
+	c.case_number,
+	c.amount_awarded AS judgment_amount,
+	c.judgment_date,
+	CASE
+		WHEN c.judgment_date IS NOT NULL THEN (CURRENT_DATE - c.judgment_date)
+		ELSE NULL
+	END AS age_days,
+	le.created_at AS last_enriched_at,
+	le.status AS last_enrichment_status,
+	CASE
+		WHEN COALESCE(c.amount_awarded, 0) >= 3000
+			 AND c.judgment_date IS NOT NULL
+			 AND (CURRENT_DATE - c.judgment_date) <= 365 THEN 'A'
+		WHEN (COALESCE(c.amount_awarded, 0) BETWEEN 1000 AND 2999)
+		  OR (c.judgment_date IS NOT NULL
+			  AND (CURRENT_DATE - c.judgment_date) BETWEEN 366 AND 1095)
+			THEN 'B'
+		ELSE 'C'
+	END AS collectability_tier
+FROM judgments.cases c
+LEFT JOIN latest_enrichment le ON le.case_id = c.case_id AND le.row_num = 1;
+
+GRANT SELECT ON judgments.v_collectability_snapshot TO service_role;
+
+-- ========================================================================
+-- public.v_collectability_snapshot
+-- ========================================================================
+CREATE OR REPLACE VIEW public.v_collectability_snapshot AS
+SELECT *
+FROM judgments.v_collectability_snapshot;
+
+REVOKE ALL ON public.v_collectability_snapshot FROM public;
+REVOKE ALL ON public.v_collectability_snapshot FROM anon;
+REVOKE ALL ON public.v_collectability_snapshot FROM authenticated;
+
+GRANT SELECT ON public.v_collectability_snapshot TO anon;
+GRANT SELECT ON public.v_collectability_snapshot TO authenticated;
+GRANT SELECT ON public.v_collectability_snapshot TO service_role;
+
+-- Ensure pgmq queues exist for the worker pipeline
+DO $$
+DECLARE
+	queue_name text;
+	queue_regclass text;
+BEGIN
+	FOR queue_name IN SELECT unnest(ARRAY['enrich', 'outreach', 'enforce']) LOOP
+		queue_regclass := format('pgmq.q_%I', queue_name);
+		IF to_regclass(queue_regclass) IS NOT NULL THEN
+			CONTINUE;
+		END IF;
+
+		BEGIN
+			PERFORM pgmq.create(queue_name);
+		EXCEPTION
+			WHEN undefined_function THEN
+				BEGIN
+					PERFORM pgmq.create_queue(queue_name);
+				EXCEPTION
+					WHEN undefined_function THEN
+						RAISE NOTICE 'pgmq.create and pgmq.create_queue unavailable; queue % not created', queue_name;
+						CONTINUE;
+					END;
+			WHEN others THEN
+				IF SQLSTATE IN ('42710', '42P07') THEN
+					CONTINUE;
+				ELSE
+					RAISE;
+				END IF;
+		END;
+
+		IF to_regclass(queue_regclass) IS NULL THEN
+			RAISE NOTICE 'Queue % still missing after create attempt', queue_name;
+		END IF;
+	END LOOP;
+END;
+$$;
+
+-- ========================================================================
+-- public.dequeue_job
+-- ========================================================================
+CREATE OR REPLACE FUNCTION public.dequeue_job(kind text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+	msg record;
+BEGIN
+	IF kind IS NULL OR length(trim(kind)) = 0 THEN
+		raise exception 'dequeue_job: missing kind';
+	END IF;
+
+	IF kind NOT IN ('enrich', 'outreach', 'enforce') THEN
+		raise exception 'dequeue_job: unsupported kind %', kind;
+	END IF;
+
+	SELECT *
+	  INTO msg
+	  FROM pgmq.read(kind, 1, 30);
+
+	IF msg IS NULL THEN
+		RETURN NULL;
+	END IF;
+
+	RETURN jsonb_build_object(
+		'msg_id', msg.msg_id,
+		'vt', msg.vt,
+		'read_ct', msg.read_ct,
+		'enqueued_at', msg.enqueued_at,
+		'payload', msg.message,
+		'body', msg.message
+	);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.dequeue_job(text) TO service_role;
 
