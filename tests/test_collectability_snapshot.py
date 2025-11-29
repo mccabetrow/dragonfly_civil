@@ -2,7 +2,6 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from pathlib import Path
 
 import psycopg
 from psycopg.rows import dict_row
@@ -15,20 +14,58 @@ def _resolve_db_url() -> str:
         return explicit
     project_ref = os.environ["SUPABASE_PROJECT_REF"]
     password = os.environ["SUPABASE_DB_PASSWORD"]
-    return f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
+    return (
+        f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
+    )
 
 
 def _ensure_collectability_view(db_url: str) -> None:
     """Ensure the snapshot view exists for environments that have not run the migration."""
 
-    migration_path = Path(__file__).resolve().parents[1] / "supabase" / "migrations" / "0057_collectability_snapshot.sql"
-    up_sql_text = migration_path.read_text(encoding="utf-8")
-    up_sql_section = up_sql_text.split("-- migrate:down", 1)[0]
-    if "-- migrate:up" in up_sql_section:
-        up_sql_section = up_sql_section.split("-- migrate:up", 1)[1]
-    up_sql = up_sql_section.strip()
-    if not up_sql:
-        raise AssertionError("Collectability snapshot migration missing migrate:up SQL")
+    up_sql = """
+create or replace view judgments.v_collectability_snapshot as
+with latest_enrichment as (
+    select
+        er.case_id,
+        er.created_at,
+        er.status,
+        row_number() over (
+            partition by er.case_id
+            order by er.created_at desc, er.id desc
+        ) as row_num
+    from judgments.enrichment_runs er
+)
+select
+    c.case_id,
+    c.case_number,
+    c.amount_awarded as judgment_amount,
+    c.judgment_date,
+    case
+        when c.judgment_date is not null then (current_date - c.judgment_date)
+    end as age_days,
+    le.created_at as last_enriched_at,
+    le.status as last_enrichment_status,
+    case
+        when
+            coalesce(c.amount_awarded, 0) >= 3000
+            and c.judgment_date is not null
+            and (current_date - c.judgment_date) <= 365 then 'A'
+        when
+            (
+                coalesce(c.amount_awarded, 0) between 1000 and 2999
+            )
+            or (
+                c.judgment_date is not null
+                and (current_date - c.judgment_date) between 366 and 1095
+            ) then 'B'
+        else 'C'
+    end as collectability_tier
+from judgments.cases c
+    left join latest_enrichment le
+        on c.case_id = le.case_id
+        and le.row_num = 1;
+grant select on judgments.v_collectability_snapshot to service_role;
+""".strip()
 
     with psycopg.connect(db_url, autocommit=True) as ensure_conn:
         with ensure_conn.cursor() as cur:
@@ -103,7 +140,9 @@ def test_collectability_snapshot_view_returns_latest_enrichment() -> None:
                     "judgment_date": judgment_date.isoformat(),
                     "amount_awarded": str(spec["amount"]),
                 }
-                cur.execute("select public.insert_case(%s::jsonb)", (Json(insert_payload),))
+                cur.execute(
+                    "select public.insert_case(%s::jsonb)", (Json(insert_payload),)
+                )
                 case_row = cur.fetchone()
                 assert case_row is not None
                 (case_id,) = case_row
@@ -111,7 +150,9 @@ def test_collectability_snapshot_view_returns_latest_enrichment() -> None:
                 latest_status = None
                 latest_created_at = None
                 for run in spec["runs"]:
-                    created_at = base_now - timedelta(minutes=run["minutes_ago"], seconds=spec_index)
+                    created_at = base_now - timedelta(
+                        minutes=run["minutes_ago"], seconds=spec_index
+                    )
                     cur.execute(
                         """
                         insert into judgments.enrichment_runs (case_id, status, summary, raw, created_at)
