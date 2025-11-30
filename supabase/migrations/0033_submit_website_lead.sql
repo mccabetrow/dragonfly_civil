@@ -5,7 +5,7 @@ CREATE OR REPLACE FUNCTION public.submit_website_lead(
     in_judgment_amount NUMERIC,
     in_contact_email TEXT
 )
-RETURNS public.judgments
+RETURNS public.JUDGMENTS
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp

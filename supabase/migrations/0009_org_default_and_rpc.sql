@@ -20,8 +20,10 @@ begin
 end $$;
 
 -- 2) RPC: accept optional org_id in payload; generate if missing
-drop function if exists public.insert_case(jsonb);
-drop function if exists public.insert_case(text, text, text, numeric, text, text);
+drop function if exists public.insert_case (jsonb);
+drop function if exists public.insert_case (
+    text, text, text, numeric, text, text
+);
 
 create or replace function public.insert_case(payload jsonb)
 returns uuid
@@ -57,4 +59,6 @@ end
 $$;
 
 -- 3) Grant execute (so PostgREST/RLS paths work)
-grant execute on function public.insert_case(jsonb) to anon, authenticated, service_role;
+grant execute on function public.insert_case(jsonb) to anon,
+authenticated,
+service_role;

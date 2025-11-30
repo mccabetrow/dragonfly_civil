@@ -2,7 +2,7 @@
 
 create extension if not exists pgmq;
 
-DO $$
+do $$
 DECLARE
     v_queue_name text;
 BEGIN
@@ -33,7 +33,7 @@ $$;
 
 -- migrate:down
 
-DO $$
+do $$
 DECLARE
     v_queue_name text;
 BEGIN

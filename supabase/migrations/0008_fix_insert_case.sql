@@ -4,27 +4,27 @@ create schema if not exists judgments;
 
 -- If your base table is already present, this will only add missing columns.
 create table if not exists judgments.cases (
-  case_id uuid primary key default gen_random_uuid()
+    case_id uuid primary key default gen_random_uuid()
 );
 
 alter table judgments.cases
-  add column if not exists case_id uuid,
-  add column if not exists index_no text,
-  add column if not exists court text,
-  add column if not exists county text,
-  add column if not exists principal_amt numeric,
-  add column if not exists status text,
-  add column if not exists source text,
-  add column if not exists created_at timestamptz default now();
+add column if not exists case_id uuid,
+add column if not exists index_no text,
+add column if not exists court text,
+add column if not exists county text,
+add column if not exists principal_amt numeric,
+add column if not exists status text,
+add column if not exists source text,
+add column if not exists created_at timestamptz default now();
 
 -- Ensure every existing row has a case_id populated
 update judgments.cases
 set case_id = coalesce(case_id, gen_random_uuid());
 
 alter table judgments.cases
-  alter column case_id set default gen_random_uuid();
+alter column case_id set default gen_random_uuid();
 
-DO $$
+do $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -35,7 +35,7 @@ BEGIN
       ADD CONSTRAINT cases_case_id_pk PRIMARY KEY (case_id);
   END IF;
 END
-$$ LANGUAGE plpgsql;
+$$ language plpgsql;
 
 -- Optional: uniqueness if your workflow expects it (comment out if unsure)
 -- create unique index if not exists cases_index_no_unique on judgments.cases (lower(index_no));
@@ -45,21 +45,23 @@ drop view if exists public.v_cases cascade;
 
 create view public.v_cases as
 select
-  c.case_id,
-  c.index_no,
-  c.court,
-  c.county,
-  c.principal_amt,
-  c.status,
-  c.source,
-  c.created_at
-from judgments.cases c;
+    c.case_id,
+    c.index_no,
+    c.court,
+    c.county,
+    c.principal_amt,
+    c.status,
+    c.source,
+    c.created_at
+from judgments.cases as c;
 
 grant select on public.v_cases to anon, authenticated, service_role;
 
 -- Recreate the RPC to accept JSONB payload and map into judgments.cases explicitly.
-drop function if exists public.insert_case(jsonb);
-drop function if exists public.insert_case(text, text, text, numeric, text, text);
+drop function if exists public.insert_case (jsonb);
+drop function if exists public.insert_case (
+    text, text, text, numeric, text, text
+);
 
 create or replace function public.insert_case(payload jsonb)
 returns jsonb
@@ -87,12 +89,12 @@ $$;
 
 -- Convenience overload so named-args + Prefer: params=single-object also works
 create or replace function public.insert_case(
-  index_no text,
-  court text,
-  county text,
-  principal_amt numeric,
-  status text,
-  source text
+    index_no text,
+    court text,
+    county text,
+    principal_amt numeric,
+    status text,
+    source text
 ) returns jsonb
 language sql
 security definer
@@ -108,5 +110,11 @@ as $$
   ));
 $$;
 
-grant execute on function public.insert_case(jsonb) to anon, authenticated, service_role;
-grant execute on function public.insert_case(text, text, text, numeric, text, text) to anon, authenticated, service_role;
+grant execute on function public.insert_case(jsonb) to anon,
+authenticated,
+service_role;
+grant execute on function public.insert_case(
+    text, text, text, numeric, text, text
+) to anon,
+authenticated,
+service_role;

@@ -1,1 +1,9 @@
-project_id = "$SUPABASE_PROJECT_REF"
+########################################
+# Supabase CLI configuration
+# - scripts/bootstrap.ps1 selects dev vs prod via the SupabaseEnv param and
+#   swaps SUPABASE_* values from .env before calling the CLI.
+# - project_id here defaults to the dev project so ad-hoc CLI commands outside
+#   the bootstrap helper still work. Adjust if the dev project ref changes.
+########################################
+
+project_id = "ejiddanxtqcleyswqvkc"

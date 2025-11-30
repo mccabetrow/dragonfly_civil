@@ -38,6 +38,42 @@
       }
     },
     {
+      "label": "Preflight (Dev)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/preflight_dev.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Run config, security, doctor, and pytest checks against dev"
+    },
+    {
+      "label": "Preflight (Prod)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/preflight_prod.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "⚠️ Full prod readiness check (config + security + doctor + pytest)"
+    },
+    {
       "label": "REST: Reload",
       "type": "shell",
       "command": "powershell",
@@ -79,10 +115,7 @@
       "label": "Insert: Case",
       "type": "shell",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
-      "args": [
-        "-m",
-        "etl.src.collector_v1"
-      ],
+      "args": ["-m", "etl.src.collector_v1"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -93,11 +126,7 @@
       "label": "Insert: Composite",
       "type": "shell",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
-      "args": [
-        "-m",
-        "etl.src.collector_v1",
-        "--composite"
-      ],
+      "args": ["-m", "etl.src.collector_v1", "--composite"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -108,11 +137,7 @@
       "label": "Tests: PyTest",
       "type": "shell",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
-      "args": [
-        "-m",
-        "pytest",
-        "-q"
-      ],
+      "args": ["-m", "pytest", "-q"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -123,11 +148,7 @@
       "label": "fmt",
       "type": "shell",
       "command": "powershell",
-      "args": [
-        "-NoProfile",
-        "-Command",
-        "make fmt"
-      ],
+      "args": ["-NoProfile", "-Command", "make fmt"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -138,11 +159,7 @@
       "label": "lint",
       "type": "shell",
       "command": "powershell",
-      "args": [
-        "-NoProfile",
-        "-Command",
-        "make lint"
-      ],
+      "args": ["-NoProfile", "-Command", "make lint"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -153,11 +170,7 @@
       "label": "smoke",
       "type": "shell",
       "command": "powershell",
-      "args": [
-        "-NoProfile",
-        "-Command",
-        "make smoke"
-      ],
+      "args": ["-NoProfile", "-Command", "make smoke"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -168,11 +181,7 @@
       "label": "watcher",
       "type": "shell",
       "command": "powershell",
-      "args": [
-        "-NoProfile",
-        "-Command",
-        "make watcher"
-      ],
+      "args": ["-NoProfile", "-Command", "make watcher"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -218,15 +227,378 @@
       "label": "Doctor",
       "type": "shell",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
-      "args": [
-        "-m",
-        "tools.doctor"
-      ],
+      "args": ["-m", "tools.doctor"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
         "panel": "dedicated"
       }
+    },
+    {
+      "label": "Doctor All",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "tools.doctor_all", "--env", "prod"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Doctor: Intake & Enforcement",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "tools.doctor_all", "--env", "dev"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Run intake + enforcement doctor checks against dev"
+    },
+    {
+      "label": "DB Push (Dev)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "& ./scripts/db_push.ps1 -SupabaseEnv dev"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Apply Supabase migrations against the dev environment"
+    },
+    {
+      "label": "DB Push (Prod)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "& ./scripts/db_push.ps1 -SupabaseEnv prod"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "prod"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "⚠️ Apply Supabase migrations against prod — double-check before running"
+    },
+    {
+      "label": "Deploy (Prod)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/deploy_prod.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "⚠️ Full prod deploy (preflight + migrations + dashboard build)"
+    },
+    {
+      "label": "Priority Pipeline Snapshot (Dev)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "./.venv/Scripts/python.exe -m tools.priority_pipeline --limit 20"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Inspect the top 20 dev judgments ranked by collectability + priority"
+    },
+    {
+      "label": "Security Audit (Dev)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "tools.security_audit", "--env", "dev"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Audit public schema RLS + grants in dev"
+    },
+    {
+      "label": "Task Planner (Dev)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "./.venv/Scripts/python.exe -m tools.run_task_planner --env dev"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Schedule tier-based plaintiff tasks against dev"
+    },
+    {
+      "label": "New Migration",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "Set-StrictMode -Version Latest; $ts = Get-Date -Format 'yyyyMMddHHmmss'; $file = Join-Path '${workspaceFolder.Replace('\\', '/')}/supabase/db/migrations' ($ts + '_temp.sql'); New-Item -Path $file -ItemType File -Force | Out-Null; code $file"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "never",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Importer: Simplicity (Dry Run)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "tools.run_import",
+        "--source",
+        "simplicity",
+        "--csv",
+        "data_in/simplicity_sample.csv",
+        "--batch-name",
+        "dev-simplicity",
+        "--source-reference",
+        "dev-simplicity",
+        "--skip-jobs",
+        "--pretty"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Dry-run the Simplicity importer against data_in/simplicity_sample.csv"
+    },
+    {
+      "label": "Importer: JBI (Dry Run)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "tools.run_import",
+        "--source",
+        "jbi",
+        "--csv",
+        "data/jbi_export_valid_sample.csv",
+        "--batch-name",
+        "dev-jbi",
+        "--source-reference",
+        "dev-jbi",
+        "--skip-jobs",
+        "--pretty"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Dry-run the JBI importer against the included sample export"
+    },
+    {
+      // Runs the Simplicity importer against dev using a user-provided file path.
+      "label": "Simplicity Import (dev)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$env:SUPABASE_MODE='dev'; & \"${workspaceFolder}\\.venv\\Scripts\\python.exe\" -m etl.simplicity_importer.import_simplicity \"${input:simplicityFile}\""
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Interactive dev import for Simplicity exports"
+    },
+    {
+      "label": "Dry Run: 900 Plaintiffs",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "tools.dry_run_900",
+        "--env",
+        "dev",
+        "--count",
+        "900",
+        "--reset"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Seed + simulate the 900 plaintiff dry run cohort in dev"
+    },
+    {
+      "label": "Dev: Quick Checks",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$ErrorActionPreference='Stop'; Set-Location '${workspaceFolder}'; $env:SUPABASE_MODE='dev'; ./scripts/db_push.ps1 -SupabaseEnv dev; ./.venv/Scripts/python.exe -m tools.check_schema_consistency --env dev; ./.venv/Scripts/python.exe -m tools.doctor_all --env dev"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Dev: Full Test Suite",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$ErrorActionPreference='Stop'; Set-Location '${workspaceFolder}'; $env:SUPABASE_MODE='dev'; ./.venv/Scripts/python.exe -m pytest -q"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Dev: Build Dashboard",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$ErrorActionPreference='Stop'; Set-Location '${workspaceFolder}/dragonfly-dashboard'; npm install; npm run build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/dragonfly-dashboard"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Dev: 900 Dry Run",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$ErrorActionPreference='Stop'; Set-Location '${workspaceFolder}'; $env:SUPABASE_MODE='dev'; ./scripts/import_900_dry_run.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Prod: Preflight Promote",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$ErrorActionPreference='Stop'; Set-Location '${workspaceFolder}'; ./scripts/preflight_promote_prod.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Dev: Validate n8n Flows",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$ErrorActionPreference='Stop'; Set-Location '${workspaceFolder}'; $env:SUPABASE_MODE='dev'; ./.venv/Scripts/python.exe -m tools.validate_n8n_flows --env dev"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "simplicityFile",
+      "type": "promptString",
+      "description": "Path to Simplicity export CSV/JSON"
     }
   ]
 }

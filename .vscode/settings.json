@@ -1,5 +1,47 @@
 {
-    "python.defaultInterpreterPath": ".venv/Scripts/python.exe",
-    "python.testing.pytestEnabled": true,
-    "python.testing.pytestArgs": ["-q"]
+  "python.defaultInterpreterPath": ".venv/Scripts/python.exe",
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["-q"],
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.autoImportCompletions": true,
+  "python.formatting.provider": "black",
+
+  "ruff.enable": true,
+  "ruff.lint.run": "onSave",
+
+  "sql.languageServer": "default",
+  "editor.formatOnSave": true,
+  "[sql]": {
+    "editor.defaultFormatter": "mtxr.sqltools"
+  },
+
+  "testing.automaticallyOpenPeekView": "never",
+  "testing.openTesting": "never",
+
+  "github.copilot.enable": {
+    "*": true,
+    "python": true,
+    "sql": true,
+    "markdown": true
+  },
+
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    ".venv": true
+  },
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "editor.rulers": [88],
+  "editor.wordWrap": "on",
+  "testing.automaticallyOpenTestResults": "never",
+
+  "chat.agentSessionsViewLocation": "sidebar",
+  "chat.agent.thinkingStyle": "fixedScrolling",
+  "chat.agent.thinking.collapsedTools": true,
+  "inlineChat.enableV2": true,
+  "terminal.integrated.suggest.enabled": true,
+  "chat.tools.terminal.outputLocation": "none",
+  "accessibility.openChatEditedFiles": true
 }

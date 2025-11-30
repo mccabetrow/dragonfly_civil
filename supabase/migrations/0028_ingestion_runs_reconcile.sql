@@ -65,25 +65,25 @@ $$;
 
 drop trigger if exists trg_log_case on judgments.cases;
 create trigger trg_log_case
-  after insert on judgments.cases
-  for each row execute function public.log_insert_case();
+after insert on judgments.cases
+for each row execute function public.log_insert_case();
 
 drop trigger if exists trg_log_entity on parties.entities;
 create trigger trg_log_entity
-  after insert on parties.entities
-  for each row execute function public.log_insert_entity();
+after insert on parties.entities
+for each row execute function public.log_insert_entity();
 
 -- 3) (Re)create a simple public view; drop first to allow column list changes
 drop view if exists public.v_ingestion_runs cascade;
 
 create view public.v_ingestion_runs as
-  select
-    coalesce(run_id, id) as run_id,
+select
     event,
     source_code,
     ref_id,
-    created_at
-  from ingestion.runs
-  order by created_at desc;
+    created_at,
+    coalesce(run_id, id) as run_id
+from ingestion.runs
+order by created_at desc;
 
 grant select on public.v_ingestion_runs to service_role;

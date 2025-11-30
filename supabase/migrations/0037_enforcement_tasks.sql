@@ -12,7 +12,9 @@ create table if not exists enforcement.task_templates (
 create table if not exists enforcement.tasks (
     task_id uuid primary key default gen_random_uuid(),
     case_number text not null,
-    template_code text not null references enforcement.task_templates(template_code),
+    template_code text not null references enforcement.task_templates (
+        template_code
+    ),
     step_type text not null,
     label text not null,
     status text not null default 'open',
@@ -22,39 +24,41 @@ create table if not exists enforcement.tasks (
 
 insert into enforcement.task_templates (template_code, label, steps)
 values
-    (
-        'INFO_SUBPOENA_FLOW',
-        'Information Subpoena Flow',
-        '[
+(
+    'INFO_SUBPOENA_FLOW',
+    'Information Subpoena Flow',
+    '[
             {"type": "prepare_packet", "label": "Prepare subpoena packet", "sla_days": 2},
             {"type": "mail_packet", "label": "Mail subpoena packet", "sla_days": 5},
             {"type": "await_response", "label": "Await debtor response", "sla_days": 30}
         ]'::jsonb
-    ),
-    (
-        'BANK_LEVY_FLOW',
-        'Bank Levy Flow',
-        '[
+),
+(
+    'BANK_LEVY_FLOW',
+    'Bank Levy Flow',
+    '[
             {"type": "draft_writ", "label": "Draft writ of execution", "sla_days": 3},
             {"type": "deliver_sheriff", "label": "Deliver writ to sheriff", "sla_days": 7},
             {"type": "confirm_levy", "label": "Confirm levy with bank", "sla_days": 21}
         ]'::jsonb
-    ),
-    (
-        'WAGE_GARNISH_FLOW',
-        'Wage Garnishment Flow',
-        '[
+),
+(
+    'WAGE_GARNISH_FLOW',
+    'Wage Garnishment Flow',
+    '[
             {"type": "prepare_application", "label": "Prepare garnishment application", "sla_days": 3},
             {"type": "notify_employer", "label": "Send employer notice", "sla_days": 5},
             {"type": "follow_up", "label": "Follow up on garnishment", "sla_days": 14}
         ]'::jsonb
-    )
+)
 on conflict (template_code) do update
 set label = excluded.label,
-    steps = excluded.steps;
+steps = excluded.steps;
 
-create or replace function public.spawn_enforcement_flow(p_case_number text, p_template_code text)
-returns uuid[]
+create or replace function public.spawn_enforcement_flow(
+    p_case_number text, p_template_code text
+)
+returns uuid []
 language plpgsql
 security definer
 set search_path = public, enforcement, pg_temp
@@ -109,12 +113,16 @@ begin
 end;
 $$;
 
-grant execute on function public.spawn_enforcement_flow(text, text) to service_role;
+grant execute on function public.spawn_enforcement_flow(
+    text, text
+) to service_role;
 
 -- migrate:down
 
-revoke execute on function public.spawn_enforcement_flow(text, text) from service_role;
-drop function if exists public.spawn_enforcement_flow(text, text);
+revoke execute on function public.spawn_enforcement_flow(
+    text, text
+) from service_role;
+drop function if exists public.spawn_enforcement_flow (text, text);
 
 drop table if exists enforcement.tasks;
 drop table if exists enforcement.task_templates;

@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "supabase-tools-example": {
+      "command": "// set to the Supabase MCP binary (e.g., node supabase-tools.js)",
+      "args": ["--url", "https://replace-with-supabase-tools-endpoint"]
+    },
+    "dragonfly-etl-tools-example": {
+      "command": "// set to the Dragonfly ETL MCP entrypoint",
+      "args": ["--url", "https://replace-with-dragonfly-etl-endpoint"]
+    },
+    "docs-search-example": {
+      "command": "// set to the docs/search MCP executable",
+      "args": ["--url", "https://replace-with-docs-search-endpoint"]
+    }
+  }
+}

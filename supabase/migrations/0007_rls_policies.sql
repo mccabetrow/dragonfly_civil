@@ -13,15 +13,15 @@ drop policy if exists insert_cases_service on judgments.cases;
 drop policy if exists update_cases_service on judgments.cases;
 drop policy if exists delete_cases_service on judgments.cases;
 create policy insert_cases_service on judgments.cases
-  for insert
-  with check (auth.role() = 'service_role');
+for insert
+with check (auth.role() = 'service_role');
 create policy update_cases_service on judgments.cases
-  for update
-  using (auth.role() = 'service_role')
-  with check (auth.role() = 'service_role');
+for update
+using (auth.role() = 'service_role')
+with check (auth.role() = 'service_role');
 create policy delete_cases_service on judgments.cases
-  for delete
-  using (auth.role() = 'service_role');
+for delete
+using (auth.role() = 'service_role');
 
 -- parties.entities
 do $$

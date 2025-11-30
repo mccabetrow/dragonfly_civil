@@ -3,14 +3,14 @@ create schema if not exists judgments;
 -- View that surfaces key fields safely from judgments.cases
 create or replace view public.v_cases_with_org as
 select
-  c.case_id,
-  c.org_id,
-  c.case_number,
-  c.source_system,
-  c.title,
-  c.court_name,
-  c.created_at
-from judgments.cases c;
+    c.case_id,
+    c.org_id,
+    c.case_number,
+    c.source_system,
+    c.title,
+    c.court_name,
+    c.created_at
+from judgments.cases as c;
 
 grant select on public.v_cases_with_org to anon, authenticated, service_role;
 

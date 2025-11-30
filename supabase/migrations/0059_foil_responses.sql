@@ -19,15 +19,19 @@ end;
 $$;
 
 create table if not exists judgments.foil_responses (
-    id            bigserial primary key,
-    case_id       uuid not null references judgments.cases(case_id) on delete cascade,
-    created_at    timestamptz not null default timezone('utc', now()),
+    id bigserial primary key,
+    case_id uuid not null references judgments.cases (
+        case_id
+    ) on delete cascade,
+    created_at timestamptz not null default timezone('utc', now()),
     received_date date,
-    agency        text,
-    payload       jsonb not null
+    agency text,
+    payload jsonb not null
 );
 
-create index if not exists idx_judgments_foil_responses_case_id on judgments.foil_responses (case_id);
+create index if not exists idx_judgments_foil_responses_case_id on judgments.foil_responses (
+    case_id
+);
 
 alter table judgments.foil_responses enable row level security;
 
@@ -52,7 +56,10 @@ revoke all on judgments.foil_responses from public;
 revoke all on judgments.foil_responses from anon;
 revoke all on judgments.foil_responses from authenticated;
 
-grant select, insert, update, delete on judgments.foil_responses to service_role;
+grant select,
+insert,
+update,
+delete on judgments.foil_responses to service_role;
 
 do $$
 begin

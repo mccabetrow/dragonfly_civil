@@ -10,9 +10,11 @@ create table if not exists public.outreach_log (
     metadata jsonb
 );
 
-create index if not exists outreach_log_case_number_idx on public.outreach_log (case_number);
+create index if not exists outreach_log_case_number_idx on public.outreach_log (
+    case_number
+);
 
 -- migrate:down
 
-DROP INDEX IF EXISTS outreach_log_case_number_idx;
-DROP TABLE IF EXISTS public.outreach_log;
+drop index if exists outreach_log_case_number_idx;
+drop table if exists public.outreach_log;

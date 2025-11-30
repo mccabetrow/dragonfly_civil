@@ -44,4 +44,6 @@ begin
   return jsonb_build_object('ok', true, 'case_id', v_case, 'contacts', jsonb_array_length(coalesce(bundle->'contacts','[]'::jsonb)), 'assets', jsonb_array_length(coalesce(bundle->'assets','[]'::jsonb)));
 end $$;
 
-grant execute on function enrichment.upsert_enrichment_bundle(jsonb) to anon, authenticated, service_role;
+grant execute on function enrichment.upsert_enrichment_bundle(jsonb) to anon,
+authenticated,
+service_role;

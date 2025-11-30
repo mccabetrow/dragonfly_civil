@@ -2,10 +2,10 @@
 
 -- migrate:up
 
-drop function if exists public.queue_job(text, text, jsonb);
-drop function if exists public.queue_job(text, jsonb, text);
-drop function if exists public.queue_job(text, jsonb);
-drop function if exists public.queue_job(jsonb);
+drop function if exists public.queue_job (text, text, jsonb);
+drop function if exists public.queue_job (text, jsonb, text);
+drop function if exists public.queue_job (text, jsonb);
+drop function if exists public.queue_job (jsonb);
 
 create or replace function public.queue_job(payload jsonb)
 returns bigint

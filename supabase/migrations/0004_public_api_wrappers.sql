@@ -140,4 +140,7 @@ end $$;
 
 -- === Grants ================================================================
 grant usage on schema public to anon, authenticated, service_role;
-grant select on public.v_cases, public.v_collectability to anon, authenticated, service_role;
+grant select on public.v_cases,
+public.v_collectability to anon,
+authenticated,
+service_role;

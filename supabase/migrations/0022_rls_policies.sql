@@ -28,33 +28,33 @@ end $$;
 
 -- Anon/authenticated users must consume views; no direct table access
 create policy rls_cases_block_public
-  on judgments.cases
-  for all
-  to anon, authenticated
-  using (false)
-  with check (false);
+on judgments.cases
+for all
+to anon, authenticated
+using (false)
+with check (false);
 
 create policy rls_entities_block_public
-  on parties.entities
-  for all
-  to anon, authenticated
-  using (false)
-  with check (false);
+on parties.entities
+for all
+to anon, authenticated
+using (false)
+with check (false);
 
 -- Service role retains full control via permissive policies
 create policy rls_cases_service_role
-  on judgments.cases
-  for all
-  to service_role
-  using (true)
-  with check (true);
+on judgments.cases
+for all
+to service_role
+using (true)
+with check (true);
 
 create policy rls_entities_service_role
-  on parties.entities
-  for all
-  to service_role
-  using (true)
-  with check (true);
+on parties.entities
+for all
+to service_role
+using (true)
+with check (true);
 
 comment on policy rls_cases_block_public on judgments.cases is 'App clients must read via public views; writes go through RPCs.';
 comment on policy rls_entities_block_public on parties.entities is 'App clients must read via public views; writes go through RPCs.';

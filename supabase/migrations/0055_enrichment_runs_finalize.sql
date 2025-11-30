@@ -7,7 +7,9 @@ create schema if not exists judgments;
 
 create table if not exists judgments.enrichment_runs (
     id bigserial primary key,
-    case_id uuid not null references judgments.cases(case_id) on delete cascade,
+    case_id uuid not null references judgments.cases (
+        case_id
+    ) on delete cascade,
     status text not null,
     summary text,
     raw jsonb,
@@ -39,8 +41,12 @@ $$;
 
 drop view if exists public.enrichment_runs;
 
-create index if not exists idx_judgments_enrichment_runs_case_id on judgments.enrichment_runs (case_id);
-create index if not exists idx_judgments_enrichment_runs_status on judgments.enrichment_runs (status);
+create index if not exists idx_judgments_enrichment_runs_case_id on judgments.enrichment_runs (
+    case_id
+);
+create index if not exists idx_judgments_enrichment_runs_status on judgments.enrichment_runs (
+    status
+);
 
 alter table judgments.enrichment_runs enable row level security;
 
@@ -64,8 +70,12 @@ $$;
 revoke all on judgments.enrichment_runs from public;
 revoke all on judgments.enrichment_runs from anon;
 revoke all on judgments.enrichment_runs from authenticated;
-grant select, insert, update, delete on judgments.enrichment_runs to service_role;
-grant usage, select on sequence judgments.enrichment_runs_id_seq to service_role;
+grant select,
+insert,
+update,
+delete on judgments.enrichment_runs to service_role;
+grant usage,
+select on sequence judgments.enrichment_runs_id_seq to service_role;
 
 create or replace view public.enrichment_runs as
 select

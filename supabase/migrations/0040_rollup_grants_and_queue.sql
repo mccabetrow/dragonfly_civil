@@ -27,7 +27,7 @@ $$;
 
 grant usage on schema public to service_role;
 grant all on table public.judgments to service_role;
- 
+
 create or replace function public.dequeue_job(kind text)
 returns jsonb
 language plpgsql
@@ -75,5 +75,5 @@ grant execute on function public.ack_job(text, bigint) to service_role;
 
 -- migrate:down
 
-drop function if exists public.dequeue_job(text);
-drop function if exists public.ack_job(text, bigint);
+drop function if exists public.dequeue_job (text);
+drop function if exists public.ack_job (text, bigint);

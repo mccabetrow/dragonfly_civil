@@ -1,26 +1,28 @@
-param(
-    [string]$EnvFile = "$PSScriptRoot/../.env"
+Param(
+    [string]$EnvPath = $(Join-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '..') -ChildPath '.env')
 )
 
-if (-not (Test-Path -LiteralPath $EnvFile)) {
-    Write-Host "No .env file found at $EnvFile" -ForegroundColor Yellow
+Write-Host "Loading environment variables from $EnvPath"
+
+if (-not (Test-Path -LiteralPath $EnvPath)) {
+    Write-Host "  .env file not found" -ForegroundColor Yellow
     return
 }
 
-Write-Host "Loading environment variables from $EnvFile" -ForegroundColor Cyan
+Get-Content -Path $EnvPath | ForEach-Object {
+    if ($_ -match '^\s*#') { return }
+    if ($_ -match '^\s*$') { return }
 
-Get-Content -Path $EnvFile | ForEach-Object {
-    if (-not $_ -or $_.TrimStart().StartsWith('#')) { return }
-    $parts = $_ -split '=', 2
-    if ($parts.Count -ne 2) { return }
-    $key = $parts[0].Trim()
-    $value = $parts[1].Trim()
-    $value = $value.Trim("'")
-    $value = $value.Trim('"')
-    [Environment]::SetEnvironmentVariable($key, $value)
-    if ($key -match 'KEY|SECRET|PASS|TOKEN') {
-        Write-Host "  $key=***" -ForegroundColor Gray
-    } else {
-        Write-Host "  $key=$value" -ForegroundColor Gray
+    $name, $value = $_ -split('=', 2)
+    $name  = $name.Trim()
+    $value = $value.Trim()
+
+    if (-not [string]::IsNullOrWhiteSpace($name)) {
+        Set-Item -Path "Env:$name" -Value $value
+        $isSensitive = $name -match '^SUPABASE_DB_URL' -or $name -match 'PASSWORD'
+        $displayValue = if ($isSensitive) { '***' } else { $value }
+        Write-Host "  $name=$displayValue"
     }
 }
+
+Write-Host "Done loading .env"

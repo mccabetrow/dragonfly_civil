@@ -1,10 +1,9 @@
- 
 -- Hard reset of queue RPCs (minus queue_job) to ensure ancillary RPCs exist.
-drop function if exists public.dequeue_job(text);
-drop function if exists public.dequeue_job();
+drop function if exists public.dequeue_job (text);
+drop function if exists public.dequeue_job ();
 
-drop function if exists public.ack_job(text, bigint);
-drop function if exists public.ack_job(text);
+drop function if exists public.ack_job (text, bigint);
+drop function if exists public.ack_job (text);
 
 create or replace function public.dequeue_job(kind text)
 returns jsonb
@@ -57,5 +56,5 @@ grant execute on function public.ack_job(text, bigint) to service_role;
 revoke execute on function public.ack_job(text, bigint) from service_role;
 revoke execute on function public.dequeue_job(text) from service_role;
 
-drop function if exists public.ack_job(text, bigint);
-drop function if exists public.dequeue_job(text);
+drop function if exists public.ack_job (text, bigint);
+drop function if exists public.dequeue_job (text);

@@ -2,13 +2,13 @@
 -- Recreate enrichment + scoring RPCs required by workers and schema guard.
 BEGIN;
 CREATE OR REPLACE FUNCTION public.set_case_enrichment(
-        p_case_id uuid,
-        p_collectability_score numeric,
-        p_collectability_tier text,
-        p_summary text DEFAULT NULL
-    ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+    p_case_id uuid,
+    p_collectability_score numeric,
+    p_collectability_tier text,
+    p_summary text DEFAULT NULL
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public,
-    pg_temp AS $$
+pg_temp AS $$
 DECLARE v_tier text;
 BEGIN IF p_case_id IS NULL THEN RAISE EXCEPTION 'set_case_enrichment: case_id is required' USING ERRCODE = '23502';
 END IF;
@@ -25,24 +25,26 @@ END IF;
 END;
 $$;
 REVOKE ALL ON FUNCTION public.set_case_enrichment(uuid, numeric, text, text)
-FROM PUBLIC;
+FROM public;
 REVOKE ALL ON FUNCTION public.set_case_enrichment(uuid, numeric, text, text)
 FROM anon;
 REVOKE ALL ON FUNCTION public.set_case_enrichment(uuid, numeric, text, text)
 FROM authenticated;
-GRANT EXECUTE ON FUNCTION public.set_case_enrichment(uuid, numeric, text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.set_case_enrichment(
+    uuid, numeric, text, text
+) TO service_role;
 CREATE OR REPLACE FUNCTION public.set_case_scores(
-        p_case_id uuid,
-        p_identity_score numeric,
-        p_contactability_score numeric,
-        p_asset_score numeric,
-        p_recency_amount_score numeric,
-        p_adverse_penalty numeric,
-        p_collectability_score numeric,
-        p_collectability_tier text
-    ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+    p_case_id uuid,
+    p_identity_score numeric,
+    p_contactability_score numeric,
+    p_asset_score numeric,
+    p_recency_amount_score numeric,
+    p_adverse_penalty numeric,
+    p_collectability_score numeric,
+    p_collectability_tier text
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public,
-    pg_temp AS $$
+pg_temp AS $$
 DECLARE v_tier text;
 BEGIN IF p_case_id IS NULL THEN RAISE EXCEPTION 'set_case_scores: case_id is required' USING ERRCODE = '23502';
 END IF;
@@ -73,7 +75,7 @@ REVOKE ALL ON FUNCTION public.set_case_scores(
     numeric,
     text
 )
-FROM PUBLIC;
+FROM public;
 REVOKE ALL ON FUNCTION public.set_case_scores(
     uuid,
     numeric,
@@ -97,18 +99,20 @@ REVOKE ALL ON FUNCTION public.set_case_scores(
 )
 FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.set_case_scores(
-        uuid,
-        numeric,
-        numeric,
-        numeric,
-        numeric,
-        numeric,
-        numeric,
-        text
-    ) TO service_role;
-CREATE OR REPLACE FUNCTION public.upsert_enrichment_bundle(bundle jsonb) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    uuid,
+    numeric,
+    numeric,
+    numeric,
+    numeric,
+    numeric,
+    numeric,
+    text
+) TO service_role;
+CREATE OR REPLACE FUNCTION public.upsert_enrichment_bundle(
+    bundle jsonb
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public,
-    pg_temp AS $$
+pg_temp AS $$
 DECLARE v_case_id uuid;
 v_contacts jsonb := COALESCE(bundle->'contacts', '[]'::jsonb);
 v_assets jsonb := COALESCE(bundle->'assets', '[]'::jsonb);
@@ -204,11 +208,13 @@ RETURN jsonb_build_object(
 END;
 $$;
 REVOKE ALL ON FUNCTION public.upsert_enrichment_bundle(jsonb)
-FROM PUBLIC;
+FROM public;
 REVOKE ALL ON FUNCTION public.upsert_enrichment_bundle(jsonb)
 FROM anon;
 REVOKE ALL ON FUNCTION public.upsert_enrichment_bundle(jsonb)
 FROM authenticated;
-GRANT EXECUTE ON FUNCTION public.upsert_enrichment_bundle(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.upsert_enrichment_bundle(
+    jsonb
+) TO service_role;
 SELECT public.pgrst_reload();
 COMMIT;

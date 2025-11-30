@@ -49,15 +49,17 @@ $$;
 
 -- 2) Ensure required columns exist on judgments.foil_responses.
 alter table judgments.foil_responses
-  add column if not exists created_at timestamptz not null default timezone('utc', now()),
-  add column if not exists received_date date,
-  add column if not exists agency text,
-  add column if not exists payload jsonb;
+add column if not exists created_at timestamptz not null default timezone(
+    'utc', now()
+),
+add column if not exists received_date date,
+add column if not exists agency text,
+add column if not exists payload jsonb;
 
 alter table judgments.foil_responses
-  alter column created_at set default timezone('utc', now()),
-  alter column created_at set not null,
-  alter column payload set not null;
+alter column created_at set default timezone('utc', now()),
+alter column created_at set not null,
+alter column payload set not null;
 
 do $$
 begin
@@ -84,21 +86,23 @@ end
 $$;
 
 alter table judgments.foil_responses
-  drop column if exists source_agency,
-  drop column if exists request_id,
-  drop column if exists response_date;
+drop column if exists source_agency,
+drop column if exists request_id,
+drop column if exists response_date;
 
-create index if not exists idx_judgments_foil_responses_agency_date on judgments.foil_responses (agency, received_date);
+create index if not exists idx_judgments_foil_responses_agency_date on judgments.foil_responses (
+    agency, received_date
+);
 
 -- 3) Recreate the public view to match the table shape.
 create or replace view public.foil_responses as
 select
-  id,
-  case_id,
-  created_at,
-  received_date,
-  agency,
-  payload
+    id,
+    case_id,
+    created_at,
+    received_date,
+    agency,
+    payload
 from judgments.foil_responses;
 
 revoke all on public.foil_responses from public;
@@ -112,28 +116,28 @@ grant select on public.foil_responses to service_role;
 drop view if exists public.foil_responses;
 
 alter table judgments.foil_responses
-  add column if not exists source_agency text,
-  add column if not exists request_id text,
-  add column if not exists response_date date;
+add column if not exists source_agency text,
+add column if not exists request_id text,
+add column if not exists response_date date;
 
 update judgments.foil_responses
 set
-  source_agency = coalesce(source_agency, agency),
-  response_date = coalesce(response_date, received_date);
+    source_agency = coalesce(source_agency, agency),
+    response_date = coalesce(response_date, received_date);
 
 alter table judgments.foil_responses
-  drop column if exists agency,
-  drop column if exists received_date;
+drop column if exists agency,
+drop column if exists received_date;
 
 create or replace view public.foil_responses as
 select
-  id,
-  case_id,
-  source_agency,
-  request_id,
-  response_date,
-  payload,
-  created_at
+    id,
+    case_id,
+    source_agency,
+    request_id,
+    response_date,
+    payload,
+    created_at
 from judgments.foil_responses;
 
 revoke all on public.foil_responses from public;

@@ -2,7 +2,7 @@
 
 -- Ensure deterministic uniqueness for case ingestion
 create unique index if not exists ux_cases_org_src_num
-  on judgments.cases (org_id, source, case_number);
+on judgments.cases (org_id, source, case_number);
 
 -- Optional guard: prevent negative awarded amounts
 do $$
@@ -65,4 +65,6 @@ end;
 $$;
 
 -- Grant execution to standard roles
-grant execute on function public.insert_or_get_case(jsonb) to anon, authenticated, service_role;
+grant execute on function public.insert_or_get_case(jsonb) to anon,
+authenticated,
+service_role;

@@ -1,8 +1,7 @@
-
 create extension if not exists pgmq;
 
 -- Best-effort queue bootstrap; tolerate missing pgmq functions
-DO $$
+do $$
 DECLARE
   queue_name text;
 BEGIN
