@@ -1,31 +1,23 @@
-# Dragonfly - Civil Judgment Enforcement Automation
+# Dragonfly Civil – Agent Operating Manual
 
-## Project Setup Checklist
-
-- [x] Verify that the copilot-instructions.md file in the .github directory is created
-- [x] Clarify Project Requirements - Python backend, Postgres/Supabase, ETL automation
-- [x] Scaffold the Project - Create folder structure and placeholder files
-- [x] Customize the Project - Add schema, scripts, and configuration
-- [x] Install Required Extensions - Python, Database tools
-- [ ] Compile the Project - Install dependencies
-- [ ] Create and Run Task - Setup development tasks
-- [ ] Launch the Project - Test environment setup
-- [ ] Ensure Documentation is Complete - Update README
-
-## Project Overview
-
-Dragonfly is a civil-judgment enforcement automation system with:
-- Database: Postgres/Supabase (central truth)
-- CRM/outreach: Simplicity integration (CSV + API)
-- Automation: n8n or Python scheduling
-- ETL: Python 3.11+ scripts
-- Infrastructure: 12-factor .env config
-- Tooling: VS Code tasks.json
-
-## Development Guidelines
-
-- Python 3.11+ required
-- Follow 12-factor app principles
-- Keep env config in .env files
-- Use Supabase for local development
-- Document all processes in README
+- Mission: uphold a judgment-enforcement operating system; assume every change feeds production workflows.
+- Supabase/Postgres is the single source of truth. Author migrations in `supabase/migrations/` and apply them with `scripts/db_push.ps1`.
+- Canonical tables:
+	- `public.judgments` stores every judgment.
+	- `public.plaintiffs`, `public.plaintiff_contacts`, `public.plaintiff_status_history` power plaintiff intake and status.
+- Dashboard-critical views: `v_plaintiffs_overview`, `v_judgment_pipeline`, `v_enforcement_overview`, `v_enforcement_recent`, `v_plaintiff_call_queue`. Keep them deployable, documented, and fast.
+- Environment discipline:
+	- Discover target env via `get_supabase_env()` (reads `SUPABASE_MODE`).
+	- Resolve DSNs with `get_supabase_db_url()`; never hardcode credentials or pooler hosts.
+	- Hydrate env vars with `./scripts/load_env.ps1` before running CLI tooling.
+- After schema changes, run `python -m tools.doctor --env dev|prod` and `python -m tools.smoke_plaintiffs` to verify health and row visibility.
+- Data ingestion: normalize vendor exports with `etl/src/plaintiff_vendor_adapter.py`; load through `python -m etl.src.plaintiff_importer` (dry-run first, then `--commit`). Avoid ad-hoc SQL writes.
+- Toolbox norms:
+	- Prefer existing helpers (`tools.doctor`, `tools.pgrst_reload`, `tools.smoke_plaintiffs`) over bespoke scripts.
+	- Extend `src/supabase_client.py` when new credential or DSN logic is required so PowerShell, workers, and ETL stay aligned.
+	- Keep console logging concise, production-friendly, and free of secrets.
+- Frontend expectations (`dragonfly-dashboard/`):
+	- Consume the canonical views listed above.
+	- Provide resilient loading and error states so missing views or empty data never crash the UI.
+	- Validate builds with `npm run build` before committing major UI work.
+- Operate like the in-house Dragonfly engineer: plan for prod parity, use transactions for mutations, document intent, and leave the system healthier than you found it.

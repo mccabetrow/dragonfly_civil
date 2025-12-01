@@ -159,8 +159,13 @@ END $$;
 
 -- === Grants ================================================================
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT SELECT ON public.v_cases, public.v_collectability TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.insert_case(jsonb) TO anon, authenticated, service_role;
+GRANT SELECT ON public.v_cases,
+public.v_collectability TO anon,
+authenticated,
+service_role;
+GRANT EXECUTE ON FUNCTION public.insert_case(jsonb) TO anon,
+authenticated,
+service_role;
 -- only if it exists:
 DO $$
 BEGIN

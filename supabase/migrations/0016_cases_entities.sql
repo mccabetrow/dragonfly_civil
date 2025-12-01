@@ -4,13 +4,13 @@ create schema if not exists parties;
 
 -- A.3 judgments.cases
 alter table judgments.cases
-  add column if not exists case_id uuid;
+add column if not exists case_id uuid;
 
 alter table judgments.cases
-  alter column case_id set default gen_random_uuid();
+alter column case_id set default gen_random_uuid();
 
 alter table judgments.cases
-  alter column case_id set not null;
+alter column case_id set not null;
 
 do $$
 begin
@@ -60,50 +60,52 @@ begin
 end $$;
 
 alter table judgments.cases
-  add column if not exists filing_date date;
+add column if not exists filing_date date;
 
 alter table judgments.cases
-  add column if not exists judgment_date date;
+add column if not exists judgment_date date;
 
 alter table judgments.cases
-  add column if not exists amount_awarded numeric(14,2);
+add column if not exists amount_awarded numeric(14, 2);
 
 alter table judgments.cases
-  add column if not exists currency text;
+add column if not exists currency text;
 
 update judgments.cases
 set currency = 'USD'
 where currency is null;
 
 alter table judgments.cases
-  alter column currency set default 'USD';
+alter column currency set default 'USD';
 
 alter table judgments.cases
-  add column if not exists raw jsonb;
+add column if not exists raw jsonb;
 
 update judgments.cases
 set raw = coalesce(raw, '{}'::jsonb);
 
 alter table judgments.cases
-  alter column raw set default '{}'::jsonb;
+alter column raw set default '{}'::jsonb;
 
 alter table judgments.cases
-  alter column raw set not null;
+alter column raw set not null;
 
 create table if not exists judgments.cases (
-  case_id         uuid primary key default gen_random_uuid(),
-  org_id          uuid not null default gen_random_uuid(), -- temp default for smoke; later tie to orgs table
-  case_number     text not null,
-  source          text not null,              -- e.g. 'webcivil_local','nyscef','vendor'
-  title           text,                       -- caption, "Smith v. Jones"
-  court           text,                       -- human-friendly court name
-  filing_date     date,
-  judgment_date   date,
-  amount_awarded  numeric(14,2),
-  currency        text default 'USD',
-  raw             jsonb not null default '{}'::jsonb,  -- full inbound payload
-  created_at      timestamptz not null default now(),
-  updated_at      timestamptz not null default now()
+    case_id uuid primary key default gen_random_uuid(),
+    -- temp default for smoke; later tie to orgs table
+    org_id uuid not null default gen_random_uuid(),
+    case_number text not null,
+    -- e.g. 'webcivil_local','nyscef','vendor'
+    source text not null,
+    title text,                       -- caption, "Smith v. Jones"
+    court text,                       -- human-friendly court name
+    filing_date date,
+    judgment_date date,
+    amount_awarded numeric(14, 2),
+    currency text default 'USD',
+    raw jsonb not null default '{}'::jsonb,  -- full inbound payload
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
 );
 
 -- Updater trigger
@@ -119,19 +121,24 @@ drop view if exists public.v_cases_with_org;
 
 create or replace view public.v_cases_with_org as
 select
-  c.case_id,
-  c.org_id,
-  c.case_number,
-  c.source,
-  c.title,
-  c.court,
-  c.created_at
-from judgments.cases c;
+    c.case_id,
+    c.org_id,
+    c.case_number,
+    c.source,
+    c.title,
+    c.court,
+    c.created_at
+from judgments.cases as c;
 
 -- Grants (keep aligned with your screenshot)
-grant usage on schema public, judgments, parties to anon, authenticated, service_role;
+grant usage on schema public,
+judgments,
+parties to anon,
+authenticated,
+service_role;
 grant select on public.v_cases_with_org to anon, authenticated, service_role;
-grant select, insert, update on judgments.cases to service_role; -- anon/auth insert goes via RPC
+-- anon/auth insert goes via RPC
+grant select, insert, update on judgments.cases to service_role;
 
 -- RPC (idempotent) - matches your "wrap under payload" rule
 create or replace function public.insert_case(payload jsonb)
@@ -191,7 +198,9 @@ declare
   return new_id;
 end $$;
 revoke all on function public.insert_case(jsonb) from public;
-grant execute on function public.insert_case(jsonb) to anon, authenticated, service_role;
+grant execute on function public.insert_case(jsonb) to anon,
+authenticated,
+service_role;
 
 -- postgrest schema cache refresh (service_role only)
 create or replace function public.pgrst_reload()

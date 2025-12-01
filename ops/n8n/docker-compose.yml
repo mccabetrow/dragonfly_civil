@@ -25,6 +25,7 @@ services:
       - DB_POSTGRESDB_PASSWORD=${N8N_DB_POSTGRESDB_PASSWORD}
     volumes:
       - n8n_data:/home/node/.n8n
+      - ../../etl/src/auth:/app/etl/src/auth
     depends_on: [db]
 volumes:
   n8n_db: {}

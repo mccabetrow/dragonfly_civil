@@ -34,8 +34,10 @@ begin
 end $$;
 
 -- Replace RPC to set source_system fallback
-drop function if exists public.insert_case(jsonb);
-drop function if exists public.insert_case(text, text, text, numeric, text, text);
+drop function if exists public.insert_case (jsonb);
+drop function if exists public.insert_case (
+    text, text, text, numeric, text, text
+);
 
 create or replace function public.insert_case(payload jsonb)
 returns uuid
@@ -81,4 +83,6 @@ begin
   return v_case_id;
 end
 $$;
-grant execute on function public.insert_case(jsonb) to anon, authenticated, service_role;
+grant execute on function public.insert_case(jsonb) to anon,
+authenticated,
+service_role;

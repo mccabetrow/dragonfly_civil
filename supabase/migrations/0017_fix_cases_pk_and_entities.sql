@@ -6,28 +6,30 @@ create schema if not exists parties;
 
 -- Ensure case identifiers are populated, unique, and constrained
 alter table if exists judgments.cases
-  add column if not exists case_id uuid default gen_random_uuid();
+add column if not exists case_id uuid default gen_random_uuid();
 
 update judgments.cases
 set case_id = gen_random_uuid()
 where case_id is null;
 
 with duplicates as (
-  select ctid
-  from (
-    select ctid,
-           row_number() over (partition by case_id order by ctid) as rn
-    from judgments.cases
-  ) ranked
-  where rn > 1
+    select ctid
+    from (
+        select
+            ctid,
+            row_number() over (partition by case_id order by ctid) as rn
+        from judgments.cases
+    ) as ranked
+    where rn > 1
 )
+
 update judgments.cases c
 set case_id = gen_random_uuid()
-from duplicates d
+from duplicates as d
 where c.ctid = d.ctid;
 
 alter table judgments.cases
-  alter column case_id set not null;
+alter column case_id set not null;
 
 do $$
 begin

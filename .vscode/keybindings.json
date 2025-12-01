@@ -1,0 +1,22 @@
+[
+  {
+    "key": "ctrl+shift+d",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Doctor All"
+  },
+  {
+    "key": "ctrl+shift+t",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Dev: Quick Checks"
+  },
+  {
+    "key": "ctrl+alt+9",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Dev: 900 Dry Run"
+  },
+  {
+    "key": "ctrl+alt+p",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Prod: Preflight Promote"
+  }
+]

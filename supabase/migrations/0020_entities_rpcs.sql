@@ -16,12 +16,12 @@ drop view if exists public.v_entities_simple;
 
 create or replace view public.v_entities_simple as
 select
-  e.entity_id,
-  e.case_id,
-  e.role,
-  e.name_full,
-  e.created_at
-from parties.entities e;
+    e.entity_id,
+    e.case_id,
+    e.role,
+    e.name_full,
+    e.created_at
+from parties.entities as e;
 
 drop trigger if exists trg_entities_touch on parties.entities;
 create trigger trg_entities_touch
@@ -74,7 +74,9 @@ begin
 end;
 $$;
 
-grant execute on function public.insert_entity(jsonb) to anon, authenticated, service_role;
+grant execute on function public.insert_entity(jsonb) to anon,
+authenticated,
+service_role;
 
 -- RPC: insert case with related entities
 create or replace function public.insert_case_with_entities(payload jsonb)
@@ -112,4 +114,6 @@ begin
 end;
 $$;
 
-grant execute on function public.insert_case_with_entities(jsonb) to anon, authenticated, service_role;
+grant execute on function public.insert_case_with_entities(jsonb) to anon,
+authenticated,
+service_role;

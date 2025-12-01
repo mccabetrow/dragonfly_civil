@@ -1,0 +1,6 @@
+﻿CaseNumber,DefendantName,PlaintiffName,JudgmentDate,JudgmentAmount,Court,County
+NY-2024-001,Michael Johnson,First Bank of NY,2024-03-15,$12500.00,Supreme Court,New York
+NY-2024-002,Sarah Williams,Capital Credit LLC,01/22/2024,$8750.50,Civil Court,Kings
+NY-2024-003,Robert Chen,Metro Collections Inc,2024-02-28,$3200.00,District Court,Queens
+NY-2024-004,Amanda Lopez,Premier Finance Corp,03/01/2024,$15000.00,Supreme Court,Bronx
+NY-2024-005,David Kim,Allied Investments,2024-04-10,$6500.00,Civil Court,Richmond

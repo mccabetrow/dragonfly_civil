@@ -1,0 +1,10 @@
+columns:
+  case_number: [case_number, CaseNumber, docket_no]
+  source: [source, Source]
+  filing_court: [filing_court, Court, court]
+  filing_date: [filing_date, FilingDate, date_filed]
+  judgment_amount: [judgment_amount, amount, JudgmentAmount]
+  status: [status, Status]
+defaults:
+  source: csv
+  status: ingested

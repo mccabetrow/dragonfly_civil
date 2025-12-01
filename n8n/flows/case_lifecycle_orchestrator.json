@@ -1,0 +1,248 @@
+{
+  "name": "Case Lifecycle Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "dragonfly/judgments/signed",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "judgment_signed_webhook",
+      "name": "Judgment Signed Webhook",
+      "type": "n8n-nodes-base.httpTrigger",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "const payload = items[0].json ?? {};\nconst record = payload.record ?? payload.new ?? payload.after ?? payload;\nconst statusRaw = record.status ?? payload.status ?? '';\nconst status = String(statusRaw).trim().toLowerCase();\nconst caseNumberRaw = record.case_number ?? payload.case_number ?? record.caseNumber ?? payload.caseNumber;\n\nif (!caseNumberRaw) {\n  throw new Error('case_number missing from trigger payload');\n}\n\nconst templateRaw = record.template_code ?? payload.template_code ?? record.templateCode ?? payload.templateCode ?? 'INFO_SUBPOENA_FLOW';\n\nreturn [\n  {\n    json: {\n      status,\n      case_number: String(caseNumberRaw).trim(),\n      template_code: String(templateRaw || 'INFO_SUBPOENA_FLOW').trim() || 'INFO_SUBPOENA_FLOW',\n      trigger_payload: payload\n    }\n  }\n];"
+      },
+      "id": "evaluate_trigger",
+      "name": "Evaluate Trigger",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "value2": "signed",
+              "operation": "equal"
+            }
+          ]
+        }
+      },
+      "id": "status_signed",
+      "name": "Status Signed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json"
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'enforce', payload: { case_number: $json.case_number, template_code: $json.template_code }, idempotency_key: `enforce:${$json.case_number}` }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_enforcement_job",
+      "name": "Queue Enforcement Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "event_type",
+              "value": "enforcement_flow_spawned"
+            }
+          ],
+          "json": [
+            {
+              "name": "event_payload",
+              "value": "={{ {\n  case_number: $node[\"Evaluate Trigger\"].json.case_number,\n  template_code: $node[\"Evaluate Trigger\"].json.template_code,\n  queue_message_id: $json.queue_job ?? Object.values($json)[0] ?? null,\n  trigger_payload: $node[\"Evaluate Trigger\"].json.trigger_payload\n} }}"
+            }
+          ]
+        }
+      },
+      "id": "prepare_event",
+      "name": "Prepare Event",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/log_event",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json"
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ event_type: $json.event_type, payload: $json.event_payload }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "log_event_rpc",
+      "name": "Log Event RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "queued"
+            },
+            {
+              "name": "case_number",
+              "value": "={{ $node[\"Evaluate Trigger\"].json.case_number }}"
+            },
+            {
+              "name": "template_code",
+              "value": "={{ $node[\"Evaluate Trigger\"].json.template_code }}"
+            },
+            {
+              "name": "queue_message_id",
+              "value": "={{ String($node[\"Prepare Event\"].json.event_payload.queue_message_id ?? '') }}"
+            }
+          ],
+          "json": [
+            {
+              "name": "log_event_response",
+              "value": "={{ $json }}"
+            }
+          ]
+        }
+      },
+      "id": "success_payload",
+      "name": "Success Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "responseBody": "={{ $json }}"
+      },
+      "id": "respond_success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "responseBody": "={{ { status: 'ignored', reason: 'status is not signed', received_status: $json.status ?? null } }}"
+      },
+      "id": "respond_skip",
+      "name": "Respond Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Judgment Signed Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Trigger": {
+      "main": [
+        [
+          {
+            "node": "Status Signed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Signed?": {
+      "main": [
+        [
+          {
+            "node": "Queue Enforcement Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Enforcement Job": {
+      "main": [
+        [
+          {
+            "node": "Prepare Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Event": {
+      "main": [
+        [
+          {
+            "node": "Log Event RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Event RPC": {
+      "main": [
+        [
+          {
+            "node": "Success Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Payload": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

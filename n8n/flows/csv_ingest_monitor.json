@@ -1,0 +1,69 @@
+{
+  "name": "CSV Ingest Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 10,
+        "unit": "minutes"
+      },
+      "id": "cron_trigger",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "const threshold = 25;\nconst endpoint = 'https://automation.local/health/ingest';\n\nconst response = await this.helpers.httpRequest({\n  method: 'GET',\n  url: endpoint,\n  json: true,\n});\n\nconst backlogValue = response.backlog ?? response.queue_backlog ?? response.pending ?? 0;\nconst backlog = Number(backlogValue);\n\nif (!Number.isFinite(backlog)) {\n  throw new Error('Ingest monitor response missing backlog value');\n}\n\nif (backlog <= threshold) {\n  return [];\n}\n\nreturn [\n  {\n    json: {\n      backlog,\n      threshold,\n      endpoint,\n      summary: `Ingest backlog ${backlog} exceeds threshold ${threshold}`,\n      observed_at: new Date().toISOString(),\n      raw_response: response\n    }\n  }\n];"
+      },
+      "id": "check_ingest_backlog",
+      "name": "Check Ingest Backlog",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.example.com/discord/dragonfly",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\n  \"content\": \"{{$json.summary}}\",\n  \"embeds\": [\n    {\n      \"title\": \"CSV Ingest Backlog\",\n      \"description\": \"Backlog {{$json.backlog}} items exceeds threshold {{$json.threshold}}\",\n      \"color\": 15158332,\n      \"timestamp\": \"{{$json.observed_at}}\"\n    }\n  ]\n}",
+        "headerParametersJson": "={\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "backlog_alert",
+      "name": "Backlog Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Ingest Backlog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Ingest Backlog": {
+      "main": [
+        [
+          {
+            "node": "Backlog Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

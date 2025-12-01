@@ -1,0 +1,97 @@
+name: Dragonfly CI
+
+on:
+  push:
+    branches:
+      - main
+      - "release/*"
+  pull_request:
+    branches:
+      - main
+      - "release/*"
+
+jobs:
+  test-and-validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SUPABASE_URL: https://ci.dragonfly.local
+      SUPABASE_SERVICE_ROLE_KEY: local-service-role-key
+      SUPABASE_URL_PROD: https://ci.dragonfly.local
+      SUPABASE_SERVICE_ROLE_KEY_PROD: local-service-role-key
+      SUPABASE_MODE: dev
+      NODE_ENV: test
+      DEMO_ENV: local
+      DRAGONFLY_DOCTOR_SKIP_REMOTE: "1"
+      SUPABASE_DB_URL: postgresql://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      SUPABASE_DB_PASSWORD: postgres
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+      PGPORT: 5432
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint manual SQL mutations
+        run: python tools/sql_lint.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: dragonfly-dashboard/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: dragonfly-dashboard
+        run: npm ci
+
+      - name: Run unit tests
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          python -m pytest -q
+
+      - name: Apply Supabase schema to local Postgres
+        run: |
+          psql "$SUPABASE_DB_URL" -f supabase/schema.sql
+
+      - name: Run config_check (dev)
+        run: python -m tools.config_check --env dev
+
+      - name: Run schema consistency check (dev)
+        run: python -m tools.check_schema_consistency --env dev
+
+      - name: Validate n8n flows (dev)
+        run: python -m tools.validate_n8n_flows --env dev
+
+      - name: Build dashboard
+        working-directory: dragonfly-dashboard
+        run: npm run build --if-present

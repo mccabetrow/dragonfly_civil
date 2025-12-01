@@ -5,32 +5,32 @@ create schema if not exists ingestion;
 
 -- Minimal audit log for RPC-driven inserts
 create table if not exists ingestion.runs (
-  run_id uuid primary key default gen_random_uuid(),
-  event text not null,
-  ref_id uuid,
-  payload jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
+    run_id uuid primary key default gen_random_uuid(),
+    event text not null,
+    ref_id uuid,
+    payload jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now()
 );
 
 alter table ingestion.runs
-  add column if not exists event text,
-  add column if not exists ref_id uuid,
-  add column if not exists payload jsonb,
-  add column if not exists created_at timestamptz;
+add column if not exists event text,
+add column if not exists ref_id uuid,
+add column if not exists payload jsonb,
+add column if not exists created_at timestamptz;
 
 update ingestion.runs
 set
-  event = coalesce(event, 'unknown'),
-  payload = coalesce(payload, '{}'::jsonb),
-  created_at = coalesce(created_at, now());
+    event = coalesce(event, 'unknown'),
+    payload = coalesce(payload, '{}'::jsonb),
+    created_at = coalesce(created_at, now());
 
 alter table ingestion.runs
-  alter column event set not null,
-  alter column ref_id drop not null,
-  alter column payload set default '{}'::jsonb,
-  alter column payload set not null,
-  alter column created_at set default now(),
-  alter column created_at set not null;
+alter column event set not null,
+alter column ref_id drop not null,
+alter column payload set default '{}'::jsonb,
+alter column payload set not null,
+alter column created_at set default now(),
+alter column created_at set not null;
 
 -- Trigger function: log case inserts
 create or replace function public.log_insert_case()

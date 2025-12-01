@@ -1,22 +1,28 @@
-param(
-  [string]$EnvFile = ".env"
+Param(
+    [string]$EnvPath = $(Join-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '..') -ChildPath '.env')
 )
 
-if (!(Test-Path $EnvFile)) {
-  Write-Error "No .env found at $EnvFile"
-  exit 1
+Write-Host "Loading environment variables from $EnvPath"
+
+if (-not (Test-Path -LiteralPath $EnvPath)) {
+    Write-Host "  .env file not found" -ForegroundColor Yellow
+    return
 }
 
-Get-Content $EnvFile | ForEach-Object {
-  if ($_ -match '^\s*#') { return }
-  if ($_ -match '^\s*$') { return }
-  if ($_ -match '^\s*([^=]+)\s*=\s*(.*)\s*$') {
-    $key = $matches[1].Trim()
-    $val = $matches[2].Trim().Trim("'`"").Trim()
-    if ($val -match '^(.*?)(\s+#.*)$') { $val = $matches[1].Trim() }
-    Set-Item -Path "Env:$key" -Value $val
-  }
+Get-Content -Path $EnvPath | ForEach-Object {
+    if ($_ -match '^\s*#') { return }
+    if ($_ -match '^\s*$') { return }
+
+    $name, $value = $_ -split('=', 2)
+    $name  = $name.Trim()
+    $value = $value.Trim()
+
+    if (-not [string]::IsNullOrWhiteSpace($name)) {
+        Set-Item -Path "Env:$name" -Value $value
+        $isSensitive = $name -match '^SUPABASE_DB_URL' -or $name -match 'PASSWORD'
+        $displayValue = if ($isSensitive) { '***' } else { $value }
+        Write-Host "  $name=$displayValue"
+    }
 }
 
-Write-Host "Loaded env: SUPABASE_PROJECT_REF=$($env:SUPABASE_PROJECT_REF)"
-Write-Host "Loaded env: SUPABASE_SERVICE_ROLE_KEY (length)=$($env:SUPABASE_SERVICE_ROLE_KEY.Length)"
+Write-Host "Done loading .env"

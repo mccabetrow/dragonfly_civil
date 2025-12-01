@@ -71,4 +71,6 @@ begin
   return jsonb_build_object('ok', true, 'case_id', new_id);
 end $$;
 
-grant execute on function public.insert_case(jsonb) to anon, authenticated, service_role;
+grant execute on function public.insert_case(jsonb) to anon,
+authenticated,
+service_role;

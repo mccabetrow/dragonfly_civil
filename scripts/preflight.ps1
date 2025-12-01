@@ -38,9 +38,9 @@ function Invoke-Check {
 
 $allPassed = $true
 
-$allPassed = Invoke-Check -Description 'v_cases_with_org reachable' -Probe {
+$allPassed = $allPassed -and (Invoke-Check -Description 'v_cases_with_org reachable' -Probe {
     Invoke-RestMethod -Method Get -Uri "$base/rest/v1/v_cases_with_org?select=case_id&limit=1" -Headers $publicHeaders | Out-Null
-} -and $allPassed
+})
 
 $idempotentHeaders = @{
     apikey = $anon
@@ -65,12 +65,39 @@ $payload = [pscustomobject]@{
     }
 } | ConvertTo-Json -Depth 5
 
-$allPassed = Invoke-Check -Description 'insert_or_get_case_with_entities idempotent RPC' -Probe {
+$allPassed = $allPassed -and (Invoke-Check -Description 'insert_or_get_case_with_entities idempotent RPC' -Probe {
     Invoke-RestMethod -Method Post -Uri "$base/rest/v1/rpc/insert_or_get_case_with_entities" -Headers $idempotentHeaders -Body $payload | Out-Null
-} -and $allPassed
+})
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$pythonExe = Join-Path $repoRoot '.venv\Scripts\python.exe'
+if (-not (Test-Path $pythonExe)) {
+    throw "Python interpreter not found at $pythonExe. Run scripts\bootstrap.ps1 to set up the virtual environment."
+}
+
+$allPassed = $allPassed -and (Invoke-Check -Description 'pytest suite' -Probe {
+    & $pythonExe -m pytest -q
+    if ($LASTEXITCODE -ne 0) {
+        throw "pytest failed with exit code $LASTEXITCODE"
+    }
+})
+
+$allPassed = $allPassed -and (Invoke-Check -Description 'tools.db_check' -Probe {
+    & $pythonExe -m tools.db_check
+    if ($LASTEXITCODE -ne 0) {
+        throw "tools.db_check failed with exit code $LASTEXITCODE"
+    }
+})
+
+$allPassed = $allPassed -and (Invoke-Check -Description 'tools.doctor' -Probe {
+    & $pythonExe -m tools.doctor
+    if ($LASTEXITCODE -ne 0) {
+        throw "tools.doctor failed with exit code $LASTEXITCODE"
+    }
+})
 
 if ($allPassed) {
-    Write-Host 'Preflight checks passed.'
+    Write-Host 'Preflight OK'
     exit 0
 }
 else {
