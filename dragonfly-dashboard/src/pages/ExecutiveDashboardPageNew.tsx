@@ -20,7 +20,6 @@ import { TierDistributionBar } from '../components/dashboard/TierDistributionBar
 import type { TierSegment } from '../components/dashboard/TierDistributionBar';
 import ActionList from '../components/dashboard/ActionList';
 import { DashboardError } from '../components/DashboardError';
-import { CardHeader as LegacyCardHeader, CardTitle as LegacyCardTitle, CardContent as LegacyCardContent } from '../components/ui/Card';
 import { KPICard, RecoveryAreaChart, PortfolioDonutChart } from '../components/charts';
 import type { RecoveryDataPoint, PortfolioSegment } from '../components/charts';
 import { useEnforcementMetrics, useIntakeMetrics, type IntakeMetricRow } from '../hooks/useExecutiveMetrics';
@@ -28,7 +27,7 @@ import { useEnforcementOverview } from '../hooks/useEnforcementOverview';
 import { usePlaintiffCallQueue } from '../hooks/usePlaintiffCallQueue';
 import { usePriorityCases, toActionItems } from '../hooks/usePriorityCases';
 import { useRefreshBus } from '../context/RefreshContext';
-import { Card, CardContent, TierBadge } from '../components/primitives';
+import { Card, CardContent, CardHeader, CardTitle, TierBadge, Button } from '../components/primitives';
 
 const RANGE_OPTIONS = [
   { label: '8 weeks', value: 8 },
@@ -316,24 +315,24 @@ const ExecutiveDashboardPageNew: React.FC = () => {
       {/* Today's Priorities */}
       {isPriorityError ? (
         <Card>
-          <LegacyCardHeader>
-            <LegacyCardTitle className="flex items-center gap-2 text-rose-700">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-rose-700">
               <AlertTriangle className="h-5 w-5" />
               Unable to load priorities
-            </LegacyCardTitle>
-          </LegacyCardHeader>
-          <LegacyCardContent>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
             <p className="mb-3 text-sm text-slate-600">
               {priorityCasesState.errorMessage ?? "We couldn't fetch today's priority cases."}
             </p>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleRefresh}
-              className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
             >
               Try again
-            </button>
-          </LegacyCardContent>
+            </Button>
+          </CardContent>
         </Card>
       ) : (
         <motion.section

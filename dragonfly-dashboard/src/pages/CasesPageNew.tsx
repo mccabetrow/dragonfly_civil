@@ -14,14 +14,13 @@
  */
 
 import { type FC, useEffect } from 'react';
-import { motion } from 'framer-motion';
 import { useSearchParams } from 'react-router-dom';
 import { Briefcase } from 'lucide-react';
 import CaseTable from '../components/cases/CaseTable';
 import CaseDetailDrawer from '../components/cases/CaseDetailDrawer';
 import HelpTooltip from '../components/HelpTooltip';
 import ZeroStateCard from '../components/ZeroStateCard';
-import { PageHeader } from '../components/primitives';
+import { PageHeader, Card, Button } from '../components/primitives';
 import {
   useCasesTable,
   CASES_TIER_OPTIONS,
@@ -75,11 +74,7 @@ const CasesPage: FC = () => {
       />
 
       {/* Main Table Section */}
-      <motion.section 
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
-      >
+      <Card padding="none" border="strong" hoverable>
         {/* Section Header with Filters */}
         <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -141,13 +136,14 @@ const CasesPage: FC = () => {
             Showing {displayRows.length.toLocaleString()} of {totalCount.toLocaleString()} cases
             {hasFilters && (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={resetFilters}
-                  className="ml-3 text-blue-600 normal-case hover:text-blue-700 hover:underline"
+                  className="ml-3 text-blue-600"
                 >
                   Clear filters
-                </button>
+                </Button>
                 <span className="ml-2 text-slate-400 normal-case" title="Filters persist across page refreshes">
                   (saved)
                 </span>
@@ -209,7 +205,7 @@ const CasesPage: FC = () => {
             />
           </div>
         )}
-      </motion.section>
+      </Card>
 
       {/* Case Detail Drawer */}
       <CaseDetailDrawer

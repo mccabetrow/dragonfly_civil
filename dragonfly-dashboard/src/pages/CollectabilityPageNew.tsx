@@ -20,13 +20,13 @@
 
 import { type FC, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { DollarSign, TrendingUp, Filter } from 'lucide-react';
+import { DollarSign, TrendingUp, Filter, Target } from 'lucide-react';
 import DataTable from '../components/ui/DataTable';
 import HelpTooltip from '../components/HelpTooltip';
 import ZeroStateCard from '../components/ZeroStateCard';
 import { KPICard } from '../components/charts';
 import { cn } from '../lib/tokens';
-import { TierBadge } from '../components/primitives';
+import { TierBadge, PageHeader, Card } from '../components/primitives';
 import {
   useCollectabilityTable,
   TIER_OPTIONS,
@@ -79,6 +79,13 @@ const CollectabilityPage: FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Page Header */}
+      <PageHeader
+        title="Collectability"
+        description="This page ranks every judgment by how likely we are to collect. Start with Tier A — those are your best bets. Click a tier card below to filter the list."
+        icon={<Target className="h-5 w-5" />}
+      />
+
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2">
         <KPICard
@@ -96,15 +103,6 @@ const CollectabilityPage: FC = () => {
           loading={isLoading}
         />
       </div>
-
-      {/* Page Header */}
-      <header className="space-y-2">
-        <p className="text-sm text-slate-600">
-          This page ranks every judgment by how likely we are to collect. 
-          Start with <strong>Tier A</strong> — those are your best bets. 
-          Click a tier card below to filter the list.
-        </p>
-      </header>
 
       {/* Tier Summary Cards */}
       <section className="grid gap-6 md:grid-cols-3">
@@ -138,7 +136,7 @@ const CollectabilityPage: FC = () => {
       </section>
 
       {/* Main Data Table Section */}
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <Card padding="none" border="strong">
         {/* Section Header with Filters */}
         <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -273,7 +271,7 @@ const CollectabilityPage: FC = () => {
             />
           </div>
         )}
-      </section>
+      </Card>
     </div>
   );
 };
