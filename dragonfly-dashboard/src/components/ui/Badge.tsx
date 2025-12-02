@@ -1,4 +1,5 @@
 import { type FC, type ReactNode } from 'react';
+import { Flame, TrendingUp, Minus } from 'lucide-react';
 import { cn } from '../../lib/design-tokens';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -22,9 +23,9 @@ const variantClasses: Record<BadgeVariant, string> = {
   warning: 'bg-amber-50 text-amber-700 border-amber-200',
   error: 'bg-rose-50 text-rose-700 border-rose-200',
   info: 'bg-blue-50 text-blue-700 border-blue-200',
-  'tier-a': 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  'tier-b': 'bg-amber-50 text-amber-700 border-amber-200',
-  'tier-c': 'bg-slate-100 text-slate-600 border-slate-200',
+  'tier-a': 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold',
+  'tier-b': 'bg-amber-100 text-amber-800 border-amber-300',
+  'tier-c': 'bg-slate-100 text-slate-500 border-slate-200',
 };
 
 const dotColors: Record<BadgeVariant, string> = {
@@ -33,8 +34,8 @@ const dotColors: Record<BadgeVariant, string> = {
   warning: 'bg-amber-500',
   error: 'bg-rose-500',
   info: 'bg-blue-500',
-  'tier-a': 'bg-emerald-500',
-  'tier-b': 'bg-amber-500',
+  'tier-a': 'bg-emerald-600',
+  'tier-b': 'bg-amber-600',
   'tier-c': 'bg-slate-400',
 };
 
@@ -77,22 +78,32 @@ export const Badge: FC<BadgeProps> = ({
 export interface TierBadgeProps {
   tier: 'A' | 'B' | 'C' | string;
   showDot?: boolean;
+  showIcon?: boolean;
   size?: BadgeSize;
   className?: string;
 }
 
+const tierIcons: Record<'A' | 'B' | 'C', typeof Flame> = {
+  A: Flame,
+  B: TrendingUp,
+  C: Minus,
+};
+
 export const TierBadge: FC<TierBadgeProps> = ({
   tier,
-  showDot = true,
+  showDot = false,
+  showIcon = true,
   size = 'md',
   className,
 }) => {
-  const normalized = tier.toUpperCase();
+  const normalized = tier.toUpperCase() as 'A' | 'B' | 'C';
   const variant: BadgeVariant =
     normalized === 'A' ? 'tier-a' : normalized === 'B' ? 'tier-b' : 'tier-c';
+  const Icon = tierIcons[normalized] ?? Minus;
 
   return (
     <Badge variant={variant} size={size} dot={showDot} className={className}>
+      {showIcon && <Icon className="h-3 w-3" aria-hidden="true" />}
       Tier {normalized}
     </Badge>
   );

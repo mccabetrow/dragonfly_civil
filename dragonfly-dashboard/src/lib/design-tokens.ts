@@ -10,12 +10,14 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const colors = {
-  // Brand Colors
+  // Brand Colors – Dragonfly indigo for stronger identity
   brand: {
-    primary: 'blue-600',
-    primaryHover: 'blue-700',
-    primaryLight: 'blue-50',
-    primaryMuted: 'blue-100',
+    primary: 'indigo-600',
+    primaryHover: 'indigo-700',
+    primaryLight: 'indigo-50',
+    primaryMuted: 'indigo-100',
+    primaryDark: 'indigo-800',
+    accent: 'violet-500', // secondary accent for highlights
   },
   
   // Tier Colors (the core business concept)
@@ -201,8 +203,8 @@ export const components = {
 
   // Button styles
   button: {
-    base: 'inline-flex items-center justify-center font-semibold transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
-    primary: 'bg-blue-600 text-white hover:bg-blue-700 focus-visible:ring-blue-500',
+    base: 'inline-flex items-center justify-center font-semibold transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 active:scale-[0.98]',
+    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 focus-visible:ring-indigo-500',
     secondary: 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 focus-visible:ring-slate-500',
     ghost: 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-slate-500',
     danger: 'bg-rose-600 text-white hover:bg-rose-700 focus-visible:ring-rose-500',
@@ -215,7 +217,7 @@ export const components = {
 
   // Input styles
   input: {
-    base: 'rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20',
+    base: 'rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20',
     error: 'border-rose-300 focus:border-rose-500 focus:ring-rose-500/20',
     disabled: 'bg-slate-100 text-slate-500 cursor-not-allowed',
   },
@@ -266,14 +268,75 @@ export const animation = {
   fast: 'duration-150',
   normal: 'duration-200',
   slow: 'duration-300',
+  drawer: 'duration-300',
 
   // Easing
   easeOut: 'ease-out',
   easeInOut: 'ease-in-out',
+  spring: 'cubic-bezier(0.32, 0.72, 0, 1)',
 
   // Common transitions
   hover: 'transition-all duration-200 ease-out',
   focus: 'transition-shadow duration-150 ease-out',
+  
+  // Micro-interactions
+  press: 'active:scale-[0.98] active:transition-transform',
+  hoverScale: 'hover:scale-[1.01] transition-transform duration-150',
+  lift: 'hover:-translate-y-0.5 transition-transform duration-150',
+  
+  // Drawer animations
+  drawerSlideIn: 'animate-drawer-slide-in',
+  drawerSlideOut: 'animate-drawer-slide-out',
+  
+  // Fade animations
+  fadeIn: 'animate-fade-in',
+  fadeOut: 'animate-fade-out',
+  
+  // Scale animations
+  scaleIn: 'animate-scale-in',
+} as const;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SHADOWS TOKENS
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const shadows = {
+  // Elevation levels – refined for depth
+  sm: 'shadow-sm',
+  md: 'shadow-md',
+  lg: 'shadow-lg',
+  xl: 'shadow-xl',
+  
+  // Specialty shadows – tuned for Dragonfly
+  card: 'shadow-[0_1px_3px_0_rgb(0_0_0/0.04),0_1px_2px_-1px_rgb(0_0_0/0.04)]',
+  cardHover: 'shadow-[0_4px_12px_0_rgb(0_0_0/0.08),0_2px_4px_-2px_rgb(0_0_0/0.04)]',
+  dropdown: 'shadow-lg shadow-slate-200/60',
+  drawer: 'shadow-2xl shadow-slate-900/20',
+  modal: 'shadow-2xl shadow-slate-900/20',
+  header: 'shadow-[0_1px_2px_0_rgb(0_0_0/0.03)]',
+  
+  // Color-tinted shadows
+  indigo: 'shadow-lg shadow-indigo-500/10',
+  emerald: 'shadow-lg shadow-emerald-500/10',
+  violet: 'shadow-lg shadow-violet-500/10',
+} as const;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BORDER RADIUS TOKENS
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const radii = {
+  sm: 'rounded-lg',
+  md: 'rounded-xl',
+  lg: 'rounded-2xl',
+  full: 'rounded-full',
+  
+  // Component-specific
+  card: 'rounded-2xl',
+  button: 'rounded-xl',
+  input: 'rounded-xl',
+  badge: 'rounded-full',
+  avatar: 'rounded-full',
 } as const;
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -1,28 +1,32 @@
 /**
- * ExecutiveDashboardPage - Dad's quick-glance scoreboard
+ * ExecutiveDashboardPageNew - Command Center
  *
- * Simplified layout: Scoreboard → Today's Priorities → Trend Chart
- * Fast, clean, no cognitive load.
+ * True operations command center with:
+ * - Hero strip with snapshot + 7-day trend
+ * - Tier distribution bar
+ * - Today's Priorities with tier badges
+ * - Weekly flow chart
  */
 import React, { useMemo, useState } from 'react';
-import { BarChart3, RefreshCw, AlertTriangle } from 'lucide-react';
-import { ExecutiveScoreboard } from '../components/ExecutiveScoreboard';
-import type { ScoreboardMetric } from '../components/ExecutiveScoreboard';
+import { useNavigate } from 'react-router-dom';
+import { BarChart3, AlertTriangle, Target } from 'lucide-react';
 import MetricsGate from '../components/MetricsGate';
 import { EnforcementFlowChart } from '../components/EnforcementFlowChart';
 import type { EnforcementFlowPoint } from '../components/EnforcementFlowChart';
 import EmptyState from '../components/EmptyState';
+import { OverviewHero } from '../components/dashboard/OverviewHero';
+import { TierDistributionBar } from '../components/dashboard/TierDistributionBar';
+import type { TierSegment } from '../components/dashboard/TierDistributionBar';
 import ActionList from '../components/dashboard/ActionList';
 import { DashboardError } from '../components/DashboardError';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
+import { Badge } from '../components/ui/Badge';
 import { useEnforcementMetrics, useIntakeMetrics, type IntakeMetricRow } from '../hooks/useExecutiveMetrics';
 import { useEnforcementOverview } from '../hooks/useEnforcementOverview';
-import { usePlaintiffCallQueue, type PlaintiffCallQueueRow } from '../hooks/usePlaintiffCallQueue';
+import { usePlaintiffCallQueue } from '../hooks/usePlaintiffCallQueue';
 import { usePriorityCases, toActionItems } from '../hooks/usePriorityCases';
 import { useRefreshBus } from '../context/RefreshContext';
-import { formatCurrency } from '../utils/formatters';
 
-const RECENT_WINDOW_DAYS = 7;
 const RANGE_OPTIONS = [
   { label: '8 weeks', value: 8 },
   { label: '12 weeks', value: 12 },
@@ -30,6 +34,7 @@ const RANGE_OPTIONS = [
 ];
 
 const ExecutiveDashboardPageNew: React.FC = () => {
+  const navigate = useNavigate();
   const { state: intakeState } = useIntakeMetrics(45);
   const { state: enforcementOverviewState } = useEnforcementOverview();
   const { state: callQueueState } = usePlaintiffCallQueue(40);
@@ -37,28 +42,104 @@ const ExecutiveDashboardPageNew: React.FC = () => {
   const [rangeWeeks, setRangeWeeks] = useState<number>(12);
   const { state: enforcementTrendState } = useEnforcementMetrics(rangeWeeks);
   const { triggerRefresh, isRefreshing } = useRefreshBus();
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-  // Derive scoreboard metrics
-  const newPlaintiffs = useMemo(() => {
-    if (intakeState.status !== 'ready' || !intakeState.data) return 0;
-    return countRecentPlaintiffs(intakeState.data, RECENT_WINDOW_DAYS);
-  }, [intakeState]);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DERIVED METRICS
+  // ═══════════════════════════════════════════════════════════════════════════
 
+  // Active cases total
   const activeCases = useMemo(() => {
     if (enforcementOverviewState.status !== 'ready' || !enforcementOverviewState.data) return 0;
     return enforcementOverviewState.data.reduce((sum, row) => sum + row.caseCount, 0);
   }, [enforcementOverviewState]);
 
+  // Total exposure
   const activeExposure = useMemo(() => {
     if (enforcementOverviewState.status !== 'ready' || !enforcementOverviewState.data) return 0;
     return enforcementOverviewState.data.reduce((sum, row) => sum + row.totalJudgmentAmount, 0);
   }, [enforcementOverviewState]);
 
-  const callsToday = useMemo(() => {
-    if (callQueueState.status !== 'ready' || !callQueueState.data) return 0;
-    return deriveCallsToday(callQueueState.data);
-  }, [callQueueState]);
+  // Week-over-week change (calculate from intake data)
+  const weekOverWeekChange = useMemo(() => {
+    if (intakeState.status !== 'ready' || !intakeState.data || intakeState.data.length < 14) {
+      return undefined;
+    }
+    const thisWeek = countRecentPlaintiffs(intakeState.data, 7);
+    const lastWeek = countPlaintiffsInRange(intakeState.data, 7, 14);
+    if (lastWeek === 0) return thisWeek > 0 ? 100 : 0;
+    return ((thisWeek - lastWeek) / lastWeek) * 100;
+  }, [intakeState]);
 
+  // 7-day trend data for mini chart
+  const trendData = useMemo(() => {
+    if (intakeState.status !== 'ready' || !intakeState.data) return [];
+    // Get daily counts for last 7 days
+    const dailyCounts: number[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      dayStart.setDate(dayStart.getDate() - i);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+
+      const count = intakeState.data.reduce((sum, row) => {
+        const ts = Date.parse(row.activityDate);
+        if (!Number.isNaN(ts) && ts >= dayStart.getTime() && ts < dayEnd.getTime()) {
+          return sum + row.plaintiffCount;
+        }
+        return sum;
+      }, 0);
+      dailyCounts.push(count);
+    }
+    return dailyCounts;
+  }, [intakeState]);
+
+  // Tier distribution from enforcement overview
+  const tierSegments = useMemo<TierSegment[]>(() => {
+    if (enforcementOverviewState.status !== 'ready' || !enforcementOverviewState.data) {
+      return [
+        { tier: 'A', caseCount: 0, totalValue: 0 },
+        { tier: 'B', caseCount: 0, totalValue: 0 },
+        { tier: 'C', caseCount: 0, totalValue: 0 },
+      ];
+    }
+
+    const tierMap: Record<'A' | 'B' | 'C', { count: number; value: number }> = {
+      A: { count: 0, value: 0 },
+      B: { count: 0, value: 0 },
+      C: { count: 0, value: 0 },
+    };
+
+    enforcementOverviewState.data.forEach((row) => {
+      const tier = normalizeTier(row.collectabilityTier);
+      tierMap[tier].count += row.caseCount;
+      tierMap[tier].value += row.totalJudgmentAmount;
+    });
+
+    return [
+      { tier: 'A', caseCount: tierMap.A.count, totalValue: tierMap.A.value },
+      { tier: 'B', caseCount: tierMap.B.count, totalValue: tierMap.B.value },
+      { tier: 'C', caseCount: tierMap.C.count, totalValue: tierMap.C.value },
+    ];
+  }, [enforcementOverviewState]);
+
+  // Priority count by tier
+  const priorityTierCounts = useMemo(() => {
+    if (priorityCasesState.status !== 'ready' || !priorityCasesState.data) {
+      return { A: 0, B: 0 };
+    }
+    return priorityCasesState.data.reduce(
+      (acc, c) => {
+        if (c.tier === 'A') acc.A++;
+        else if (c.tier === 'B') acc.B++;
+        return acc;
+      },
+      { A: 0, B: 0 }
+    );
+  }, [priorityCasesState]);
+
+  // Loading states
   const isLoading = [intakeState, enforcementOverviewState, callQueueState].some(
     (s) => s.status === 'loading' || s.status === 'idle'
   );
@@ -72,38 +153,12 @@ const ExecutiveDashboardPageNew: React.FC = () => {
   const isPriorityLoading = priorityCasesState.status === 'loading' || priorityCasesState.status === 'idle';
   const isPriorityError = priorityCasesState.status === 'error';
 
-  // Check for scoreboard errors (any of the underlying hooks)
-  const scoreboardHasError = [intakeState, enforcementOverviewState, callQueueState].some(
+  // Check for errors
+  const hasError = [intakeState, enforcementOverviewState, callQueueState].some(
     (s) => s.status === 'error'
   );
-  const scoreboardErrorMessage = [intakeState, enforcementOverviewState, callQueueState]
+  const errorMessage = [intakeState, enforcementOverviewState, callQueueState]
     .find((s) => s.status === 'error')?.errorMessage ?? 'Unable to load metrics';
-
-  const scoreboardMetrics: ScoreboardMetric[] = [
-    {
-      label: `New plaintiffs (${RECENT_WINDOW_DAYS}d)`,
-      value: formatNumber(newPlaintiffs),
-      trend: newPlaintiffs > 0 ? 'up' : 'neutral',
-      trendLabel: newPlaintiffs > 10 ? 'Strong intake' : undefined,
-    },
-    {
-      label: 'Active cases',
-      value: formatNumber(activeCases),
-      trend: 'neutral',
-    },
-    {
-      label: 'Total exposure',
-      value: formatCurrency(activeExposure),
-      trend: activeExposure > 100_000 ? 'up' : 'neutral',
-      trendLabel: activeExposure > 100_000 ? 'Growing portfolio' : undefined,
-    },
-    {
-      label: "Today's calls",
-      value: formatNumber(callsToday),
-      trend: callsToday > 20 ? 'down' : 'neutral',
-      trendLabel: callsToday > 20 ? 'Heavy day' : undefined,
-    },
-  ];
 
   // Chart data
   const chartData = useMemo<EnforcementFlowPoint[]>(() => {
@@ -125,26 +180,50 @@ const ExecutiveDashboardPageNew: React.FC = () => {
     return normalized;
   }, [enforcementTrendState.data, enforcementTrendState.status, rangeWeeks]);
 
+  // Refresh handler
+  const handleRefresh = () => {
+    setLastRefresh(new Date());
+    triggerRefresh();
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════════════════
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-semibold text-slate-900">Scoreboard</h1>
-        <p className="mt-1 text-sm text-slate-500">Business health at a glance</p>
-      </div>
-
-      {/* Scoreboard - with error handling */}
-      {scoreboardHasError ? (
+      {/* Error state */}
+      {hasError && (
         <DashboardError
-          title="Scoreboard unavailable"
-          message={scoreboardErrorMessage}
-          onRetry={triggerRefresh}
+          title="Data unavailable"
+          message={errorMessage}
+          onRetry={handleRefresh}
         />
-      ) : (
-        <ExecutiveScoreboard metrics={scoreboardMetrics} isLoading={isLoading} />
       )}
 
-      {/* Today's Priorities - Top cases to work */}
+      {/* Hero Strip */}
+      <OverviewHero
+        totalCases={activeCases}
+        totalExposure={activeExposure}
+        weekOverWeekChange={weekOverWeekChange}
+        trendData={trendData}
+        isRefreshing={isRefreshing || isLoading}
+        lastUpdated={lastRefresh}
+        onRefresh={handleRefresh}
+        loading={isLoading}
+      />
+
+      {/* Tier Distribution Bar */}
+      <Card>
+        <CardContent className="pt-5">
+          <TierDistributionBar
+            segments={tierSegments}
+            loading={enforcementOverviewState.status === 'loading' || enforcementOverviewState.status === 'idle'}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Today's Priorities */}
       {isPriorityError ? (
         <Card>
           <CardHeader>
@@ -154,34 +233,64 @@ const ExecutiveDashboardPageNew: React.FC = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-slate-600 mb-3">
-              {priorityCasesState.errorMessage ?? 'We couldn\'t fetch today\'s priority cases.'}
+            <p className="mb-3 text-sm text-slate-600">
+              {priorityCasesState.errorMessage ?? "We couldn't fetch today's priority cases."}
             </p>
             <button
               type="button"
-              onClick={triggerRefresh}
-              className="text-sm font-medium text-blue-600 hover:text-blue-700"
+              onClick={handleRefresh}
+              className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
             >
               Try again
             </button>
           </CardContent>
         </Card>
       ) : (
-        <ActionList
-          title="Today's Priorities"
-          description="Top-tier cases ready for action"
-          items={priorityActionItems}
-          loading={isPriorityLoading}
-          maxItems={5}
-          emptyMessage="No high-priority cases right now. Great work!"
-          onItemClick={(item) => {
-            // TODO: Open case detail drawer or navigate to case page
-            console.log('[Priority Action]', item.id, item.caseNumber);
-          }}
-        />
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          {/* Custom header with tier badge */}
+          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+                <Target className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Today's Priorities</h2>
+                <p className="text-sm text-slate-500">High-value cases ready for action</p>
+              </div>
+            </div>
+            {/* Tier source badge */}
+            {(priorityTierCounts.A > 0 || priorityTierCounts.B > 0) && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">From</span>
+                {priorityTierCounts.A > 0 && (
+                  <Badge variant="tier-a" size="sm">
+                    {priorityTierCounts.A} Tier A
+                  </Badge>
+                )}
+                {priorityTierCounts.B > 0 && (
+                  <Badge variant="tier-b" size="sm">
+                    {priorityTierCounts.B} Tier B
+                  </Badge>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="p-6">
+            <ActionList
+              items={priorityActionItems}
+              loading={isPriorityLoading}
+              maxItems={5}
+              emptyMessage="No high-priority cases right now. Great work!"
+              onItemClick={(item) => {
+                navigate(`/cases?caseId=${item.id}`);
+              }}
+            />
+          </div>
+        </div>
       )}
 
-      {/* Enforcement Trend Chart */}
+      {/* Weekly Flow Chart */}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-6 py-4">
           <div className="flex items-center justify-between">
@@ -196,23 +305,16 @@ const ExecutiveDashboardPageNew: React.FC = () => {
             </div>
             <div className="flex items-center gap-3">
               <select
-                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm transition focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                 value={rangeWeeks}
                 onChange={(e) => setRangeWeeks(Number(e.target.value))}
               >
                 {RANGE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
                 ))}
               </select>
-              <button
-                type="button"
-                onClick={triggerRefresh}
-                disabled={isRefreshing || enforcementTrendState.status === 'loading'}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-50"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${enforcementTrendState.status === 'loading' ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
             </div>
           </div>
         </div>
@@ -222,7 +324,7 @@ const ExecutiveDashboardPageNew: React.FC = () => {
             state={enforcementTrendState}
             loadingFallback={<ChartSkeleton />}
             errorTitle="Unable to load trend data"
-            onRetry={triggerRefresh}
+            onRetry={handleRefresh}
             ready={
               chartData.length === 0 ? (
                 <EmptyState
@@ -240,35 +342,23 @@ const ExecutiveDashboardPageNew: React.FC = () => {
       {/* Data sources footer */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
         <span>Sources:</span>
-        {['v_metrics_intake_daily', 'v_enforcement_overview', 'v_plaintiff_call_queue', 'v_metrics_enforcement'].map((view) => (
-          <span key={view} className="rounded bg-slate-100 px-2 py-0.5 font-mono text-slate-500">{view}</span>
-        ))}
+        {['v_metrics_intake_daily', 'v_enforcement_overview', 'v_collectability_snapshot', 'v_metrics_enforcement'].map(
+          (view) => (
+            <span key={view} className="rounded bg-slate-100 px-2 py-0.5 font-mono text-slate-500">
+              {view}
+            </span>
+          )
+        )}
       </div>
-
-      {/* What changed today */}
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="px-6 py-4 border-b border-slate-100">
-          <h2 className="text-lg font-semibold text-slate-900">What changed today</h2>
-        </div>
-        <div className="px-6 py-4">
-          <TodayActivityList
-            newPlaintiffs={newPlaintiffs}
-            callsToday={callsToday}
-            activeCases={activeCases}
-          />
-        </div>
-      </section>
     </div>
   );
 };
 
 export default ExecutiveDashboardPageNew;
 
-// --- Helpers ---
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat('en-US').format(value);
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
 
 function countRecentPlaintiffs(rows: IntakeMetricRow[], windowDays: number): number {
   const now = Date.now();
@@ -282,10 +372,24 @@ function countRecentPlaintiffs(rows: IntakeMetricRow[], windowDays: number): num
   }, 0);
 }
 
-function deriveCallsToday(rows: PlaintiffCallQueueRow[]): number {
-  // Call queue represents plaintiffs that need to be called
-  // Simply count all rows as they are pre-filtered by the view
-  return rows.length;
+function countPlaintiffsInRange(rows: IntakeMetricRow[], startDays: number, endDays: number): number {
+  const now = Date.now();
+  const startMs = startDays * 24 * 60 * 60 * 1000;
+  const endMs = endDays * 24 * 60 * 60 * 1000;
+  return rows.reduce((sum, row) => {
+    const ts = Date.parse(row.activityDate);
+    const age = now - ts;
+    if (!Number.isNaN(ts) && age > startMs && age <= endMs) {
+      return sum + row.plaintiffCount;
+    }
+    return sum;
+  }, 0);
+}
+
+function normalizeTier(tier: string | null): 'A' | 'B' | 'C' {
+  const normalized = (tier ?? '').toUpperCase().trim();
+  if (normalized === 'A' || normalized === 'B') return normalized as 'A' | 'B';
+  return 'C';
 }
 
 function ChartSkeleton() {
@@ -293,39 +397,5 @@ function ChartSkeleton() {
     <div className="flex h-64 items-center justify-center">
       <div className="h-48 w-full animate-pulse rounded-lg bg-slate-100" />
     </div>
-  );
-}
-
-interface TodayActivityListProps {
-  newPlaintiffs: number;
-  callsToday: number;
-  activeCases: number;
-}
-
-function TodayActivityList({ newPlaintiffs, callsToday, activeCases }: TodayActivityListProps) {
-  const activities: { label: string; value: number; positive: boolean }[] = [
-    { label: 'New plaintiffs added', value: newPlaintiffs, positive: newPlaintiffs > 0 },
-    { label: 'Calls scheduled today', value: callsToday, positive: callsToday > 0 },
-    { label: 'Active enforcement cases', value: activeCases, positive: activeCases > 0 },
-  ];
-
-  const hasActivity = activities.some((a) => a.value > 0);
-
-  if (!hasActivity) {
-    return (
-      <p className="text-sm text-slate-500">No activity to report yet today. Check back later!</p>
-    );
-  }
-
-  return (
-    <ul className="space-y-2">
-      {activities.map((activity) => (
-        <li key={activity.label} className="flex items-center gap-3 text-sm">
-          <span className={`h-2 w-2 rounded-full ${activity.positive ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-          <span className="text-slate-700">{activity.label}</span>
-          <span className="font-semibold text-slate-900">{activity.value}</span>
-        </li>
-      ))}
-    </ul>
   );
 }

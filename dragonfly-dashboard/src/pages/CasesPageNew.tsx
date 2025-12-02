@@ -13,7 +13,8 @@
  * - CaseDetailDrawer shows case details on selection
  */
 
-import { type FC } from 'react';
+import { type FC, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import CaseTable from '../components/cases/CaseTable';
 import CaseDetailDrawer from '../components/cases/CaseDetailDrawer';
 import HelpTooltip from '../components/HelpTooltip';
@@ -29,6 +30,7 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const CasesPage: FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     displayRows,
     allRows,
@@ -46,6 +48,16 @@ const CasesPage: FC = () => {
     resetFilters,
   } = useCasesTable();
 
+  // Auto-select case from URL param (e.g., ?caseId=xxx from Overview)
+  useEffect(() => {
+    const urlCaseId = searchParams.get('caseId');
+    if (urlCaseId) {
+      setSelectedCaseId(urlCaseId);
+      // Clear the URL param after opening to keep URL clean
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSelectedCaseId, setSearchParams]);
+
   const hasData = allRows.length > 0;
   const hasFilters = tierFilter !== 'All' || searchTerm.trim() !== '';
   const filteredEmpty = hasData && displayRows.length === 0 && hasFilters;
@@ -56,8 +68,8 @@ const CasesPage: FC = () => {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Your Cases</h2>
         <p className="mt-2 text-sm text-slate-600">
-          Here's every judgment we're working on. Click any row to see full details about the
-          plaintiff, defendant, and our research history.
+          Every judgment we're working on is listed below. 
+          Use the search box to find a specific case, or click any row to see full details.
         </p>
       </section>
 
@@ -118,18 +130,23 @@ const CasesPage: FC = () => {
           </div>
         </div>
 
-        {/* Results Count */}
+        {/* Results Count & Filter Status */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
             Showing {displayRows.length.toLocaleString()} of {totalCount.toLocaleString()} cases
             {hasFilters && (
-              <button
-                type="button"
-                onClick={resetFilters}
-                className="ml-3 text-blue-600 normal-case hover:text-blue-700 hover:underline"
-              >
-                Clear filters
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  className="ml-3 text-blue-600 normal-case hover:text-blue-700 hover:underline"
+                >
+                  Clear filters
+                </button>
+                <span className="ml-2 text-slate-400 normal-case" title="Filters persist across page refreshes">
+                  (saved)
+                </span>
+              </>
             )}
           </div>
         </div>
@@ -167,6 +184,15 @@ const CasesPage: FC = () => {
         {/* Case Table */}
         {(isLoading || (status === 'ready' && displayRows.length > 0)) && (
           <div className="px-6 pb-6">
+            {/* Keyboard navigation hint */}
+            <div className="mb-3 flex items-center gap-2 text-xs text-slate-500">
+              <kbd className="rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">↑</kbd>
+              <kbd className="rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">↓</kbd>
+              <span>to navigate rows</span>
+              <span className="text-slate-300">·</span>
+              <kbd className="rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">Enter</kbd>
+              <span>to open details</span>
+            </div>
             <CaseTable
               rows={displayRows}
               columns={columns}

@@ -190,6 +190,7 @@ export function DataTable<T>({
 
   // Cell padding based on compact mode
   const cellPadding = compact ? 'px-3 py-2' : 'px-4 py-3';
+  const headerPadding = compact ? 'px-3 py-2.5' : 'px-4 py-3';
 
   // Loading state
   if (loading) {
@@ -217,13 +218,16 @@ export function DataTable<T>({
   }
 
   return (
-    <div className={cn('overflow-hidden rounded-xl border border-slate-200', className)}>
+    <div className={cn('overflow-hidden rounded-xl border border-slate-200/80', className)}>
       <div className="overflow-x-auto">
         <table className="min-w-full">
-          <thead className={cn('bg-slate-50', stickyHeader && 'sticky top-0 z-10')}>
+          <thead className={cn(
+            'bg-slate-50/80 border-b border-slate-200/60',
+            stickyHeader && 'sticky top-0 z-10 backdrop-blur-sm bg-slate-50/95'
+          )}>
             <tr>
               {selectable && (
-                <th className={cn(cellPadding, 'w-10')}>
+                <th className={cn(headerPadding, 'w-10')}>
                   <input
                     type="checkbox"
                     checked={
@@ -233,7 +237,7 @@ export function DataTable<T>({
                       )
                     }
                     onChange={handleSelectAll}
-                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                   />
                 </th>
               )}
@@ -241,9 +245,9 @@ export function DataTable<T>({
                 <th
                   key={column.key}
                   className={cn(
-                    cellPadding,
-                    'text-left text-xs font-semibold uppercase tracking-wide text-slate-500',
-                    column.sortable && 'cursor-pointer select-none hover:bg-slate-100',
+                    headerPadding,
+                    'text-left text-[11px] font-bold uppercase tracking-wider text-slate-500',
+                    column.sortable && 'cursor-pointer select-none transition-colors hover:bg-slate-100/80 hover:text-slate-700',
                     column.align === 'center' && 'text-center',
                     column.align === 'right' && 'text-right',
                     column.className
@@ -264,19 +268,21 @@ export function DataTable<T>({
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-slate-100">
             {paginatedData.map((row, index) => {
               const key = keyExtractor(row, index);
               const isSelected = selectedKeys.has(key);
               const isClickable = Boolean(onRowClick);
+              const isEven = index % 2 === 1;
 
               return (
                 <tr
                   key={key}
                   className={cn(
-                    'border-t border-slate-100 bg-white transition',
-                    isClickable && 'cursor-pointer hover:bg-slate-50',
-                    isSelected && 'bg-blue-50/60',
+                    'transition-colors duration-100',
+                    isEven ? 'bg-slate-50/40' : 'bg-white',
+                    isClickable && 'cursor-pointer hover:bg-indigo-50/50',
+                    isSelected && 'bg-indigo-50/70 relative before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-indigo-500',
                     rowClassName?.(row, index)
                   )}
                   onClick={isClickable ? () => onRowClick?.(row, index) : undefined}
@@ -298,7 +304,7 @@ export function DataTable<T>({
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => handleSelectRow(key)}
-                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                       />
                     </td>
                   )}

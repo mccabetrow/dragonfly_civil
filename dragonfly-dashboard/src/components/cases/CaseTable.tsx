@@ -114,7 +114,8 @@ const CaseTable: FC<CaseTableProps> = ({
   const rowClassName = useCallback(
     (row: CasesDashboardRow) => {
       if (row.judgmentId === selectedCaseId) {
-        return 'bg-blue-50/70 border-l-2 border-l-blue-500';
+        // Selected state handled by DataTable's isSelected via pseudo-element
+        return 'ring-1 ring-inset ring-indigo-200';
       }
       return '';
     },

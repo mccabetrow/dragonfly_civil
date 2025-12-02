@@ -15,3 +15,11 @@ export type { TierCardProps, Tier } from './TierCard';
 // Action list
 export { ActionList, CompactActionList } from './ActionList';
 export type { ActionListProps, ActionItem, ActionType, ActionUrgency } from './ActionList';
+
+// Overview hero
+export { OverviewHero } from './OverviewHero';
+export type { OverviewHeroProps } from './OverviewHero';
+
+// Tier distribution bar
+export { TierDistributionBar } from './TierDistributionBar';
+export type { TierDistributionBarProps, TierSegment } from './TierDistributionBar';

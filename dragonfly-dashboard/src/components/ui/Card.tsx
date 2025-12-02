@@ -19,11 +19,11 @@ export interface CardProps {
 }
 
 const variantStyles: Record<CardVariant, string> = {
-  default: 'border border-slate-200 bg-white shadow-sm',
-  elevated: 'border-0 bg-white shadow-lg',
+  default: 'border border-slate-200/80 bg-white shadow-[0_1px_3px_0_rgb(0_0_0/0.04),0_1px_2px_-1px_rgb(0_0_0/0.04)]',
+  elevated: 'border-0 bg-white shadow-lg shadow-slate-200/50',
   outlined: 'border-2 border-slate-200 bg-transparent shadow-none',
   ghost: 'border-0 bg-slate-50/50 shadow-none',
-  interactive: 'border border-slate-200 bg-white shadow-sm cursor-pointer hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5 transition-all duration-200',
+  interactive: 'border border-slate-200/80 bg-white shadow-[0_1px_3px_0_rgb(0_0_0/0.04)] cursor-pointer hover:shadow-[0_4px_12px_0_rgb(0_0_0/0.08)] hover:border-slate-300 hover:-translate-y-0.5 transition-all duration-200 active:scale-[0.99]',
 };
 
 export const Card: FC<CardProps> = ({

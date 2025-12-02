@@ -115,7 +115,10 @@ const CaseDetailDrawer: FC<CaseDetailDrawerProps> = ({ caseId, onClose }) => {
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
           <AlertCircle className="mx-auto h-10 w-10 text-amber-400" />
           <p className="mt-3 font-semibold text-amber-700">Case not found</p>
-          <p className="mt-1 text-sm text-amber-600">This case may have been archived or removed.</p>
+          <p className="mt-1 text-sm text-amber-600">
+            This case may have been archived, merged with another case, or the ID is incorrect. 
+            Try searching for it on the Cases page.
+          </p>
         </div>
       )}
 

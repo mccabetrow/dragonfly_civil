@@ -12,10 +12,138 @@ body {
 @layer base {
 	body {
 		@apply bg-slate-50 text-slate-900 antialiased;
+		font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+	}
+
+	/* Smoother focus outlines */
+	*:focus-visible {
+		@apply outline-none ring-2 ring-indigo-500/40 ring-offset-2;
 	}
 
 	/* Optional: make the root fill the screen */
 	#root {
 		@apply min-h-screen;
+	}
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CUSTOM ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer utilities {
+	/* Drawer slide-in from right (smoother curve) */
+	@keyframes drawer-slide-in {
+		from {
+			transform: translateX(100%);
+			opacity: 0.8;
+		}
+		to {
+			transform: translateX(0);
+			opacity: 1;
+		}
+	}
+
+	/* Drawer slide-out to right */
+	@keyframes drawer-slide-out {
+		from {
+			transform: translateX(0);
+			opacity: 1;
+		}
+		to {
+			transform: translateX(100%);
+			opacity: 0.8;
+		}
+	}
+
+	/* Fade in */
+	@keyframes fade-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+
+	/* Fade out */
+	@keyframes fade-out {
+		from {
+			opacity: 1;
+		}
+		to {
+			opacity: 0;
+		}
+	}
+
+	/* Scale in (for modals, toasts) */
+	@keyframes scale-in {
+		from {
+			transform: scale(0.96);
+			opacity: 0;
+		}
+		to {
+			transform: scale(1);
+			opacity: 1;
+		}
+	}
+
+	/* Subtle pulse for attention */
+	@keyframes subtle-pulse {
+		0%, 100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.7;
+		}
+	}
+
+	/* Shimmer for skeletons */
+	@keyframes shimmer {
+		0% {
+			background-position: -200% 0;
+		}
+		100% {
+			background-position: 200% 0;
+		}
+	}
+
+	.animate-drawer-slide-in {
+		animation: drawer-slide-in 0.28s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+	}
+
+	.animate-drawer-slide-out {
+		animation: drawer-slide-out 0.22s ease-out forwards;
+	}
+
+	.animate-fade-in {
+		animation: fade-in 0.2s ease-out forwards;
+	}
+
+	.animate-fade-out {
+		animation: fade-out 0.15s ease-out forwards;
+	}
+
+	.animate-scale-in {
+		animation: scale-in 0.2s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+	}
+
+	.animate-subtle-pulse {
+		animation: subtle-pulse 2s ease-in-out infinite;
+	}
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TABLE ENHANCEMENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer utilities {
+	/* Zebra striping for tables */
+	.table-zebra tbody tr:nth-child(even) {
+		@apply bg-slate-50/50;
+	}
+
+	/* Row hover with subtle lift effect */
+	.table-row-interactive {
+		@apply transition-all duration-150 hover:bg-slate-50 hover:shadow-sm;
 	}
 }

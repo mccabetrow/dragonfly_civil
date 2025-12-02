@@ -12,6 +12,7 @@ import {
   Sparkles,
   Bell,
   ChevronRight,
+  Headphones,
 } from 'lucide-react';
 import ReleaseNotesModal, { useReleaseNotesModal } from '../components/ReleaseNotesModal';
 import { cn } from '../lib/design-tokens';
@@ -35,6 +36,12 @@ const MAIN_NAVIGATION: NavigationItem[] = [
     path: '/overview',
     icon: LayoutDashboard,
     description: 'Daily snapshot and key metrics',
+  },
+  {
+    label: 'Ops Console',
+    path: '/ops',
+    icon: Headphones,
+    description: 'Call queue and daily tasks',
   },
   {
     label: 'Collectability',
@@ -135,14 +142,14 @@ const AppShellNew: FC = () => {
       >
         <div className="flex h-full flex-col">
           {/* Logo & brand */}
-          <div className="flex items-center justify-between px-6 py-5">
+          <div className="flex items-center justify-between px-5 py-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 text-lg font-bold text-white shadow-lg shadow-blue-500/30">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 text-base font-bold text-white shadow-lg shadow-indigo-500/30">
                 DF
               </div>
               <div>
                 <p className="text-sm font-semibold text-white">Dragonfly Civil</p>
-                <p className="text-xs text-slate-400">Operations Console</p>
+                <p className="text-[11px] text-slate-400">Operations Console</p>
               </div>
             </div>
             <button
@@ -182,7 +189,7 @@ const AppShellNew: FC = () => {
             </p>
             <NavLink
               to="/help"
-              className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-400 transition hover:text-blue-300"
+              className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-400 transition hover:text-indigo-300"
             >
               Open help guide
               <ChevronRight className="h-3.5 w-3.5" />
@@ -208,8 +215,8 @@ const AppShellNew: FC = () => {
       {/* ═══════════════════════════════════════════════════════════════════ */}
       <div className="md:pl-72">
         {/* Header */}
-        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur-sm">
-          <div className="flex items-center justify-between px-4 py-3 sm:px-6">
+        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/98 shadow-[0_1px_2px_0_rgb(0_0_0/0.03)] backdrop-blur-sm">
+          <div className="flex items-center justify-between px-4 py-2.5 sm:px-6">
             {/* Left: Mobile menu + Breadcrumbs */}
             <div className="flex items-center gap-3">
               <button
@@ -289,7 +296,7 @@ const AppShellNew: FC = () => {
               </Button>
 
               {/* User avatar */}
-              <div className="ml-2 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-sm font-semibold text-white shadow-sm">
+              <div className="ml-2 flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-indigo-600 text-xs font-semibold text-white shadow-sm">
                 DC
               </div>
             </div>
@@ -346,7 +353,7 @@ const NavItem: FC<NavItemProps> = ({ item }) => {
       to={item.path}
       className={({ isActive }) =>
         cn(
-          'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150',
+          'group flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all duration-150',
           isActive
             ? 'bg-slate-800 text-white shadow-sm'
             : 'text-slate-400 hover:bg-slate-800/60 hover:text-white'
@@ -357,9 +364,9 @@ const NavItem: FC<NavItemProps> = ({ item }) => {
         <>
           <span
             className={cn(
-              'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
+              'flex h-7 w-7 items-center justify-center rounded-lg transition-colors',
               isActive
-                ? 'bg-blue-500/20 text-blue-400'
+                ? 'bg-indigo-500/20 text-indigo-400'
                 : 'bg-slate-800 text-slate-500 group-hover:bg-slate-700 group-hover:text-slate-300'
             )}
           >
@@ -369,7 +376,7 @@ const NavItem: FC<NavItemProps> = ({ item }) => {
             <span className="block">{item.label}</span>
             <span
               className={cn(
-                'block text-[11px] font-normal',
+                'block text-[11px] font-normal leading-tight',
                 isActive ? 'text-slate-400' : 'text-slate-500'
               )}
             >
@@ -377,7 +384,7 @@ const NavItem: FC<NavItemProps> = ({ item }) => {
             </span>
           </div>
           {isActive && (
-            <span className="h-2 w-2 rounded-full bg-blue-400" aria-hidden="true" />
+            <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" aria-hidden="true" />
           )}
         </>
       )}

@@ -62,8 +62,9 @@ const CollectabilityPage: FC = () => {
       {/* Page Header */}
       <header className="space-y-2">
         <p className="text-sm text-slate-600">
-          This page shows how likely we are to collect on each judgment.
-          Tier A cases are your best bets — focus your time there first.
+          This page ranks every judgment by how likely we are to collect. 
+          Start with <strong>Tier A</strong> — those are your best bets. 
+          Click a tier card below to filter the list.
         </p>
       </header>
 
@@ -158,18 +159,23 @@ const CollectabilityPage: FC = () => {
           </div>
         </div>
 
-        {/* Results Count */}
+        {/* Results Count & Filter Status */}
         <div className="flex items-center justify-between px-6 pb-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Showing {displayRows.length.toLocaleString()} of {allRows.length.toLocaleString()} cases
             {hasFilters && (
-              <button
-                type="button"
-                onClick={resetFilters}
-                className="ml-3 text-blue-600 normal-case hover:text-blue-700 hover:underline"
-              >
-                Clear filters
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  className="ml-3 text-blue-600 normal-case hover:text-blue-700 hover:underline"
+                >
+                  Clear filters
+                </button>
+                <span className="ml-2 text-slate-400 normal-case" title="Filters persist across page refreshes">
+                  (saved)
+                </span>
+              </>
             )}
           </div>
         </div>
@@ -207,6 +213,11 @@ const CollectabilityPage: FC = () => {
         {/* Data Table */}
         {(isLoading || (status === 'ready' && displayRows.length > 0)) && (
           <div className="px-6 pb-6">
+            {/* Inline tip for power users */}
+            <div className="mb-3 flex items-center gap-1.5 text-xs text-slate-500">
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded bg-slate-100 text-[10px] font-semibold text-slate-400">💡</span>
+              <span>Sort by <strong className="font-medium text-slate-600">Judgment Amount</strong> to see your biggest opportunities first.</span>
+            </div>
             <DataTable
               data={displayRows}
               columns={columns}
@@ -271,12 +282,14 @@ const TierSummaryCard: FC<TierSummaryCardProps> = ({
       type="button"
       onClick={onClick}
       className={`
-        group rounded-2xl border p-6 text-left shadow-sm transition-all
+        group rounded-2xl border p-6 text-left shadow-sm transition-all cursor-pointer
         ${tierAccentClasses[tier]}
         ${isActive ? tierActiveClasses[tier] : ''}
         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500
+        hover:shadow-md hover:-translate-y-0.5
       `}
       aria-pressed={isActive}
+      title={isActive ? 'Click to show all tiers' : `Click to filter to Tier ${tier} only`}
     >
       <TierBadge tier={tier} size="sm" />
 
