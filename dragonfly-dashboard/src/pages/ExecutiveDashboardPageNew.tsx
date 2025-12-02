@@ -9,6 +9,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { BarChart3, AlertTriangle, Target, DollarSign, TrendingUp } from 'lucide-react';
 import MetricsGate from '../components/MetricsGate';
 import { EnforcementFlowChart } from '../components/EnforcementFlowChart';
@@ -19,8 +20,7 @@ import { TierDistributionBar } from '../components/dashboard/TierDistributionBar
 import type { TierSegment } from '../components/dashboard/TierDistributionBar';
 import ActionList from '../components/dashboard/ActionList';
 import { DashboardError } from '../components/DashboardError';
-import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
-import { Badge } from '../components/ui/Badge';
+import { CardHeader as LegacyCardHeader, CardTitle as LegacyCardTitle, CardContent as LegacyCardContent } from '../components/ui/Card';
 import { KPICard, RecoveryAreaChart, PortfolioDonutChart } from '../components/charts';
 import type { RecoveryDataPoint, PortfolioSegment } from '../components/charts';
 import { useEnforcementMetrics, useIntakeMetrics, type IntakeMetricRow } from '../hooks/useExecutiveMetrics';
@@ -28,6 +28,7 @@ import { useEnforcementOverview } from '../hooks/useEnforcementOverview';
 import { usePlaintiffCallQueue } from '../hooks/usePlaintiffCallQueue';
 import { usePriorityCases, toActionItems } from '../hooks/usePriorityCases';
 import { useRefreshBus } from '../context/RefreshContext';
+import { Card, CardContent, TierBadge } from '../components/primitives';
 
 const RANGE_OPTIONS = [
   { label: '8 weeks', value: 8 },
@@ -303,8 +304,8 @@ const ExecutiveDashboardPageNew: React.FC = () => {
       </div>
 
       {/* Tier Distribution Bar */}
-      <Card>
-        <CardContent className="pt-5">
+      <Card hoverable>
+        <CardContent>
           <TierDistributionBar
             segments={tierSegments}
             loading={enforcementOverviewState.status === 'loading' || enforcementOverviewState.status === 'idle'}
@@ -315,13 +316,13 @@ const ExecutiveDashboardPageNew: React.FC = () => {
       {/* Today's Priorities */}
       {isPriorityError ? (
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-rose-700">
+          <LegacyCardHeader>
+            <LegacyCardTitle className="flex items-center gap-2 text-rose-700">
               <AlertTriangle className="h-5 w-5" />
               Unable to load priorities
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+            </LegacyCardTitle>
+          </LegacyCardHeader>
+          <LegacyCardContent>
             <p className="mb-3 text-sm text-slate-600">
               {priorityCasesState.errorMessage ?? "We couldn't fetch today's priority cases."}
             </p>
@@ -332,12 +333,17 @@ const ExecutiveDashboardPageNew: React.FC = () => {
             >
               Try again
             </button>
-          </CardContent>
+          </LegacyCardContent>
         </Card>
       ) : (
-        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <motion.section
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
+        >
           {/* Custom header with tier badge */}
-          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-gradient-to-r from-amber-50/50 to-transparent">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
                 <Target className="h-5 w-5" />
@@ -352,14 +358,10 @@ const ExecutiveDashboardPageNew: React.FC = () => {
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-400">From</span>
                 {priorityTierCounts.A > 0 && (
-                  <Badge variant="tier-a" size="sm">
-                    {priorityTierCounts.A} Tier A
-                  </Badge>
+                  <TierBadge tier="A" size="sm" showIcon />
                 )}
                 {priorityTierCounts.B > 0 && (
-                  <Badge variant="tier-b" size="sm">
-                    {priorityTierCounts.B} Tier B
-                  </Badge>
+                  <TierBadge tier="B" size="sm" showIcon />
                 )}
               </div>
             )}
@@ -376,11 +378,16 @@ const ExecutiveDashboardPageNew: React.FC = () => {
               }}
             />
           </div>
-        </div>
+        </motion.section>
       )}
 
       {/* Weekly Flow Chart */}
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <motion.section 
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+        className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
+      >
         <div className="border-b border-slate-100 px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -426,7 +433,7 @@ const ExecutiveDashboardPageNew: React.FC = () => {
             }
           />
         </div>
-      </section>
+      </motion.section>
 
       {/* Data sources footer */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">

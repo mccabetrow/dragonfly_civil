@@ -14,11 +14,14 @@
  */
 
 import { type FC, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { useSearchParams } from 'react-router-dom';
+import { Briefcase } from 'lucide-react';
 import CaseTable from '../components/cases/CaseTable';
 import CaseDetailDrawer from '../components/cases/CaseDetailDrawer';
 import HelpTooltip from '../components/HelpTooltip';
 import ZeroStateCard from '../components/ZeroStateCard';
+import { PageHeader } from '../components/primitives';
 import {
   useCasesTable,
   CASES_TIER_OPTIONS,
@@ -65,16 +68,18 @@ const CasesPage: FC = () => {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Your Cases</h2>
-        <p className="mt-2 text-sm text-slate-600">
-          Every judgment we're working on is listed below. 
-          Use the search box to find a specific case, or click any row to see full details.
-        </p>
-      </section>
+      <PageHeader
+        title="Cases"
+        description="Every judgment we're working on is listed below. Use the search box to find a specific case, or click any row to see full details."
+        icon={<Briefcase className="h-5 w-5" />}
+      />
 
       {/* Main Table Section */}
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <motion.section 
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
+      >
         {/* Section Header with Filters */}
         <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -204,7 +209,7 @@ const CasesPage: FC = () => {
             />
           </div>
         )}
-      </section>
+      </motion.section>
 
       {/* Case Detail Drawer */}
       <CaseDetailDrawer

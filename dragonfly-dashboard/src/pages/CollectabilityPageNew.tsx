@@ -19,12 +19,14 @@
  */
 
 import { type FC, useMemo } from 'react';
-import { DollarSign, TrendingUp } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { DollarSign, TrendingUp, Filter } from 'lucide-react';
 import DataTable from '../components/ui/DataTable';
-import { TierBadge } from '../components/ui/Badge';
 import HelpTooltip from '../components/HelpTooltip';
 import ZeroStateCard from '../components/ZeroStateCard';
 import { KPICard } from '../components/charts';
+import { cn } from '../lib/tokens';
+import { TierBadge } from '../components/primitives';
 import {
   useCollectabilityTable,
   TIER_OPTIONS,
@@ -314,39 +316,53 @@ const TierSummaryCard: FC<TierSummaryCardProps> = ({
   onClick,
 }) => {
   return (
-    <button
+    <motion.button
       type="button"
       onClick={onClick}
-      className={`
-        group rounded-2xl border p-6 text-left shadow-sm transition-all cursor-pointer
-        ${tierAccentClasses[tier]}
-        ${isActive ? tierActiveClasses[tier] : ''}
-        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500
-        hover:shadow-md hover:-translate-y-0.5
-      `}
+      whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.99 }}
+      className={cn(
+        'group rounded-2xl border p-6 text-left transition-all cursor-pointer',
+        'shadow-sm hover:shadow-lg',
+        tierAccentClasses[tier],
+        isActive && tierActiveClasses[tier],
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2'
+      )}
       aria-pressed={isActive}
       title={isActive ? 'Click to show all tiers' : `Click to filter to Tier ${tier} only`}
     >
-      <TierBadge tier={tier} size="sm" />
+      <div className="flex items-center justify-between">
+        <TierBadge tier={tier} size="md" showIcon />
+        {isActive && (
+          <span className="flex items-center gap-1 text-xs font-medium text-indigo-600">
+            <Filter className="h-3 w-3" />
+            Active
+          </span>
+        )}
+      </div>
 
       <div className="mt-4">
         {isLoading ? (
           <div className="h-10 w-20 animate-pulse rounded-lg bg-slate-200" />
         ) : (
-          <p className="text-4xl font-semibold text-slate-900 tabular-nums">
+          <motion.p 
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="font-mono text-4xl font-semibold text-slate-900 tabular-nums tracking-tight"
+          >
             {count.toLocaleString()}
-          </p>
+          </motion.p>
         )}
       </div>
 
-      <h3 className="mt-3 text-sm font-semibold text-slate-700">{title}</h3>
-      <p className="mt-2 text-sm text-slate-600">{description}</p>
+      <h3 className="mt-3 text-sm font-semibold text-slate-800">{title}</h3>
+      <p className="mt-2 text-sm text-slate-600 leading-relaxed">{description}</p>
 
-      {isActive && (
-        <p className="mt-3 text-xs font-medium text-slate-500">
-          Click again to show all tiers
+      {!isActive && (
+        <p className="mt-3 text-xs font-medium text-slate-400 group-hover:text-slate-600 transition-colors">
+          Click to filter →
         </p>
       )}
-    </button>
+    </motion.button>
   );
 };
