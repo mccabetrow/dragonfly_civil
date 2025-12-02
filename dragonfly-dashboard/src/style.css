@@ -11,8 +11,10 @@ body {
 
 @layer base {
 	body {
-		@apply bg-slate-50 text-slate-900 antialiased;
-		font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+		@apply bg-slate-50 text-slate-900 antialiased font-sans;
+		font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum";
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
 	}
 
 	/* Smoother focus outlines */

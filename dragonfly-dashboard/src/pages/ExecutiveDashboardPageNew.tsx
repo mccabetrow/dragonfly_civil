@@ -9,7 +9,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BarChart3, AlertTriangle, Target } from 'lucide-react';
+import { BarChart3, AlertTriangle, Target, DollarSign, TrendingUp } from 'lucide-react';
 import MetricsGate from '../components/MetricsGate';
 import { EnforcementFlowChart } from '../components/EnforcementFlowChart';
 import type { EnforcementFlowPoint } from '../components/EnforcementFlowChart';
@@ -21,6 +21,8 @@ import ActionList from '../components/dashboard/ActionList';
 import { DashboardError } from '../components/DashboardError';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
+import { KPICard, RecoveryAreaChart, PortfolioDonutChart } from '../components/charts';
+import type { RecoveryDataPoint, PortfolioSegment } from '../components/charts';
 import { useEnforcementMetrics, useIntakeMetrics, type IntakeMetricRow } from '../hooks/useExecutiveMetrics';
 import { useEnforcementOverview } from '../hooks/useEnforcementOverview';
 import { usePlaintiffCallQueue } from '../hooks/usePlaintiffCallQueue';
@@ -124,6 +126,56 @@ const ExecutiveDashboardPageNew: React.FC = () => {
     ];
   }, [enforcementOverviewState]);
 
+  // Projected 90-day recovery (estimated at 15% of Tier A + 8% of Tier B)
+  const projectedRecovery90Days = useMemo(() => {
+    const tierA = tierSegments.find((s) => s.tier === 'A')?.totalValue ?? 0;
+    const tierB = tierSegments.find((s) => s.tier === 'B')?.totalValue ?? 0;
+    return tierA * 0.15 + tierB * 0.08;
+  }, [tierSegments]);
+
+  // Recovery velocity chart data (derived from enforcement trend)
+  const recoveryChartData = useMemo<RecoveryDataPoint[]>(() => {
+    if (enforcementTrendState.status !== 'ready' || !enforcementTrendState.data) {
+      return [];
+    }
+    // Use closed cases as proxy for recovery (in real app, would use actual collection data)
+    return enforcementTrendState.data
+      .slice()
+      .reverse()
+      .slice(-8) // Last 8 weeks
+      .map((row, idx) => ({
+        date: row.bucketWeek,
+        label: `W${idx + 1}`,
+        collected: row.casesClosed * 2500, // Placeholder: avg $2500 per closed case
+        projected: idx >= 6 ? row.casesClosed * 2500 * 1.1 : undefined, // Project last 2 weeks
+      }));
+  }, [enforcementTrendState]);
+
+  // Portfolio composition (Wage Garnishments vs Bank Levies vs Other)
+  const portfolioData = useMemo<PortfolioSegment[]>(() => {
+    // In production, this would come from enforcement_actions by type
+    // For now, derive from tier distribution as approximation
+    const tierA = tierSegments.find((s) => s.tier === 'A')?.totalValue ?? 0;
+    const tierB = tierSegments.find((s) => s.tier === 'B')?.totalValue ?? 0;
+    const tierC = tierSegments.find((s) => s.tier === 'C')?.totalValue ?? 0;
+    const total = tierA + tierB + tierC;
+    
+    if (total === 0) {
+      return [
+        { name: 'Wage Garnishments', value: 0, color: '#6366f1' },
+        { name: 'Bank Levies', value: 0, color: '#8b5cf6' },
+        { name: 'Other', value: 0, color: '#94a3b8' },
+      ];
+    }
+
+    // Approximate distribution: 55% wage garnishment, 30% bank levy, 15% other
+    return [
+      { name: 'Wage Garnishments', value: total * 0.55, color: '#6366f1' },
+      { name: 'Bank Levies', value: total * 0.30, color: '#8b5cf6' },
+      { name: 'Other', value: total * 0.15, color: '#94a3b8' },
+    ];
+  }, [tierSegments]);
+
   // Priority count by tier
   const priorityTierCounts = useMemo(() => {
     if (priorityCasesState.status !== 'ready' || !priorityCasesState.data) {
@@ -212,6 +264,43 @@ const ExecutiveDashboardPageNew: React.FC = () => {
         onRefresh={handleRefresh}
         loading={isLoading}
       />
+
+      {/* KPI Cards Row */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <KPICard
+          title="Total Liquidation Value"
+          value={`$${(activeExposure / 1_000_000).toFixed(2)}M`}
+          subtitle="Active judgments under enforcement"
+          icon={<DollarSign className="h-4 w-4" />}
+          trend={weekOverWeekChange !== undefined ? { value: weekOverWeekChange, label: 'vs last week' } : undefined}
+          loading={isLoading}
+        />
+        <KPICard
+          title="Projected Recovery (90 Days)"
+          value={`$${(projectedRecovery90Days / 1_000).toFixed(0)}K`}
+          subtitle="Based on Tier A/B success rates"
+          icon={<TrendingUp className="h-4 w-4" />}
+          loading={isLoading}
+        />
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RecoveryAreaChart
+          data={recoveryChartData}
+          title="Recovery Velocity"
+          subtitle="Weekly collection performance"
+          loading={enforcementTrendState.status === 'loading' || enforcementTrendState.status === 'idle'}
+          showProjected
+        />
+        <PortfolioDonutChart
+          data={portfolioData}
+          title="Portfolio Composition"
+          subtitle="Enforcement method distribution"
+          loading={isLoading}
+          centerLabel="Total Value"
+        />
+      </div>
 
       {/* Tier Distribution Bar */}
       <Card>

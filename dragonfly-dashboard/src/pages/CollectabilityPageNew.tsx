@@ -18,11 +18,13 @@
  * - Clear error handling
  */
 
-import { type FC } from 'react';
+import { type FC, useMemo } from 'react';
+import { DollarSign, TrendingUp } from 'lucide-react';
 import DataTable from '../components/ui/DataTable';
 import { TierBadge } from '../components/ui/Badge';
 import HelpTooltip from '../components/HelpTooltip';
 import ZeroStateCard from '../components/ZeroStateCard';
+import { KPICard } from '../components/charts';
 import {
   useCollectabilityTable,
   TIER_OPTIONS,
@@ -57,8 +59,42 @@ const CollectabilityPage: FC = () => {
   const hasFilters = tierFilter !== 'All' || searchTerm.trim() !== '';
   const filteredEmpty = hasData && displayRows.length === 0 && hasFilters;
 
+  // Calculate total liquidation value from all rows
+  const totalLiquidationValue = useMemo(() => {
+    return allRows.reduce((sum, row) => sum + (row.judgment_amount ?? 0), 0);
+  }, [allRows]);
+
+  // Calculate projected 90-day recovery (Tier A at 15%, Tier B at 8%)
+  const projectedRecovery = useMemo(() => {
+    const tierAValue = allRows
+      .filter((r) => r.collectability_tier === 'A')
+      .reduce((sum, row) => sum + (row.judgment_amount ?? 0), 0);
+    const tierBValue = allRows
+      .filter((r) => r.collectability_tier === 'B')
+      .reduce((sum, row) => sum + (row.judgment_amount ?? 0), 0);
+    return tierAValue * 0.15 + tierBValue * 0.08;
+  }, [allRows]);
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      {/* KPI Cards */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <KPICard
+          title="Total Liquidation Value"
+          value={`$${(totalLiquidationValue / 1_000_000).toFixed(2)}M`}
+          subtitle={`${allRows.length.toLocaleString()} judgments in portfolio`}
+          icon={<DollarSign className="h-4 w-4" />}
+          loading={isLoading}
+        />
+        <KPICard
+          title="Projected Recovery (90 Days)"
+          value={`$${(projectedRecovery / 1_000).toFixed(0)}K`}
+          subtitle="Based on Tier A (15%) + Tier B (8%) rates"
+          icon={<TrendingUp className="h-4 w-4" />}
+          loading={isLoading}
+        />
+      </div>
+
       {/* Page Header */}
       <header className="space-y-2">
         <p className="text-sm text-slate-600">
