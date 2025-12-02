@@ -1,0 +1,259 @@
+{
+  "name": "dragonfly_enforcement_timeline_updater_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- Evaluates v_enforcement_overview every 10 minutes for actions due within the next 24 hours.\n- Queues enforcement_timeline_refresh jobs so the worker can recompute reminders.\n- Mirrors the due work into plaintiff_tasks (kind = enforcement_timeline) for visibility.\n- Sends notify_ops alerts if queue_job fails."
+      },
+      "id": "notes_timeline",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 10,
+        "unit": "minutes"
+      },
+      "id": "trigger_timeline",
+      "name": "Timeline Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_enforcement_overview",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "fullResponse": false,
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"judgment_id,plaintiff_id,case_number,enforcement_stage,next_action_due_at\",\n  \"order\": \"next_action_due_at.asc.nullslast\",\n  \"limit\": \"100\"\n}"
+      },
+      "id": "fetch_timeline_rows",
+      "name": "Fetch Enforcement Rows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const horizonMs = 24 * 60 * 60 * 1000;\nconst now = Date.now();\n\nreturn items\n  .map((item) => item.json ?? {})\n  .filter((row) => row.judgment_id && row.next_action_due_at)\n  .filter((row) => {\n    const dueMs = Date.parse(row.next_action_due_at);\n    return Number.isFinite(dueMs) && dueMs - now <= horizonMs;\n  })\n  .map((row) => ({\n    json: {\n      judgment_id: row.judgment_id,\n      plaintiff_id: row.plaintiff_id,\n      due_at: row.next_action_due_at,\n      queue_kind: 'enforcement_timeline_refresh',\n      queue_payload: {\n        judgment_id: row.judgment_id,\n        case_number: row.case_number,\n        enforcement_stage: row.enforcement_stage,\n        due_at: row.next_action_due_at,\n        requested_by: 'dragonfly_enforcement_timeline_updater_v1'\n      },\n      idempotency_key: `timeline_refresh:${row.judgment_id}:${row.next_action_due_at}`\n    }\n  }));"
+      },
+      "id": "craft_timeline_jobs",
+      "name": "Craft Timeline Jobs",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_timeline_job",
+      "name": "Queue Timeline Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map((item) => {\n  const payload = item.json ?? {};\n  const queueJobId = payload.queue_job ?? payload.id ?? null;\n  return {\n    json: {\n      queue_job_id: queueJobId,\n      success: Boolean(queueJobId),\n      rpc_response: payload\n    }\n  };\n});"
+      },
+      "id": "normalize_timeline_response",
+      "name": "Normalize Queue Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.success}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "timeline_success_check",
+      "name": "Queue Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "task_body",
+              "value": "={{ { plaintiff_id: $node[\"Craft Timeline Jobs\"].json.plaintiff_id, kind: 'enforcement_timeline', status: 'open', due_at: $node[\"Craft Timeline Jobs\"].json.due_at, note: `Timeline refresh queued for case ${$node[\"Craft Timeline Jobs\"].json.queue_payload.case_number}`, created_by: 'n8n_dragonfly_enforcement_timeline_updater_v1' } }}"
+            }
+          ]
+        }
+      },
+      "id": "prepare_timeline_task",
+      "name": "Prepare Task Insert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/plaintiff_tasks",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify($json.task_body) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation,resolution=merge-duplicates\"\n}"
+      },
+      "id": "persist_timeline_task",
+      "name": "Persist Plaintiff Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: { source: 'dragonfly_enforcement_timeline_updater_v1', message: 'Failed to queue enforcement timeline job', context: { judgment_id: $node[\"Craft Timeline Jobs\"].json.judgment_id, rpc_response: $node[\"Normalize Queue Response\"].json.rpc_response } } }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "timeline_failure_alert",
+      "name": "Queue Failure Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Timeline Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Enforcement Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Enforcement Rows": {
+      "main": [
+        [
+          {
+            "node": "Craft Timeline Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Craft Timeline Jobs": {
+      "main": [
+        [
+          {
+            "node": "Queue Timeline Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Timeline Job": {
+      "main": [
+        [
+          {
+            "node": "Normalize Queue Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Queue Response": {
+      "main": [
+        [
+          {
+            "node": "Queue Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Successful?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Insert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Task Insert": {
+      "main": [
+        [
+          {
+            "node": "Persist Plaintiff Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

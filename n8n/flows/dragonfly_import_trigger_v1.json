@@ -1,0 +1,287 @@
+{
+  "name": "dragonfly_import_trigger_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- Runs every hour to seed import_runs and enqueue the ETL dispatcher via queue_job.\n- Snapshot metadata is derived from v_plaintiffs_overview (ready_for_import rows).\n- Automatically skips when no pending plaintiffs are found.\n- Notifies ops on RPC failures and leaves the import_runs row pending for manual review."
+      },
+      "id": "notes_import",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 60,
+        "unit": "minutes"
+      },
+      "id": "trigger_import",
+      "name": "Import Window Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_plaintiffs_overview",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "fullResponse": false,
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"plaintiff_id,case_number,priority,status,last_event_at\",\n  \"status\": \"eq.ready_for_import\",\n  \"order\": \"last_event_at.asc.nullslast\",\n  \"limit\": \"200\"\n}"
+      },
+      "id": "fetch_ready_snapshot",
+      "name": "Fetch Ready Snapshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "if (!items.length) {\n  return [];\n}\n\nconst payload = items.map((item) => item.json);\nconst sampleCases = payload.slice(0, 5).map((row) => row.case_number);\nconst priorities = payload.reduce((acc, row) => {\n  const key = row.priority ?? 'unknown';\n  acc[key] = (acc[key] ?? 0) + 1;\n  return acc;\n}, {});\n\nreturn [\n  {\n    json: {\n      import_body: {\n        import_kind: 'plaintiff_intake',\n        source_system: 'guardian',\n        status: 'pending',\n        metadata: {\n          pending_count: payload.length,\n          sample_cases: sampleCases,\n          priority_breakdown: priorities,\n          snapshot_generated_at: new Date().toISOString()\n        }\n      }\n    }\n  }\n];"
+      },
+      "id": "summarize_snapshot",
+      "name": "Summarize Pending Records",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/import_runs",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify($json.import_body) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}"
+      },
+      "id": "create_import_run",
+      "name": "Create Import Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map((item) => {\n  const row = item.json ?? {};\n  if (!row.id) {\n    return null;\n  }\n  return {\n    json: {\n      queue_kind: 'import_dispatch',\n      queue_payload: {\n        import_run_id: row.id,\n        import_kind: row.import_kind,\n        metadata: row.metadata ?? {},\n        requested_by: 'dragonfly_import_trigger_v1'\n      },\n      idempotency_key: `import_dispatch:${row.id}`\n    }\n  };\n}).filter(Boolean);"
+      },
+      "id": "build_import_queue",
+      "name": "Build Import Queue Job",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_import_job",
+      "name": "Queue Import Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map((item) => {\n  const payload = item.json ?? {};\n  const queueJobId = payload.queue_job ?? payload.id ?? null;\n  return {\n    json: {\n      queue_job_id: queueJobId,\n      success: Boolean(queueJobId),\n      rpc_response: payload\n    }\n  };\n});"
+      },
+      "id": "normalize_queue_response",
+      "name": "Normalize Queue Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.success}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "queue_success_check",
+      "name": "Queue Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://<project-ref>.supabase.co/rest/v1/import_runs",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "queryParametersJson": "={{ JSON.stringify({ id: 'eq.' + $node[\"Create Import Run\"].json.id }) }}",
+        "bodyParametersJson": "={{ JSON.stringify({ status: 'queued' }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}"
+      },
+      "id": "mark_import_queued",
+      "name": "Mark Import Run Queued",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: { source: 'dragonfly_import_trigger_v1', message: 'Failed to queue import run', context: { import_run_id: $node[\"Create Import Run\"].json.id, import_kind: $node[\"Create Import Run\"].json.import_kind, rpc_response: $node[\"Normalize Queue Response\"].json.rpc_response } } }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "import_failure_alert",
+      "name": "Queue Failure Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Import Window Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Ready Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Ready Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Summarize Pending Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Pending Records": {
+      "main": [
+        [
+          {
+            "node": "Create Import Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Import Run": {
+      "main": [
+        [
+          {
+            "node": "Build Import Queue Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Import Queue Job": {
+      "main": [
+        [
+          {
+            "node": "Queue Import Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Import Job": {
+      "main": [
+        [
+          {
+            "node": "Normalize Queue Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Queue Response": {
+      "main": [
+        [
+          {
+            "node": "Queue Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Successful?": {
+      "main": [
+        [
+          {
+            "node": "Mark Import Run Queued",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

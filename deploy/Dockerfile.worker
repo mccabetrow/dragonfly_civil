@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN python -m pip install --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY src ./src
+COPY workers ./workers
+COPY etl ./etl
+COPY config ./config
+COPY tools ./tools
+COPY scripts ./scripts
+
+ENV PYTHONPATH=/app
+
+CMD ["python", "-m", "workers.runner"]

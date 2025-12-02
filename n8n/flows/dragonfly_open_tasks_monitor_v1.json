@@ -1,0 +1,274 @@
+{
+  "name": "dragonfly_open_tasks_monitor_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- 15-minute monitor for overdue plaintiff tasks using v_plaintiff_open_tasks.\n- Escalates tasks older than 60 minutes past due via queue_job -> ops_task_followup.\n- Updates plaintiff_tasks.escalation_state through Supabase node before queueing.\n- Sends Slack/email friendly notify_ops payload that summarizes each breach."
+      },
+      "id": "notes_tasks",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 15,
+        "unit": "minutes"
+      },
+      "id": "trigger_tasks",
+      "name": "Open Tasks Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "waitTill": "relativeTime",
+        "relativeDuration": 3,
+        "relativeUnit": "seconds"
+      },
+      "id": "wait_tasks_skew",
+      "name": "Wait For Snapshot",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_plaintiff_open_tasks",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"task_id,plaintiff_id,assignee,due_at,status,priority,kind\",\n  \"status\": \"in.(open,in_progress)\",\n  \"order\": \"due_at.asc\",\n  \"limit\": \"100\"\n}"
+      },
+      "id": "fetch_open_tasks",
+      "name": "Fetch Open Tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = Date.now();\nreturn $input.all()\n  .map(item => item.json ?? {})\n  .filter(row => row.task_id && row.due_at)\n  .map(row => {\n    const overdueMinutes = Math.floor((now - new Date(row.due_at).getTime()) / 60000);\n    return {\n      json: {\n        task_id: row.task_id,\n        plaintiff_id: row.plaintiff_id,\n        assignee: row.assignee ?? 'unassigned',\n        due_at: row.due_at,\n        priority: row.priority ?? 'medium',\n        kind: row.kind ?? 'task',\n        overdue_minutes: overdueMinutes,\n        alert_needed: overdueMinutes >= 60,\n        queue_kind: 'ops_task_followup',\n        queue_payload: {\n          task_id: row.task_id,\n          plaintiff_id: row.plaintiff_id,\n          due_at: row.due_at,\n          overdue_minutes: overdueMinutes,\n          requested_by: 'dragonfly_open_tasks_monitor_v1'\n        },\n        idempotency_key: `task_followup:${row.task_id}`\n      }\n    };\n  })\n  .filter(item => item.json.alert_needed);"
+      },
+      "id": "detect_overdue_tasks",
+      "name": "Detect Overdue Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.alert_needed}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "task_escalation_gate",
+      "name": "Needs Escalation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "plaintiff_tasks",
+        "columns": [
+          {
+            "column": "escalation_state",
+            "value": "ops_monitor"
+          }
+        ],
+        "updateBy": "filter",
+        "filters": {
+          "matchType": "all",
+          "conditions": [
+            {
+              "column": "id",
+              "condition": "equal",
+              "value": "={{ $json.task_id }}"
+            }
+          ]
+        }
+      },
+      "id": "mark_task_escalated",
+      "name": "Mark Task Escalated",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-service-role",
+          "name": "Supabase Service"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_followup_job",
+      "name": "Queue Follow-up Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "alert_payload",
+              "value": "={{ { source: 'dragonfly_open_tasks_monitor_v1', channel: 'slack', message: `Task ${$json.task_id} assigned to ${$json.assignee} is ${$json.overdue_minutes}m overdue`, context: { task_id: $json.task_id, plaintiff_id: $json.plaintiff_id, due_at: $json.due_at, priority: $json.priority } } }}"
+            }
+          ]
+        }
+      },
+      "id": "task_alert_payload",
+      "name": "Build Alert Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: $json.alert_payload, idempotency_key: 'task_monitor:' + $json.alert_payload.context.task_id }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "send_task_alert",
+      "name": "Send Task Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Open Tasks Trigger": {
+      "main": [
+        [
+          {
+            "node": "Wait For Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Fetch Open Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Open Tasks": {
+      "main": [
+        [
+          {
+            "node": "Detect Overdue Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Overdue Tasks": {
+      "main": [
+        [
+          {
+            "node": "Needs Escalation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Escalation?": {
+      "main": [
+        [
+          {
+            "node": "Mark Task Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Task Escalated": {
+      "main": [
+        [
+          {
+            "node": "Queue Follow-up Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Follow-up Job": {
+      "main": [
+        [
+          {
+            "node": "Build Alert Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Alert Payload": {
+      "main": [
+        [
+          {
+            "node": "Send Task Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

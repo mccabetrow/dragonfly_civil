@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { supabaseClient } from '../lib/supabaseClient';
+import HelpTooltip from '../components/HelpTooltip';
+import ZeroStateCard from '../components/ZeroStateCard';
 
 export type CollectabilityTier = 'A' | 'B' | 'C';
 
@@ -183,7 +185,7 @@ const CollectabilityPage: React.FC = () => {
     <div className="space-y-8">
       <div className="space-y-2">
         <p className="text-sm text-slate-600">
-          Monitor how judgments distribute across collectability tiers to guide outreach and enforcement priorities.
+          This page shows how likely we are to collect on each judgment. Tier A cases are your best bets — focus your time there first.
         </p>
       </div>
 
@@ -191,24 +193,24 @@ const CollectabilityPage: React.FC = () => {
         <SummaryCard
           tier="A"
           value={counts.A}
-          title="Tier A — High Collectability"
-          description="Recent judgments above $3k with strong recovery potential. Prioritize for immediate outreach."
+          title="Tier A — Best Chances"
+          description="These are your highest-value, most recent judgments. Call these plaintiffs first — they're most likely to result in collections."
           accentClass="bg-emerald-50"
           badgeClass="border border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
         />
         <SummaryCard
           tier="B"
           value={counts.B}
-          title="Tier B — Moderate Collectability"
-          description="Balanced mix of amount and age; good candidates for targeted follow-up campaigns."
+          title="Tier B — Worth Pursuing"
+          description="Good candidates for follow-up. Work these after you've contacted all your Tier A plaintiffs."
           accentClass="bg-amber-50"
           badgeClass="border border-amber-500/30 bg-amber-500/10 text-amber-700"
         />
         <SummaryCard
           tier="C"
           value={counts.C}
-          title="Tier C — Long Tail"
-          description="Older or lower-value judgments. Monitor periodically and automate low-touch efforts."
+          title="Tier C — Lower Priority"
+          description="Older or smaller judgments. Keep these on the back burner and check in occasionally."
           accentClass="bg-slate-100"
           badgeClass="border border-slate-500/30 bg-slate-500/10 text-slate-700"
         />
@@ -217,15 +219,16 @@ const CollectabilityPage: React.FC = () => {
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Cases</h2>
+            <h2 className="text-lg font-semibold text-slate-900">All Judgments</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Drill into enrichment freshness, judgment values, and tier distribution for every case.
+              Browse and search through every judgment. Click column headers to sort.
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end sm:gap-4">
             <div className="flex flex-col gap-2 sm:w-48">
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="tier-filter">
                 Tier filter
+                <HelpTooltip text="Filter the list to show only cases in a specific tier. Tier A has the best collection chances, so start there." />
               </label>
               <select
                 id="tier-filter"
@@ -240,12 +243,13 @@ const CollectabilityPage: React.FC = () => {
                 ))}
               </select>
               <p className="text-[11px] text-slate-400">
-                Tier A: recent, high-dollar matters; Tier B: balanced mix; Tier C: long-tail or lower-value cases.
+                A = best bets, B = worth pursuing, C = lower priority.
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:max-w-xs sm:flex-1">
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="case-search">
                 Search
+                <HelpTooltip text="Type a case number to find a specific judgment. You can search partial numbers too." />
               </label>
               <input
                 id="case-search"
@@ -264,11 +268,22 @@ const CollectabilityPage: React.FC = () => {
           <span className="ml-1 text-[11px] normal-case text-slate-400">(total {totalCountLabel})</span>
         </div>
 
-        {loading && <StatusMessage message="Loading collectability snapshot…" tone="neutral" />}
+        {loading && <StatusMessage message="Loading your judgments…" tone="neutral" />}
 
         {state === 'error' && error && <StatusMessage message={error.message} tone="error" />}
 
-        {empty && <StatusMessage message="No cases match the current filters." tone="neutral" />}
+        {state === 'ready' && rows.length === 0 && (
+          <div className="px-6 pb-6">
+            <ZeroStateCard
+              title="No judgments yet"
+              description="Once cases are imported into the system, they'll appear here sorted by collection priority. Check back soon!"
+              actionLink="/help"
+              actionLabel="Learn how this page works"
+            />
+          </div>
+        )}
+
+        {empty && rows.length > 0 && <StatusMessage message="No judgments match your search. Try clearing the filters or check back after the next import." tone="neutral" />}
 
         {!loading && !empty && state === 'ready' && (
           <div className="overflow-hidden">

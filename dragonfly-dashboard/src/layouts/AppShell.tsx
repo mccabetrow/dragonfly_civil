@@ -1,5 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import ReleaseNotesModal, { useReleaseNotesModal } from '../components/ReleaseNotesModal';
 
 interface NavigationItem {
   label: string;
@@ -18,9 +19,11 @@ const AppShell: React.FC = () => {
   const location = useLocation();
   const activeNav =
     NAVIGATION_ITEMS.find((item) => location.pathname.startsWith(item.path)) ?? NAVIGATION_ITEMS[0];
+  const releaseNotes = useReleaseNotesModal();
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
+      <ReleaseNotesModal isOpen={releaseNotes.isOpen} onClose={releaseNotes.close} />
       <div className="flex min-h-screen">
         <aside className="hidden w-64 flex-shrink-0 flex-col gap-10 bg-slate-900 px-6 py-8 text-slate-100 md:flex">
           <div className="flex items-center gap-3">
@@ -71,6 +74,13 @@ const AppShell: React.FC = () => {
               <h1 className="text-2xl font-semibold text-slate-900">{activeNav.label}</h1>
             </div>
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={releaseNotes.open}
+                className="hidden text-xs font-medium text-slate-500 transition hover:text-slate-700 hover:underline sm:inline"
+              >
+                What changed?
+              </button>
               <NavLink
                 to="/help"
                 className="hidden rounded-full border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 sm:inline-flex"

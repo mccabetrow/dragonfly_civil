@@ -1,0 +1,2 @@
+row_number,stage,error_type,error_message,raw_data
+3,parse,ValidationError,Missing required field: PlaintiffName,"{""lead_id"": ""TEST003"", ""plaintiff_name"": """", ""email"": ""bad_missing_name@example.com"", ""phone"": ""555-555-0003"", ""judgment_number"": ""JN-ORCH-003"", ""case_number"": ""CN-ORCH-003"", ""defendant_name"": ""Bad Defendant"", ""judgment_amount"": ""3000.00"", ""judgment_date"": ""2025-03-01""}"

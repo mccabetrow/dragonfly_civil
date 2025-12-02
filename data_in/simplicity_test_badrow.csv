@@ -1,0 +1,3 @@
+lead_id,plaintiff_name,email,phone,judgment_number,case_number,defendant_name,judgment_amount,judgment_date
+TEST002,GoodPlaintiff,good@example.com,555-555-0002,JN-ORCH-002,CN-ORCH-002,Good Defendant,2000.00,2025-02-01
+TEST003,,bad_missing_name@example.com,555-555-0003,JN-ORCH-003,CN-ORCH-003,Bad Defendant,3000.00,2025-03-01

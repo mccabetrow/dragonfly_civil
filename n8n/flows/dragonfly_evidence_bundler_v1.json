@@ -1,0 +1,224 @@
+{
+  "name": "dragonfly_evidence_bundler_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- Polls v_enforcement_overview for bundle-ready cases and queues evidence_bundle jobs.\n- Keeps job payload lightweight (judgment + stage metadata).\n- Relies on queue_job RPC with retries enabled.\n- On failure queues notify_ops with the enforcement identifiers."
+      },
+      "id": "notes_bundle",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 15,
+        "unit": "minutes"
+      },
+      "id": "trigger_bundle",
+      "name": "Bundler Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_enforcement_overview",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "fullResponse": false,
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"judgment_id,case_number,plaintiff_id,enforcement_stage,next_hearing_at\",\n  \"bundle_ready\": \"eq.true\",\n  \"order\": \"next_hearing_at.asc.nullslast\",\n  \"limit\": \"25\"\n}"
+      },
+      "id": "fetch_bundle_targets",
+      "name": "Fetch Bundle Targets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items\n  .map((item) => item.json ?? {})\n  .filter((row) => row.judgment_id)\n  .map((row) => ({\n    json: {\n      judgment_id: row.judgment_id,\n      queue_kind: 'evidence_bundle',\n      queue_payload: {\n        judgment_id: row.judgment_id,\n        case_number: row.case_number,\n        enforcement_stage: row.enforcement_stage,\n        next_hearing_at: row.next_hearing_at,\n        requested_by: 'dragonfly_evidence_bundler_v1'\n      },\n      idempotency_key: `evidence_bundle:${row.judgment_id}`\n    }\n  }));"
+      },
+      "id": "craft_bundle_jobs",
+      "name": "Craft Bundle Jobs",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_bundle_job",
+      "name": "Queue Bundle Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map((item) => {\n  const payload = item.json ?? {};\n  const queueJobId = payload.queue_job ?? payload.id ?? null;\n  return {\n    json: {\n      queue_job_id: queueJobId,\n      success: Boolean(queueJobId),\n      rpc_response: payload\n    }\n  };\n});"
+      },
+      "id": "normalize_bundle_response",
+      "name": "Normalize Queue Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.success}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "bundle_success_check",
+      "name": "Queue Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "summary",
+              "value": "={{ { judgment_id: $node[\"Craft Bundle Jobs\"].json.judgment_id, queued_job: $node[\"Normalize Queue Response\"].json.queue_job_id } }}"
+            }
+          ]
+        }
+      },
+      "id": "bundle_success_summary",
+      "name": "Prepare Success Summary",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: { source: 'dragonfly_evidence_bundler_v1', message: 'Failed to queue evidence bundle job', context: { judgment_id: $node[\"Craft Bundle Jobs\"].json.judgment_id, rpc_response: $node[\"Normalize Queue Response\"].json.rpc_response } } }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "bundle_failure_alert",
+      "name": "Queue Failure Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Bundler Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Bundle Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Bundle Targets": {
+      "main": [
+        [
+          {
+            "node": "Craft Bundle Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Craft Bundle Jobs": {
+      "main": [
+        [
+          {
+            "node": "Queue Bundle Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Bundle Job": {
+      "main": [
+        [
+          {
+            "node": "Normalize Queue Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Queue Response": {
+      "main": [
+        [
+          {
+            "node": "Queue Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Successful?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Success Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

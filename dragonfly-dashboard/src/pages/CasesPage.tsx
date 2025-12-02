@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { supabaseClient } from '../lib/supabaseClient';
+import HelpTooltip from '../components/HelpTooltip';
+import ZeroStateCard from '../components/ZeroStateCard';
 
 type CollectabilityTier = 'A' | 'B' | 'C';
 type TierFilter = CollectabilityTier | 'All';
@@ -219,23 +221,23 @@ const CasesPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Cases</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Your Cases</h2>
         <p className="mt-2 text-sm text-slate-600">
-          Review every judgment currently tracked in Supabase with live collectability context. Use the filters to
-          locate cases quickly, monitor enrichment status, and spot high-priority opportunities.
+          Here's every judgment we're working on. Click any row to see full details about the plaintiff, defendant, and our research history.
         </p>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">Case list</h3>
-            <p className="mt-1 text-sm text-slate-500">Search by case number and refine by collectability tier.</p>
+            <h3 className="text-lg font-semibold text-slate-900">Browse Judgments</h3>
+            <p className="mt-1 text-sm text-slate-500">Use the search box to find a specific case number.</p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end sm:gap-4">
             <div className="flex flex-col gap-2 sm:w-48">
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="tier-filter">
                 Tier filter
+                <HelpTooltip text="Show only cases from a specific tier. Tier A has the highest chance of collecting." />
               </label>
               <select
                 id="tier-filter"
@@ -253,6 +255,7 @@ const CasesPage: React.FC = () => {
             <div className="flex flex-col gap-2 sm:max-w-xs sm:flex-1">
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="case-search">
                 Search
+                <HelpTooltip text="Enter a case number or part of one to find a specific judgment quickly." />
               </label>
               <input
                 id="case-search"
@@ -270,11 +273,22 @@ const CasesPage: React.FC = () => {
           Showing {sortedRows.length} of {displayRows.length} cases
         </div>
 
-        {loading && <StatusMessage message="Loading cases…" tone="neutral" />}
+        {loading && <StatusMessage message="Loading your cases…" tone="neutral" />}
 
         {state === 'error' && error && <StatusMessage message={error.message} tone="error" />}
 
-        {emptyCases && <StatusMessage message="No cases match the current filters." tone="neutral" />}
+        {state === 'ready' && cases.length === 0 && (
+          <div className="px-6 pb-6">
+            <ZeroStateCard
+              title="No cases yet"
+              description="Your first judgments will appear here once we import them from Simplicity. Check back soon!"
+              actionLink="/help"
+              actionLabel="Learn more"
+            />
+          </div>
+        )}
+
+        {emptyCases && cases.length > 0 && <StatusMessage message="No cases match your search. Try clearing the tier filter or search box." tone="neutral" />}
 
         {!loading && !emptyCases && state === 'ready' && (
           <div className="overflow-hidden">
@@ -331,17 +345,20 @@ const CasesPage: React.FC = () => {
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-5 md:flex-row md:items-end md:justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">Recent FOIL responses</h3>
-            <p className="mt-1 text-sm text-slate-500">Latest disclosures linked back to tracked cases.</p>
+            <h3 className="text-lg font-semibold text-slate-900">
+              Public Records Responses
+              <HelpTooltip text="When we send information requests to agencies like DMV or tax offices, their replies show up here. This helps us find assets we can collect on." />
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">Information we've received back from government agencies.</p>
           </div>
         </div>
 
-        {loading && <StatusMessage message="Loading FOIL responses…" tone="neutral" />}
+        {loading && <StatusMessage message="Loading public records…" tone="neutral" />}
 
         {state === 'error' && error && <StatusMessage message={error.message} tone="error" />}
 
         {!loading && state === 'ready' && emptyFoil && (
-          <StatusMessage message="No FOIL responses recorded yet." tone="neutral" />
+          <StatusMessage message="No public records responses yet. These will show up as agencies reply to our requests." tone="neutral" />
         )}
 
         {!loading && state === 'ready' && !emptyFoil && (

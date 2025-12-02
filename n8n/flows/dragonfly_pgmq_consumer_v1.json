@@ -1,0 +1,232 @@
+{
+  "name": "dragonfly_pgmq_consumer_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- Polls import_runs for ready_for_queue records and forwards them to the pgmq_consume worker via queue_job.\n- Keeps batch size small (10) to avoid starving other RPC clients.\n- Marks runs as processing once the RPC ack is returned.\n- Sends notify_ops payloads when queue_job fails so ops can inspect the import run row."
+      },
+      "id": "notes_pgmq",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 5,
+        "unit": "minutes"
+      },
+      "id": "trigger_pgmq",
+      "name": "PGMQ Sweep Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/import_runs",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "fullResponse": false,
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"id,import_kind,source_system,storage_path,status,metadata,started_at\",\n  \"status\": \"eq.ready_for_queue\",\n  \"order\": \"started_at.asc\",\n  \"limit\": \"10\"\n}"
+      },
+      "id": "fetch_ready_runs",
+      "name": "Fetch Ready Runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items\n  .map((item) => item.json ?? {})\n  .filter((row) => row.id)\n  .map((row) => ({\n    json: {\n      import_run_id: row.id,\n      queue_kind: 'pgmq_consume',\n      queue_payload: {\n        import_run_id: row.id,\n        import_kind: row.import_kind,\n        storage_path: row.storage_path,\n        source_system: row.source_system,\n        metadata: row.metadata ?? {},\n        requested_by: 'dragonfly_pgmq_consumer_v1'\n      },\n      idempotency_key: `pgmq_consume:${row.id}`\n    }\n  }));"
+      },
+      "id": "craft_pgmq_jobs",
+      "name": "Craft PGMQ Jobs",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_pgmq_job",
+      "name": "Queue PGMQ Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map((item) => {\n  const payload = item.json ?? {};\n  const queueJobId = payload.queue_job ?? payload.id ?? null;\n  return {\n    json: {\n      queue_job_id: queueJobId,\n      success: Boolean(queueJobId),\n      rpc_response: payload\n    }\n  };\n});"
+      },
+      "id": "normalize_pgmq_response",
+      "name": "Normalize Queue Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.success}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "pgmq_success_check",
+      "name": "Queue Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://<project-ref>.supabase.co/rest/v1/import_runs",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "queryParametersJson": "={{ JSON.stringify({ id: 'eq.' + $node[\"Craft PGMQ Jobs\"].json.import_run_id }) }}",
+        "bodyParametersJson": "={{ JSON.stringify({ status: 'processing' }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}"
+      },
+      "id": "mark_run_processing",
+      "name": "Mark Run Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: { source: 'dragonfly_pgmq_consumer_v1', message: 'Failed to queue pgmq_consume job', context: { import_run_id: $node[\"Craft PGMQ Jobs\"].json.import_run_id, rpc_response: $node[\"Normalize Queue Response\"].json.rpc_response } } }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "pgmq_failure_alert",
+      "name": "Queue Failure Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "PGMQ Sweep Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Ready Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Ready Runs": {
+      "main": [
+        [
+          {
+            "node": "Craft PGMQ Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Craft PGMQ Jobs": {
+      "main": [
+        [
+          {
+            "node": "Queue PGMQ Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue PGMQ Job": {
+      "main": [
+        [
+          {
+            "node": "Normalize Queue Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Queue Response": {
+      "main": [
+        [
+          {
+            "node": "Queue Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Successful?": {
+      "main": [
+        [
+          {
+            "node": "Mark Run Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

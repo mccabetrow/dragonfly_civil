@@ -1,0 +1,142 @@
+{
+  "name": "Dragonfly: New Actionable Lead Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Notification-Only Flow\n\n**Purpose:** Alert ops when enrichment worker marks a judgment ACTIONABLE.\n\n**Trigger:** Webhook from Python enrich_worker OR polling v_enforcement_pipeline_status.\n\n**Architecture:**\n- All enrichment logic lives in `workers/enrich_worker.py`\n- This flow ONLY reads summary data and posts to Discord\n- No direct table writes; no business logic\n\n**Webhook payload expected:**\n```json\n{\n  \"judgment_id\": \"uuid\",\n  \"case_index_number\": \"NYC-2024-0001\",\n  \"debtor_name\": \"John Doe\",\n  \"principal_amount\": 15000.00,\n  \"collectability_score\": 85,\n  \"employer_name\": \"Delta Airlines\",\n  \"income_band\": \"MED\"\n}\n```"
+      },
+      "id": "notes_lead_alert",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 120]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dragonfly/lead-alert",
+        "responseMode": "onReceived",
+        "options": {
+          "responseCode": 200,
+          "responseData": "allEntries"
+        }
+      },
+      "id": "webhook_trigger",
+      "name": "Webhook: Enrichment Complete",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "dragonfly-lead-alert-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate and normalize webhook payload\nconst payload = $input.first().json.body ?? $input.first().json ?? {};\n\nconst judgmentId = payload.judgment_id ?? null;\nconst caseNumber = payload.case_index_number ?? payload.case_number ?? 'Unknown';\nconst debtorName = payload.debtor_name ?? 'Unknown Debtor';\nconst principalAmount = typeof payload.principal_amount === 'number' \n  ? payload.principal_amount \n  : parseFloat(payload.principal_amount) || 0;\nconst score = payload.collectability_score ?? payload.confidence_score ?? 0;\nconst employerName = payload.employer_name ?? null;\nconst incomeBand = payload.income_band ?? 'UNKNOWN';\n\n// Validate minimum required fields\nif (!judgmentId) {\n  return { json: { valid: false, error: 'Missing judgment_id' } };\n}\n\nreturn {\n  json: {\n    valid: true,\n    judgment_id: judgmentId,\n    case_number: caseNumber,\n    debtor_name: debtorName,\n    principal_amount: principalAmount,\n    principal_formatted: principalAmount.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),\n    collectability_score: score,\n    employer_name: employerName,\n    income_band: incomeBand,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "validate_payload",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "valid_check",
+      "name": "Valid Payload?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "content": "=🐉 **New Actionable Lead**\n\n**Case:** {{ $json.case_number }}\n**Debtor:** {{ $json.debtor_name }}\n**Principal:** {{ $json.principal_formatted }}\n\n**Intelligence:**\n• Employer: {{ $json.employer_name || 'Unknown' }}\n• Income Band: {{ $json.income_band }}\n• Collectability: {{ $json.collectability_score }}%\n\n✅ Judgment is now **ACTIONABLE**\n\n_{{ $json.timestamp }}_",
+        "additionalFields": {
+          "username": "Dragonfly Bot",
+          "avatarUrl": "https://em-content.zobj.net/source/twitter/376/dragon_1f409.png"
+        }
+      },
+      "id": "discord_alert",
+      "name": "Discord: New Actionable Lead",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [900, 240],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "discord_webhook",
+          "name": "Discord Dragonfly Alerts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log invalid payload for debugging\nconst error = $input.first().json.error ?? 'Unknown validation error';\nconsole.error('Lead alert validation failed:', error);\n\nreturn {\n  json: {\n    status: 'error',\n    error: error,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "log_error",
+      "name": "Log Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    }
+  ],
+  "connections": {
+    "Webhook: Enrichment Complete": {
+      "main": [
+        [
+          {
+            "node": "Validate Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Payload": {
+      "main": [
+        [
+          {
+            "node": "Valid Payload?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Payload?": {
+      "main": [
+        [
+          {
+            "node": "Discord: New Actionable Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "dragonfly" },
+    { "name": "notifications" },
+    { "name": "v2" }
+  ],
+  "triggerCount": 1,
+  "pinData": {}
+}

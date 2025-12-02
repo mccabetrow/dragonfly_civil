@@ -1,0 +1,5 @@
+PlaintiffName,JudgmentNumber,JudgmentAmount,JudgmentDate,Phone,Email,Court,County,State,DefendantName
+Acme Collections LLC,SIM-PLT-001,15000.00,2024-01-15,(212) 555-0100,acme@example.com,Kings County Civil,Kings,NY,John Doe
+Beta Finance Corp,SIM-PLT-002,8750.50,2024-02-20,(718) 555-0200,beta@example.com,Queens Civil,Queens,NY,Jane Smith
+Gamma Funding Inc,SIM-PLT-003,22500.00,2024-03-10,(646) 555-0300,gamma@example.com,NY Civil,New York,NY,Bob Wilson
+Delta Recovery LLC,SIM-PLT-004,5000.00,2024-04-05,(917) 555-0400,delta@example.com,Bronx Civil,Bronx,NY,Alice Brown

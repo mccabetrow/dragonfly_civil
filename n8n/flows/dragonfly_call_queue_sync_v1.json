@@ -1,0 +1,459 @@
+{
+  "name": "dragonfly_call_queue_sync_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- 15-minute sync pulls v_plaintiff_call_queue canonical fields.\n- Ensures every row has an open plaintiff_tasks record before queueing call_queue_sync jobs.\n- Auto-closes queue rows without dialable phones via log_call_outcome.\n- Queues notify_ops alert if queue_job fails.",
+        "height": 220,
+        "width": 420
+      },
+      "id": "notes_call_sync",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 15,
+        "unit": "minutes"
+      },
+      "id": "trigger_call_sync",
+      "name": "Call Queue Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "waitTill": "relativeTime",
+        "relativeDuration": 2,
+        "relativeUnit": "seconds"
+      },
+      "id": "wait_call_sync",
+      "name": "Wait For Queue",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_plaintiff_call_queue",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3,
+          "continueOnFail": true
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"task_id,plaintiff_id,plaintiff_name,tier,total_judgment_amount,phone,last_contact_at,due_at,notes\",\n  \"order\": \"due_at.asc.nullsfirst\",\n  \"limit\": \"40\"\n}"
+      },
+      "id": "fetch_call_queue",
+      "name": "Fetch Call Queue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fallbackDue = () => new Date(Date.now() + 2 * 3600000).toISOString();\nreturn $input.all()\n  .map(item => item.json ?? {})\n  .filter(row => row.plaintiff_id && row.task_id)\n  .map(row => {\n    const phone = row.phone ?? null;\n    const dueAt = row.due_at ?? fallbackDue();\n    const severity = row.tier === 'A' ? 'high' : row.tier === 'B' ? 'medium' : 'low';\n    const note = row.notes ?? `Call queue sync placeholder for ${row.plaintiff_name ?? 'plaintiff'}`;\n    return {\n      json: {\n        plaintiff_id: row.plaintiff_id,\n        task_id: row.task_id,\n        phone,\n        severity,\n        due_at: dueAt,\n        has_phone: Boolean(phone),\n        queue_kind: 'call_queue_sync',\n        queue_payload: {\n          plaintiff_id: row.plaintiff_id,\n          task_id: row.task_id,\n          due_at: dueAt,\n          phone,\n          severity,\n          requested_by: 'dragonfly_call_queue_sync_v1'\n        },\n        idempotency_key: `call_queue_sync:${row.task_id}`,\n        task_body: {\n          plaintiff_id: row.plaintiff_id,\n          kind: 'call',\n          status: 'open',\n          severity,\n          due_at: dueAt,\n          note,\n          created_by: 'dragonfly_call_queue_sync_v1',\n          metadata: {\n            source: 'call_queue_sync',\n            queue_task_id: row.task_id,\n            total_judgment_amount: row.total_judgment_amount ?? null\n          }\n        },\n        call_outcome_body: phone ? null : {\n          _plaintiff_id: row.plaintiff_id,\n          _task_id: row.task_id,\n          _outcome: 'bad_number',\n          _interest: 'none',\n          _notes: 'Auto-closed by call_queue_sync_v1: no dialable phone',\n          _follow_up_at: null\n        }\n      }\n    };\n  });"
+      },
+      "id": "shape_call_queue",
+      "name": "Shape Call Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.has_phone === true }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "split_phone_check",
+      "name": "Has Dialable Phone?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/plaintiff_tasks",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3,
+          "continueOnFail": true
+        },
+        "bodyParametersJson": "={{ JSON.stringify($json.task_body) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"resolution=merge-duplicates,return=minimal\"\n}"
+      },
+      "id": "persist_call_task",
+      "name": "Persist Call Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_call_sync_job",
+      "name": "Queue call_queue_sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const payload = item.json ?? {};\n  const error = payload.error ?? null;\n  const normalized = Array.isArray(payload) ? payload[0] : payload;\n  const queueJobId = normalized?.queue_job ?? normalized?.id ?? null;\n  const hasId = Boolean(queueJobId);\n  return {\n    json: {\n      rpc_response: error ?? normalized,\n      success: hasId && !error,\n      error,\n      plaintiff_id: $items('Shape Call Queue')[index].json.plaintiff_id,\n      task_id: $items('Shape Call Queue')[index].json.task_id,\n      queue_job_id: queueJobId\n    }\n  };\n});"
+      },
+      "id": "normalize_sync_result",
+      "name": "Normalize Sync Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "sync_rpc_success",
+      "name": "Sync RPC OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "alert_payload",
+              "value": "={{ { source: 'dragonfly_call_queue_sync_v1', channel: 'email', message: `Failed to queue call_queue_sync for plaintiff ${$json.plaintiff_id}`, context: { plaintiff_id: $json.plaintiff_id, task_id: $json.task_id, rpc_response: $json.rpc_response } } }}"
+            }
+          ]
+        }
+      },
+      "id": "build_sync_alert",
+      "name": "Build Sync Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: $json.alert_payload, idempotency_key: 'call_sync_alert:' + $json.alert_payload.context.plaintiff_id }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "send_sync_alert",
+      "name": "Send Sync Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/log_call_outcome",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3,
+          "continueOnFail": true
+        },
+        "bodyParametersJson": "={{ JSON.stringify($json.call_outcome_body) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "log_bad_number_outcome",
+      "name": "Log Missing Phone Outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItems = $items('Has Dialable Phone?', 1);\nreturn $input.all().map((item, index) => {\n  const payload = item.json ?? {};\n  const error = payload.error ?? null;\n  const normalized = Array.isArray(payload) ? payload[0] : payload;\n  const source = (sourceItems[index] && sourceItems[index].json) || {};\n  return {\n    json: {\n      rpc_response: error ?? normalized,\n      success: !error,\n      error,\n      plaintiff_id: source.plaintiff_id ?? null,\n      task_id: source.task_id ?? null\n    }\n  };\n});"
+      },
+      "id": "normalize_outcome_result",
+      "name": "Normalize Outcome Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "outcome_rpc_success",
+      "name": "Outcome RPC OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "alert_payload",
+              "value": "={{ { source: 'dragonfly_call_queue_sync_v1', channel: 'email', message: `Failed to log call outcome for plaintiff ${$json.plaintiff_id}`, context: { plaintiff_id: $json.plaintiff_id, task_id: $json.task_id, rpc_response: $json.rpc_response, error: $json.error } } }}"
+            }
+          ]
+        }
+      },
+      "id": "build_outcome_alert",
+      "name": "Build Outcome Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: $json.alert_payload, idempotency_key: 'call_outcome_alert:' + ($json.alert_payload.context.task_id || 'unknown') }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "send_outcome_alert",
+      "name": "Send Outcome Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Call Queue Trigger": {
+      "main": [
+        [
+          {
+            "node": "Wait For Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Queue": {
+      "main": [
+        [
+          {
+            "node": "Fetch Call Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Call Queue": {
+      "main": [
+        [
+          {
+            "node": "Shape Call Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Call Queue": {
+      "main": [
+        [
+          {
+            "node": "Has Dialable Phone?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Dialable Phone?": {
+      "main": [
+        [
+          {
+            "node": "Persist Call Task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Missing Phone Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Missing Phone Outcome": {
+      "main": [
+        [
+          {
+            "node": "Normalize Outcome Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Outcome Result": {
+      "main": [
+        [
+          {
+            "node": "Outcome RPC OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome RPC OK?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Outcome Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Outcome Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Outcome Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Call Task": {
+      "main": [
+        [
+          {
+            "node": "Queue call_queue_sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue call_queue_sync": {
+      "main": [
+        [
+          {
+            "node": "Normalize Sync Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Sync Result": {
+      "main": [
+        [
+          {
+            "node": "Sync RPC OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync RPC OK?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Sync Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sync Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Sync Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,466 @@
+{
+  "name": "dragonfly_enforcement_escalation_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- Daily escalation sweep for cases stalled in enforcement stage >3 days or past next_action_at.\n- Calls set_enforcement_stage RPC with automation note + metadata, then logs timeline event.\n- Touches enforcement_cases.next_action_at via Supabase node so dashboards refresh.\n- Sends notify_ops alert on RPC failure with case context."
+      },
+      "id": "notes_enforcement",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 1440,
+        "unit": "minutes"
+      },
+      "id": "trigger_enforcement",
+      "name": "Daily Escalation Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "waitTill": "relativeTime",
+        "relativeDuration": 10,
+        "relativeUnit": "seconds"
+      },
+      "id": "wait_enforcement_skew",
+      "name": "Wait For Tier Refresh",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_enforcement_overview",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"case_id,case_number,tier,current_stage,next_action_at,days_in_stage\",\n  \"order\": \"days_in_stage.desc\",\n  \"limit\": \"200\"\n}"
+      },
+      "id": "fetch_enforcement_cases",
+      "name": "Fetch Enforcement Cases",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = Date.now();\nreturn $input.all()\n  .map(item => item.json ?? {})\n  .filter(row => row.case_id)\n  .map(row => {\n    const nextActionOverdue = row.next_action_at ? now - new Date(row.next_action_at).getTime() > 0 : false;\n    const needsEscalation = (row.days_in_stage ?? 0) >= 3 || nextActionOverdue;\n    return {\n      json: {\n        enforcement_case_id: row.case_id,\n        case_number: row.case_number,\n        tier: row.tier,\n        current_stage: row.current_stage,\n        days_in_stage: row.days_in_stage ?? 0,\n        next_action_at: row.next_action_at,\n        next_stage: 'escalation_review',\n        reason: nextActionOverdue ? 'next_action_overdue' : 'stalled_stage',\n        needs_escalation: needsEscalation\n      }\n    };\n  })\n  .filter(item => item.json.needs_escalation);"
+      },
+      "id": "flag_cases",
+      "name": "Flag Stalled Cases",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "stage_request",
+              "value": "={{ { case_id: $json.enforcement_case_id, stage: $json.next_stage, actor: 'dragonfly_enforcement_escalation_v1', note: `Automated escalation after ${$json.days_in_stage}d in ${$json.current_stage}`, metadata: { tier: $json.tier, case_number: $json.case_number, reason: $json.reason } } }}"
+            }
+          ]
+        }
+      },
+      "id": "build_stage_payload",
+      "name": "Build Stage Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/set_enforcement_stage",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3,
+          "continueOnFail": true
+        },
+        "bodyParametersJson": "={{ JSON.stringify($json.stage_request) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "call_set_stage",
+      "name": "Call set_enforcement_stage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItems = $items('Flag Stalled Cases');\nreturn $input.all().map((item, index) => {\n  const payload = item.json ?? {};\n  const error = payload.error ?? null;\n  const normalized = Array.isArray(payload) ? payload[0] : payload;\n  const source = (sourceItems[index] && sourceItems[index].json) || {};\n  const successId = normalized?.case_id ?? normalized?.id;\n  return {\n    json: {\n      rpc_response: error ?? normalized,\n      success: Boolean(successId) && !error,\n      error,\n      enforcement_case_id: source.enforcement_case_id ?? null,\n      case_number: source.case_number ?? null,\n      next_stage: source.next_stage ?? null\n    }\n  };\n});"
+      },
+      "id": "stage_rpc_result",
+      "name": "Normalize Stage Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.success}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "stage_success_gate",
+      "name": "Stage RPC ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "enforcement_cases",
+        "columns": [
+          {
+            "column": "next_action_at",
+            "value": "={{ new Date(Date.now() + 86400000).toISOString() }}"
+          }
+        ],
+        "updateBy": "filter",
+        "filters": {
+          "matchType": "all",
+          "conditions": [
+            {
+              "column": "id",
+              "condition": "equal",
+              "value": "={{ $json.enforcement_case_id }}"
+            }
+          ]
+        }
+      },
+      "id": "touch_next_action",
+      "name": "Touch Next Action",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-service-role",
+          "name": "Supabase Service"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/log_enforcement_event",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3,
+          "continueOnFail": true
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ case_id: $json.enforcement_case_id, event_kind: 'case_stage_changed', actor: 'dragonfly_enforcement_escalation_v1', payload: { stage: $json.next_stage }, note: 'Stage escalated automatically' }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "log_escalation_event",
+      "name": "Log Escalation Event",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItems = $items('Flag Stalled Cases');\nreturn $input.all().map((item, index) => {\n  const payload = item.json ?? {};\n  const error = payload.error ?? null;\n  const normalized = Array.isArray(payload) ? payload[0] : payload;\n  const source = (sourceItems[index] && sourceItems[index].json) || {};\n  return {\n    json: {\n      rpc_response: error ?? normalized,\n      success: !error,\n      error,\n      enforcement_case_id: source.enforcement_case_id ?? null,\n      case_number: source.case_number ?? null\n    }\n  };\n});"
+      },
+      "id": "normalize_event_result",
+      "name": "Normalize Event Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "event_rpc_success",
+      "name": "Event RPC ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "alert_payload",
+              "value": "={{ { source: 'dragonfly_enforcement_escalation_v1', channel: 'slack', message: `Failed to log escalation event for case ${$json.case_number || $json.enforcement_case_id}`, context: { enforcement_case_id: $json.enforcement_case_id, rpc_response: $json.rpc_response, error: $json.error } } }}"
+            }
+          ]
+        }
+      },
+      "id": "build_event_alert",
+      "name": "Build Event Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: $json.alert_payload, idempotency_key: 'enforcement_event_alert:' + ($json.alert_payload.context.enforcement_case_id || 'unknown') }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "send_event_alert",
+      "name": "Send Event Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "alert_payload",
+              "value": "={{ { source: 'dragonfly_enforcement_escalation_v1', channel: 'slack', message: `Failed to escalate case ${$items(\"Flag Stalled Cases\")[ $itemIndex ].json.case_number}`, context: { enforcement_case_id: $items(\"Flag Stalled Cases\")[ $itemIndex ].json.enforcement_case_id, rpc_response: $json.rpc_response } } }}"
+            }
+          ]
+        }
+      },
+      "id": "escalation_alert_payload",
+      "name": "Build Escalation Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: $json.alert_payload, idempotency_key: 'enforcement_alert:' + $json.alert_payload.context.enforcement_case_id }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "escalation_failure_alert",
+      "name": "Send Escalation Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Escalation Trigger": {
+      "main": [
+        [
+          {
+            "node": "Wait For Tier Refresh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Tier Refresh": {
+      "main": [
+        [
+          {
+            "node": "Fetch Enforcement Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Enforcement Cases": {
+      "main": [
+        [
+          {
+            "node": "Flag Stalled Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag Stalled Cases": {
+      "main": [
+        [
+          {
+            "node": "Build Stage Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Stage Payload": {
+      "main": [
+        [
+          {
+            "node": "Call set_enforcement_stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call set_enforcement_stage": {
+      "main": [
+        [
+          {
+            "node": "Normalize Stage Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Stage Response": {
+      "main": [
+        [
+          {
+            "node": "Stage RPC ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage RPC ok?": {
+      "main": [
+        [
+          {
+            "node": "Touch Next Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Escalation Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Touch Next Action": {
+      "main": [
+        [
+          {
+            "node": "Log Escalation Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Escalation Event": {
+      "main": [
+        [
+          {
+            "node": "Normalize Event Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Event Result": {
+      "main": [
+        [
+          {
+            "node": "Event RPC ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event RPC ok?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Event Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Event Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Event Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Escalation Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Escalation Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+row_number,stage,error_type,error_message,raw_data
+2,insert,UndefinedColumn,"column ""court_name"" of relation ""judgments"" does not exist
+LINE 10:                 court_name,
+                         ^","{""PlaintiffName"": ""Acme Collections LLC"", ""JudgmentNumber"": ""SIM-PLT-001"", ""JudgmentAmount"": ""15000.00"", ""JudgmentDate"": ""2024-01-15"", ""Phone"": ""(212) 555-0100"", ""Email"": ""acme@example.com"", ""Court"": ""Kings County Civil"", ""County"": ""Kings"", ""State"": ""NY"", ""DefendantName"": ""John Doe""}"
+3,insert,UndefinedColumn,"column ""court_name"" of relation ""judgments"" does not exist
+LINE 10:                 court_name,
+                         ^","{""PlaintiffName"": ""Beta Finance Corp"", ""JudgmentNumber"": ""SIM-PLT-002"", ""JudgmentAmount"": ""8750.50"", ""JudgmentDate"": ""2024-02-20"", ""Phone"": ""(718) 555-0200"", ""Email"": ""beta@example.com"", ""Court"": ""Queens Civil"", ""County"": ""Queens"", ""State"": ""NY"", ""DefendantName"": ""Jane Smith""}"
+4,insert,UndefinedColumn,"column ""court_name"" of relation ""judgments"" does not exist
+LINE 10:                 court_name,
+                         ^","{""PlaintiffName"": ""Gamma Funding Inc"", ""JudgmentNumber"": ""SIM-PLT-003"", ""JudgmentAmount"": ""22500.00"", ""JudgmentDate"": ""2024-03-10"", ""Phone"": ""(646) 555-0300"", ""Email"": ""gamma@example.com"", ""Court"": ""NY Civil"", ""County"": ""New York"", ""State"": ""NY"", ""DefendantName"": ""Bob Wilson""}"
+5,insert,UndefinedColumn,"column ""court_name"" of relation ""judgments"" does not exist
+LINE 10:                 court_name,
+                         ^","{""PlaintiffName"": ""Delta Recovery LLC"", ""JudgmentNumber"": ""SIM-PLT-004"", ""JudgmentAmount"": ""5000.00"", ""JudgmentDate"": ""2024-04-05"", ""Phone"": ""(917) 555-0400"", ""Email"": ""delta@example.com"", ""Court"": ""Bronx Civil"", ""County"": ""Bronx"", ""State"": ""NY"", ""DefendantName"": ""Alice Brown""}"

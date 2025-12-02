@@ -1,0 +1,3 @@
+case_number,court,plaintiff_name,defendant_name,judgment_amount,judgment_date,source
+DF-2025-0001,Bronx Supreme Court,Empire Funding LLC,Daniel Reyes,18750.00,2024-11-05,demo_seed
+DF-2025-0002,New York Civil Court,Harbor Portfolio Trust,Alicia Ortiz,9200.50,2024-10-17,demo_seed

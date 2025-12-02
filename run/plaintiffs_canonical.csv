@@ -1,0 +1,11 @@
+﻿case_number,party_name,judgment_amount,judgment_date,court_name,county,state
+DRY-0001,Sample Plaintiff A,4500.00,2024-06-15,Kings County Civil Court,Kings,NY
+DRY-0002,Sample Plaintiff B,2750.00,2024-07-22,Queens County Civil Court,Queens,NY
+DRY-0003,Sample Plaintiff C,1200.00,2024-08-10,Bronx County Civil Court,Bronx,NY
+DRY-0004,Sample Plaintiff D,8500.00,2024-09-01,Nassau County Civil Court,Nassau,NY
+DRY-0005,Sample Plaintiff E,3200.00,2024-09-15,Suffolk County Civil Court,Suffolk,NY
+DRY-0006,Sample Plaintiff F,6750.00,2024-10-01,Westchester County Civil Court,Westchester,NY
+DRY-0007,Sample Plaintiff G,4100.00,2024-10-10,Richmond County Civil Court,Richmond,NY
+DRY-0008,Sample Plaintiff H,9200.00,2024-10-20,Albany County Civil Court,Albany,NY
+DRY-0009,Sample Plaintiff I,1850.00,2024-11-01,Erie County Civil Court,Erie,NY
+DRY-0010,Sample Plaintiff J,5500.00,2024-11-15,Monroe County Civil Court,Monroe,NY

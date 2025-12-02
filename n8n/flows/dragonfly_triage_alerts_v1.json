@@ -1,0 +1,282 @@
+{
+  "name": "dragonfly_triage_alerts_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- 10-minute poll of ops_triage_alerts RPC with limit 25.\n- Routes alerts to Slack (severity>=high) or email (medium/low) via notify_ops queue_job payloads.\n- Acknowledges alert rows through Supabase once notification is queued.\n- Includes wait + error branch so failing notifications are retried quickly."
+      },
+      "id": "notes_triage",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 10,
+        "unit": "minutes"
+      },
+      "id": "trigger_triage",
+      "name": "Triage Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "waitTill": "relativeTime",
+        "relativeDuration": 4,
+        "relativeUnit": "seconds"
+      },
+      "id": "wait_triage",
+      "name": "Wait For Alerts",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/ops_triage_alerts",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={\n  \"limit\": 25\n}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "fetch_triage_alerts",
+      "name": "Fetch Triage Alerts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const alerts = Array.isArray($input.first().json) ? $input.first().json : [];\nreturn alerts.map((alert) => {\n  const severity = alert.severity ?? 'medium';\n  const channel = ['critical', 'high'].includes(severity) ? 'slack' : 'email';\n  return {\n    json: {\n      alert_id: alert.id,\n      severity,\n      channel,\n      headline: alert.headline ?? 'Ops triage alert',\n      body: alert.body ?? '',\n      context: alert.context ?? {},\n      queue_kind: 'notify_ops',\n      idempotency_key: `triage:${alert.id}`\n    }\n  };\n});"
+      },
+      "id": "shape_triage_alerts",
+      "name": "Shape Triage Alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "alert_payload",
+              "value": "={{ { source: 'dragonfly_triage_alerts_v1', channel: $json.channel, message: `${$json.headline} (severity ${$json.severity})`, body: $json.body, context: $json.context } }}"
+            }
+          ]
+        }
+      },
+      "id": "build_triage_payload",
+      "name": "Build Triage Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "strings": [
+            {
+              "value1": "={{$json.alert_payload.channel}}",
+              "operation": "equal",
+              "value2": "slack"
+            }
+          ]
+        }
+      },
+      "id": "triage_slack_gate",
+      "name": "Slack Channel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: $json.alert_payload, idempotency_key: $json.idempotency_key + ':slack' }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "send_triage_slack",
+      "name": "Send Slack Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: Object.assign({}, $json.alert_payload, { channel: 'email' }), idempotency_key: $json.idempotency_key + ':email' }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "send_triage_email",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "ops_triage_alerts",
+        "columns": [
+          {
+            "column": "acked_at",
+            "value": "={{ new Date().toISOString() }}"
+          }
+        ],
+        "updateBy": "filter",
+        "filters": {
+          "matchType": "all",
+          "conditions": [
+            {
+              "column": "id",
+              "condition": "equal",
+              "value": "={{ $json.alert_id }}"
+            }
+          ]
+        }
+      },
+      "id": "ack_triage_alert",
+      "name": "Ack Triage Alert",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-service-role",
+          "name": "Supabase Service"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Triage Trigger": {
+      "main": [
+        [
+          {
+            "node": "Wait For Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Alerts": {
+      "main": [
+        [
+          {
+            "node": "Fetch Triage Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Triage Alerts": {
+      "main": [
+        [
+          {
+            "node": "Shape Triage Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Triage Alerts": {
+      "main": [
+        [
+          {
+            "node": "Build Triage Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Triage Payload": {
+      "main": [
+        [
+          {
+            "node": "Slack Channel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Channel?": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Alert": {
+      "main": [
+        [
+          {
+            "node": "Ack Triage Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Alert": {
+      "main": [
+        [
+          {
+            "node": "Ack Triage Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

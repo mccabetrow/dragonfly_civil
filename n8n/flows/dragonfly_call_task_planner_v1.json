@@ -1,0 +1,288 @@
+{
+  "name": "dragonfly_call_task_planner_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- Nightly planner for plaintiff call queue using v_plaintiffs_overview.\n- Queues call_task_planner jobs via queue_job so ETL can build detailed rosters.\n- Inserts/refreshes plaintiff_tasks (kind = call) with due dates aligned to planner output.\n- Alerts ops when queue_job fails so the roster can be re-run manually."
+      },
+      "id": "notes_call_planner",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 1440,
+        "unit": "minutes"
+      },
+      "id": "trigger_call_planner",
+      "name": "Daily Planner Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_plaintiffs_overview",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "fullResponse": false,
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"plaintiff_id,case_number,priority,status,last_contact_at\",\n  \"status\": \"in.(contact_needed,contact_attempted)\",\n  \"order\": \"priority.desc.nullslast,last_contact_at.asc.nullslast\",\n  \"limit\": \"100\"\n}"
+      },
+      "id": "fetch_call_candidates",
+      "name": "Fetch Call Candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const dueDate = new Date(Date.now() + 12 * 3600000).toISOString();\nreturn items\n  .map((item) => item.json ?? {})\n  .filter((row) => row.plaintiff_id)\n  .map((row) => ({\n    json: {\n      plaintiff_id: row.plaintiff_id,\n      case_number: row.case_number,\n      priority: row.priority ?? 'medium',\n      queue_kind: 'call_task_planner',\n      queue_payload: {\n        plaintiff_id: row.plaintiff_id,\n        case_number: row.case_number,\n        priority: row.priority ?? 'medium',\n        status: row.status,\n        requested_by: 'dragonfly_call_task_planner_v1'\n      },\n      task_due_at: dueDate,\n      idempotency_key: `call_planner:${row.plaintiff_id}`\n    }\n  }));"
+      },
+      "id": "craft_call_jobs",
+      "name": "Craft Call Planner Jobs",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3,
+          "continueOnFail": true
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_call_job",
+      "name": "Queue Call Planner Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const sourceItems = $items('Craft Call Planner Jobs');\nreturn items.map((item, index) => {\n  const payload = item.json ?? {};\n  const error = payload.error ?? null;\n  const normalized = Array.isArray(payload) ? payload[0] : payload;\n  const queueJobId = normalized?.queue_job ?? normalized?.id ?? null;\n  const source = (sourceItems[index] && sourceItems[index].json) || {};\n  return {\n    json: {\n      queue_job_id: queueJobId,\n      success: Boolean(queueJobId) && !error,\n      rpc_response: error ?? normalized,\n      error,\n      plaintiff_id: source.plaintiff_id ?? null,\n      case_number: source.case_number ?? null,\n      priority: source.priority ?? 'medium'\n    }\n  };\n});"
+      },
+      "id": "normalize_call_response",
+      "name": "Normalize Queue Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.success}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "call_success_check",
+      "name": "Queue Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "task_body",
+              "value": "={{ { plaintiff_id: $items(\"Craft Call Planner Jobs\")[$itemIndex].json.plaintiff_id, kind: 'call', status: 'open', due_at: $items(\"Craft Call Planner Jobs\")[$itemIndex].json.task_due_at, note: `Call planner scheduled follow-up for case ${$items(\"Craft Call Planner Jobs\")[$itemIndex].json.case_number}`, created_by: 'n8n_dragonfly_call_task_planner_v1' } }}"
+            }
+          ]
+        }
+      },
+      "id": "prepare_call_task",
+      "name": "Prepare Task Insert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/plaintiff_tasks",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify($json.task_body) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation,resolution=merge-duplicates\"\n}"
+      },
+      "id": "persist_call_task",
+      "name": "Persist Plaintiff Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: $json.alert_payload, idempotency_key: 'call_planner_alert:' + ($json.alert_payload.context.plaintiff_id || 'unknown') }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "call_failure_alert",
+      "name": "Queue Failure Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "alert_payload",
+              "value": "={{ { source: 'dragonfly_call_task_planner_v1', channel: 'email', message: `Failed to queue call planner job for plaintiff ${$json.plaintiff_id}`, context: { plaintiff_id: $json.plaintiff_id, case_number: $json.case_number, rpc_response: $json.rpc_response, error: $json.error } } }}"
+            }
+          ]
+        }
+      },
+      "id": "build_call_planner_alert",
+      "name": "Build Planner Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Daily Planner Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Call Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Call Candidates": {
+      "main": [
+        [
+          {
+            "node": "Craft Call Planner Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Craft Call Planner Jobs": {
+      "main": [
+        [
+          {
+            "node": "Queue Call Planner Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Call Planner Job": {
+      "main": [
+        [
+          {
+            "node": "Normalize Queue Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Queue Response": {
+      "main": [
+        [
+          {
+            "node": "Queue Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Successful?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Insert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Planner Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Task Insert": {
+      "main": [
+        [
+          {
+            "node": "Persist Plaintiff Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Planner Alert": {
+      "main": [
+        [
+          {
+            "node": "Queue Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

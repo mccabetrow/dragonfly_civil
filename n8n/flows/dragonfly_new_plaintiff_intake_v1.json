@@ -1,0 +1,357 @@
+{
+  "name": "dragonfly_new_plaintiff_intake_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- Hourly sweep for plaintiffs still marked status=new.\n- Queue intake_enrich jobs then flip status to contacted for auditability.\n- Writes status history + notify_ops alert when queue_job fails."
+      },
+      "id": "notes_intake",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 60,
+        "unit": "minutes"
+      },
+      "id": "trigger_intake",
+      "name": "Hourly Intake Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "waitTill": "relativeTime",
+        "relativeDuration": 5,
+        "relativeUnit": "seconds"
+      },
+      "id": "wait_intake_skew",
+      "name": "Wait For Skew",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/plaintiffs",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"id,name,source_system,status,created_at,tier\",\n  \"status\": \"eq.new\",\n  \"order\": \"created_at.asc\",\n  \"limit\": \"50\"\n}"
+      },
+      "id": "fetch_intake_candidates",
+      "name": "Fetch Intake Candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const deadline = new Date(Date.now() + 4 * 3600000).toISOString();\nreturn $input.all()\n  .map(item => item.json ?? {})\n  .filter(row => row.id)\n  .map(row => ({\n    json: {\n      plaintiff_id: row.id,\n      queue_kind: 'intake_enrich',\n      queue_payload: {\n        plaintiff_id: row.id,\n        source_system: row.source_system ?? 'unknown',\n        status: row.status,\n        tier: row.tier ?? 'unknown',\n        requested_by: 'dragonfly_new_plaintiff_intake_v1'\n      },\n      idempotency_key: `intake_enrich:${row.id}`,\n      next_deadline: deadline\n    }\n  }));"
+      },
+      "id": "prepare_intake_jobs",
+      "name": "Prepare Intake Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_intake_job",
+      "name": "Queue Intake Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const payload = item.json ?? {};\n  const queueId = Array.isArray(payload) ? payload[0] : payload;\n  const queueJobId = queueId?.queue_job ?? queueId?.id ?? null;\n  return {\n    json: {\n      queue_job_id: queueJobId,\n      success: Boolean(queueJobId),\n      rpc_response: payload,\n      plaintiff_id: $items('Prepare Intake Jobs')[index].json.plaintiff_id\n    }\n  };\n});"
+      },
+      "id": "intake_queue_result",
+      "name": "Normalize Queue Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.success}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "intake_success_gate",
+      "name": "Queue Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "plaintiffs",
+        "columns": [
+          {
+            "column": "status",
+            "value": "contacted"
+          },
+          {
+            "column": "updated_at",
+            "value": "={{ new Date().toISOString() }}"
+          }
+        ],
+        "updateBy": "filter",
+        "filters": {
+          "matchType": "all",
+          "conditions": [
+            {
+              "column": "id",
+              "condition": "equal",
+              "value": "={{ $items(\"Prepare Intake Jobs\")[ $itemIndex ].json.plaintiff_id }}"
+            }
+          ]
+        }
+      },
+      "id": "update_plaintiff_status",
+      "name": "Update Plaintiff Status",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-service-role",
+          "name": "Supabase Service"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "history_body",
+              "value": "={{ { plaintiff_id: $items(\"Prepare Intake Jobs\")[ $itemIndex ].json.plaintiff_id, status: 'contacted', note: 'Auto intake processing', changed_by: 'dragonfly_new_plaintiff_intake_v1' } }}"
+            }
+          ]
+        }
+      },
+      "id": "build_status_history",
+      "name": "Build Status History",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/plaintiff_status_history",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify($json.history_body) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=minimal\"\n}"
+      },
+      "id": "record_status_history",
+      "name": "Record Intake Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "alert_payload",
+              "value": "={{ { source: 'dragonfly_new_plaintiff_intake_v1', message: 'Failed to queue intake_enrich job', context: { plaintiff_id: $items(\"Prepare Intake Jobs\")[ $itemIndex ].json.plaintiff_id, rpc_response: $json.rpc_response } } }}"
+            }
+          ]
+        }
+      },
+      "id": "intake_failure_payload",
+      "name": "Build Failure Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: $json.alert_payload, idempotency_key: 'intake_alert:' + $json.alert_payload.context.plaintiff_id }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "intake_failure_alert",
+      "name": "Queue Failure Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Hourly Intake Trigger": {
+      "main": [
+        [
+          {
+            "node": "Wait For Skew",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Skew": {
+      "main": [
+        [
+          {
+            "node": "Fetch Intake Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Intake Candidates": {
+      "main": [
+        [
+          {
+            "node": "Prepare Intake Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Intake Jobs": {
+      "main": [
+        [
+          {
+            "node": "Queue Intake Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Intake Job": {
+      "main": [
+        [
+          {
+            "node": "Normalize Queue Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Queue Result": {
+      "main": [
+        [
+          {
+            "node": "Queue Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Successful?": {
+      "main": [
+        [
+          {
+            "node": "Update Plaintiff Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Failure Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Plaintiff Status": {
+      "main": [
+        [
+          {
+            "node": "Build Status History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Status History": {
+      "main": [
+        [
+          {
+            "node": "Record Intake Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Failure Payload": {
+      "main": [
+        [
+          {
+            "node": "Queue Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

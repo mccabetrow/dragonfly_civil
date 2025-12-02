@@ -1,0 +1,259 @@
+{
+  "name": "dragonfly_foil_tracker_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- Watches v_enforcement_overview for rows flagged with needs_foil = true.\n- Queues foil_tracker jobs that prepare FOIL submissions and reminders.\n- Writes/refreshes plaintiff_tasks entries so intake teams can see upcoming FOIL deadlines.\n- Emits notify_ops RPC payloads on failure." 
+      },
+      "id": "notes_foil",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 30,
+        "unit": "minutes"
+      },
+      "id": "trigger_foil",
+      "name": "FOIL Sweep Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_enforcement_overview",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "fullResponse": false,
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"judgment_id,plaintiff_id,case_number,needs_foil,needs_foil_by,enforcement_stage\",\n  \"needs_foil\": \"eq.true\",\n  \"order\": \"needs_foil_by.asc.nullslast\",\n  \"limit\": \"50\"\n}"
+      },
+      "id": "fetch_foil_targets",
+      "name": "Fetch FOIL Targets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items\n  .map((item) => item.json ?? {})\n  .filter((row) => row.judgment_id && row.plaintiff_id)\n  .map((row) => ({\n    json: {\n      judgment_id: row.judgment_id,\n      plaintiff_id: row.plaintiff_id,\n      deadline: row.needs_foil_by ?? new Date(Date.now() + 3 * 24 * 3600000).toISOString(),\n      queue_kind: 'foil_tracker',\n      queue_payload: {\n        judgment_id: row.judgment_id,\n        plaintiff_id: row.plaintiff_id,\n        case_number: row.case_number,\n        enforcement_stage: row.enforcement_stage,\n        needs_foil_by: row.needs_foil_by,\n        requested_by: 'dragonfly_foil_tracker_v1'\n      },\n      idempotency_key: `foil_tracker:${row.judgment_id}`\n    }\n  }));"
+      },
+      "id": "craft_foil_jobs",
+      "name": "Craft FOIL Jobs",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_foil_job",
+      "name": "Queue FOIL Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map((item) => {\n  const payload = item.json ?? {};\n  const queueJobId = payload.queue_job ?? payload.id ?? null;\n  return {\n    json: {\n      queue_job_id: queueJobId,\n      success: Boolean(queueJobId),\n      rpc_response: payload\n    }\n  };\n});"
+      },
+      "id": "normalize_foil_response",
+      "name": "Normalize Queue Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.success}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "foil_success_check",
+      "name": "Queue Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "task_body",
+              "value": "={{ { plaintiff_id: $node[\"Craft FOIL Jobs\"].json.plaintiff_id, kind: 'foil_followup', status: 'open', due_at: $node[\"Craft FOIL Jobs\"].json.deadline, note: `FOIL packet due for case ${$node[\"Craft FOIL Jobs\"].json.queue_payload.case_number}`, created_by: 'n8n_dragonfly_foil_tracker_v1' } }}"
+            }
+          ]
+        }
+      },
+      "id": "prepare_foil_task",
+      "name": "Prepare Task Insert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/plaintiff_tasks",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify($json.task_body) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation,resolution=merge-duplicates\"\n}"
+      },
+      "id": "persist_foil_task",
+      "name": "Persist Plaintiff Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: { source: 'dragonfly_foil_tracker_v1', message: 'Failed to queue foil_tracker job', context: { judgment_id: $node[\"Craft FOIL Jobs\"].json.judgment_id, rpc_response: $node[\"Normalize Queue Response\"].json.rpc_response } } }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "foil_failure_alert",
+      "name": "Queue Failure Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "FOIL Sweep Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch FOIL Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch FOIL Targets": {
+      "main": [
+        [
+          {
+            "node": "Craft FOIL Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Craft FOIL Jobs": {
+      "main": [
+        [
+          {
+            "node": "Queue FOIL Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue FOIL Job": {
+      "main": [
+        [
+          {
+            "node": "Normalize Queue Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Queue Response": {
+      "main": [
+        [
+          {
+            "node": "Queue Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Successful?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Insert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Task Insert": {
+      "main": [
+        [
+          {
+            "node": "Persist Plaintiff Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

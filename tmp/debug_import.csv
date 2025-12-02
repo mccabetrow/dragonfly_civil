@@ -1,0 +1,2 @@
+LeadID,LeadSource,Court,IndexNumber,JudgmentDate,JudgmentAmount,County,State,PlaintiffName,PlaintiffAddress,Phone,Email,BestContactMethod
+DEBUG-37E79608,Import,Bronx Supreme Court,DEBUG-37E79608,04/01/2024,25000.00,Bronx,NY,Debug Run LLC,"789 Grand Concourse, Bronx, NY",(917)555-3300,debug.run@example.com,Phone

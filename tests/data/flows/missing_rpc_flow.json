@@ -1,0 +1,37 @@
+{
+  "name": "missing_rpc_flow",
+  "nodes": [
+    {
+      "id": "http_rpc",
+      "name": "Call Missing RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "parameters": {
+        "method": "POST",
+        "url": "https://example.supabase.co/rest/v1/rpc/missing_rpc",
+        "jsonParameters": true
+      }
+    },
+    {
+      "id": "http_public_table",
+      "name": "HTTP Public Table",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "parameters": {
+        "method": "GET",
+        "url": "https://example.supabase.co/rest/v1/public.demo_table"
+      }
+    },
+    {
+      "id": "supabase_insert",
+      "name": "Insert Row",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "demo_table"
+      }
+    }
+  ]
+}

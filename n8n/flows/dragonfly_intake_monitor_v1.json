@@ -1,0 +1,259 @@
+{
+  "name": "dragonfly_intake_monitor_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- Polls v_plaintiffs_overview for intake_pending records and limits to top 50 by priority.\n- Adds or refreshes matching plaintiff_tasks records and queues intake_monitor jobs via queue_job RPC.\n- On any RPC failure the branch immediately queues a notify_ops error with payload context.\n- Update SUPABASE keys/credentials via the shared generic header auth credential before enabling in prod."
+      },
+      "id": "notes_intake",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 15,
+        "unit": "minutes"
+      },
+      "id": "trigger_intake",
+      "name": "Intake Sweep Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_plaintiffs_overview",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "fullResponse": false,
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"plaintiff_id,case_number,priority,status,last_event_at,next_task_due_at\",\n  \"status\": \"eq.intake_pending\",\n  \"order\": \"priority.desc.nullslast,last_event_at.asc.nullslast\",\n  \"limit\": \"50\"\n}"
+      },
+      "id": "fetch_plaintiffs",
+      "name": "Fetch Plaintiffs Pending Intake",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const horizonMinutes = 45;\nconst now = Date.now();\n\nreturn items\n  .map((item) => item.json)\n  .filter((record) => record.plaintiff_id && record.case_number)\n  .map((record) => {\n    const due = record.next_task_due_at ?? new Date(now + horizonMinutes * 60000).toISOString();\n    return {\n      json: {\n        plaintiff_id: record.plaintiff_id,\n        case_number: record.case_number,\n        priority: record.priority ?? 'medium',\n        next_due_at: due,\n        queue_kind: 'intake_monitor',\n        queue_payload: {\n          source: 'dragonfly_intake_monitor_v1',\n          plaintiff_id: record.plaintiff_id,\n          case_number: record.case_number,\n          priority: record.priority ?? 'medium'\n        },\n        idempotency_key: `intake_monitor:${record.plaintiff_id}`,\n        task_note: `Guardian intake follow-up scheduled for ${record.case_number}`\n      }\n    };\n  });"
+      },
+      "id": "craft_queue_payload",
+      "name": "Craft Intake Queue Payload",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: $json.queue_kind, payload: $json.queue_payload, idempotency_key: $json.idempotency_key }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_intake_job",
+      "name": "Queue Intake Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map((item) => {\n  const payload = item.json ?? {};\n  const queueJobId = payload.queue_job ?? payload.id ?? payload.message_id ?? null;\n  return {\n    json: {\n      queue_job_id: queueJobId,\n      success: Boolean(queueJobId),\n      rpc_response: payload\n    }\n  };\n});"
+      },
+      "id": "normalize_queue_response",
+      "name": "Normalize Queue Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.success}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "queue_success_check",
+      "name": "Queue Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "task_body",
+              "value": "={{ { plaintiff_id: $node[\"Craft Intake Queue Payload\"].json.plaintiff_id, kind: 'call_intake', status: 'open', due_at: $node[\"Craft Intake Queue Payload\"].json.next_due_at, note: $node[\"Craft Intake Queue Payload\"].json.task_note, created_by: 'n8n_dragonfly_intake_monitor_v1' } }}"
+            }
+          ]
+        }
+      },
+      "id": "prepare_task_insert",
+      "name": "Prepare Task Insert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/plaintiff_tasks",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify($json.task_body) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"return=representation,resolution=merge-duplicates\"\n}"
+      },
+      "id": "persist_plaintiff_task",
+      "name": "Persist Plaintiff Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: { source: 'dragonfly_intake_monitor_v1', message: 'Failed to queue intake monitor job', context: { plaintiff_id: $node[\"Craft Intake Queue Payload\"].json.plaintiff_id, case_number: $node[\"Craft Intake Queue Payload\"].json.case_number, rpc_response: $node[\"Normalize Queue Response\"].json.rpc_response } } }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "queue_failure_alert",
+      "name": "Queue Failure Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Intake Sweep Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Plaintiffs Pending Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Plaintiffs Pending Intake": {
+      "main": [
+        [
+          {
+            "node": "Craft Intake Queue Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Craft Intake Queue Payload": {
+      "main": [
+        [
+          {
+            "node": "Queue Intake Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Intake Job": {
+      "main": [
+        [
+          {
+            "node": "Normalize Queue Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Queue Response": {
+      "main": [
+        [
+          {
+            "node": "Queue Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Successful?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Insert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Task Insert": {
+      "main": [
+        [
+          {
+            "node": "Persist Plaintiff Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,6 @@
+﻿CaseNumber,DefendantName,PlaintiffName,JudgmentDate,JudgmentAmount,Court,County
+123-2024,John Doe,ABC Corp,2024-01-15,$5250.00,Supreme Court,New York
+124-2024,Jane Smith,XYZ Inc,01/20/2024,$3100.50,Civil Court,Kings
+125-2024,Bob Wilson,Test LLC,invalid-date,1500,District Court,Queens
+126-2024,,Missing Plaintiff,2024-03-01,$2000,County Court,Bronx
+,No Case Number,Some Corp,2024-04-01,1000,Family Court,Richmond

@@ -1,0 +1,233 @@
+{
+  "name": "dragonfly_pgmq_monitor_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow guardrails\n- 5-minute poll of pgmq_metrics RPC to watch queue depth + max age for enrich/outreach/enforce/case_copilot.\n- Flags queues where depth > 500 or oldest message > 15m.\n- Sends notify_ops payload via queue_job and records summary row in ops_metadata (Supabase insert).\n- Includes wait + retry patterns to survive transient API hiccups."
+      },
+      "id": "notes_pgmq_monitor",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "mode": "everyX",
+        "value": 5,
+        "unit": "minutes"
+      },
+      "id": "trigger_pgmq_monitor",
+      "name": "PGMQ Monitor Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "waitTill": "relativeTime",
+        "relativeDuration": 5,
+        "relativeUnit": "seconds"
+      },
+      "id": "wait_pgmq_monitor",
+      "name": "Wait For Queue Stats",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/pgmq_metrics",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={\n  \"queue_names\": [\"enrich\", \"outreach\", \"enforce\", \"case_copilot\"]\n}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "fetch_pgmq_metrics",
+      "name": "Fetch PGMQ Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date().toISOString();\nconst queues = Array.isArray($input.first().json) ? $input.first().json : [];\nreturn queues.map((row) => {\n  const depth = row.depth ?? row.queue_depth ?? 0;\n  const ageSeconds = row.max_age_seconds ?? 0;\n  const alert = depth >= 500 || ageSeconds >= 900;\n  return {\n    json: {\n      queue_name: row.queue_name ?? row.name,\n      depth,\n      age_seconds: ageSeconds,\n      alert_needed: alert,\n      captured_at: now\n    }\n  };\n});"
+      },
+      "id": "pgmq_thresholds",
+      "name": "Evaluate Thresholds",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "ops_metadata",
+        "columns": [
+          {
+            "column": "category",
+            "value": "pgmq_monitor"
+          },
+          {
+            "column": "metrics",
+            "value": "={{ JSON.stringify({ queue_name: $json.queue_name, depth: $json.depth, age_seconds: $json.age_seconds, captured_at: $json.captured_at }) }}"
+          }
+        ]
+      },
+      "id": "record_pgmq_snapshot",
+      "name": "Record Snapshot",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-service-role",
+          "name": "Supabase Service"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.alert_needed}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "pgmq_alert_gate",
+      "name": "Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "json": [
+            {
+              "name": "alert_payload",
+              "value": "={{ { source: 'dragonfly_pgmq_monitor_v1', channel: 'slack', message: `PGMQ queue ${$json.queue_name} depth=${$json.depth} age=${$json.age_seconds}s`, context: { queue_name: $json.queue_name, depth: $json.depth, age_seconds: $json.age_seconds, captured_at: $json.captured_at } } }}"
+            }
+          ]
+        }
+      },
+      "id": "pgmq_alert_payload",
+      "name": "Build PGMQ Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<project-ref>.supabase.co/rest/v1/rpc/queue_job",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "bodyParametersJson": "={{ JSON.stringify({ kind: 'notify_ops', payload: $json.alert_payload, idempotency_key: 'pgmq_alert:' + $json.alert_payload.context.queue_name + ':' + $json.alert_payload.context.captured_at }) }}",
+        "headerParametersJson": "={\n  \"apikey\": \"SUPABASE_SERVICE_ROLE_KEY\",\n  \"Authorization\": \"Bearer SUPABASE_SERVICE_ROLE_KEY\",\n  \"Content-Type\": \"application/json\"\n}"
+      },
+      "id": "pgmq_notify_ops",
+      "name": "Send PGMQ Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "PGMQ Monitor Trigger": {
+      "main": [
+        [
+          {
+            "node": "Wait For Queue Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Queue Stats": {
+      "main": [
+        [
+          {
+            "node": "Fetch PGMQ Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch PGMQ Metrics": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Thresholds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Thresholds": {
+      "main": [
+        [
+          {
+            "node": "Record Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Alert Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Needed?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build PGMQ Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build PGMQ Alert": {
+      "main": [
+        [
+          {
+            "node": "Send PGMQ Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -1,4 +1,7 @@
 import React from 'react';
+import WelcomeCard from '../components/WelcomeCard';
+import FirstWeekChecklist from '../components/FirstWeekChecklist';
+import HelpTooltip from '../components/HelpTooltip';
 
 const guidedSteps: Array<{
   title: string;
@@ -6,53 +9,54 @@ const guidedSteps: Array<{
   highlights: string[];
 }> = [
   {
-    title: '1. Data Pipeline: Simplicity → Supabase',
+    title: '1. Start with the Overview',
     summary:
-      'Start by dropping a fresh Simplicity export into the watcher. Highlight how the CLI tasks (`make smoke`, Insert: Composite) push data into Supabase while logs stream in.',
+      'The Overview page is your daily dashboard. Check it each morning to see the big picture of all your judgments.',
     highlights: [
-      'Reference docs/runbook_phase1.md for the pre-ingest checklist.',
-      'Point out the watcher automation that processes files from data_in/.',
-      'Open /overview to show the pipeline metrics and queue health counters updating.',
+      'Look at "Total judgments" to see how many cases you\'re tracking.',
+      'Check "Being researched" to see what\'s actively being worked on.',
+      'The tier breakdown shows where your best collection opportunities are.',
     ],
   },
   {
-    title: '2. Collectability Overview & Tiers',
+    title: '2. Understand the Tiers',
     summary:
-      'Walk the Collectability page to explain how scoring blends dollar amount plus judgment age, giving operations a clear ranking.',
+      'We automatically sort your judgments into three groups based on how likely they are to collect.',
     highlights: [
-      'Use the tier filter to demonstrate the instant A/B/C segmentation.',
-      'Toggle the Judgment Amount sort to show prioritization controls.',
-      'Call out the helper copy describing how each tier should be interpreted.',
+      'Tier A (green): Your best bets — recent, higher-dollar judgments. Focus here first.',
+      'Tier B (yellow): Worth pursuing — good candidates for follow-up calls.',
+      'Tier C (gray): Lower priority — older or smaller amounts. Check occasionally.',
     ],
   },
   {
-    title: '3. Case-Level Drilldown',
+    title: '3. Browse Your Cases',
     summary:
-      'Navigate to the Cases page and open a row. Emphasize how the three-column drawer gives a full picture without leaving the screen.',
+      'The Cases page lets you search and view every judgment. Click any row to see the full story.',
     highlights: [
-      'Show the plaintiff/defendant context on the overview column.',
-      'Demonstrate the enrichment history timeline with timestamps.',
-      'Point to the FOIL activity list that keeps compliance conversations grounded in facts.',
+      'Use the search box to find a specific case number.',
+      'Click a case to see the plaintiff name, defendant, and judgment details.',
+      'The "Research History" panel shows what information we\'ve gathered.',
     ],
   },
   {
-    title: '4. FOIL & Enrichment Tracking',
+    title: '4. Track Public Records',
     summary:
-      'Explain how every FOIL disclosure and enrichment run is captured, making audit prep effortless.',
+      'When government agencies respond to our information requests, those responses appear automatically.',
     highlights: [
-      'Scroll through FOIL responses and note agency plus received date.',
-      'Describe how enrichment history proves the scoring engine stays fresh.',
-      'Loop back to /overview to reinforce portfolio-level totals.',
+      'Look for the "Public Records Responses" section on the Cases page.',
+      'Each response shows which agency sent it and when.',
+      'This information helps with enforcement decisions.',
     ],
   },
   {
-    title: '5. Scale-Up Vision & Next Steps',
+    title: '5. Daily Workflow',
     summary:
-      'Close the tour with upcoming automation plans and the onboarding goal for new cases.',
+      'Here\'s a simple routine to follow each day.',
     highlights: [
-      'Mention live outreach (n8n) and enrichment vendor feeds on the roadmap.',
-      'Describe how Supabase schema already supports enforcement workflows.',
-      'Set expectations: ready to onboard 10–20 cases per week once outreach templates ship.',
+      'Morning: Check the Overview page to see the day\'s snapshot.',
+      'Work your Tier A cases first — these have the best chance of success.',
+      'Log your call outcomes so we can track progress.',
+      'Check back at end of day to see updated numbers.',
     ],
   },
 ];
@@ -60,15 +64,16 @@ const guidedSteps: Array<{
 const HelpPage: React.FC = () => {
   return (
     <div className="space-y-8">
+      <WelcomeCard />
+      <FirstWeekChecklist />
+
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold text-slate-900">Dragonfly Console Guide</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">How to Use This Console</h1>
         <p className="mt-2 text-sm text-slate-600">
-          This walkthrough distills the highlights from <code>DEMO_DRAGONFLY_CONSOLE.md</code>. Use it as a cue card when
-          demoing the console or onboarding teammates.
+          This guide walks you through everything you need to know. Take 5 minutes to read through it, then you'll be ready to go.
         </p>
         <p className="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-          Tip: Keep a terminal tab open with the VS Code tasks panel. Switching between CLI output and these dashboards
-          brings the automation story to life.
+          💡 Tip: Bookmark this page so you can come back whenever you need a refresher.
         </p>
       </section>
 
@@ -87,11 +92,20 @@ const HelpPage: React.FC = () => {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Demo Flow Recap</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-slate-900">Need Help?</h2>
+          <HelpTooltip text="For urgent issues, call the main office first. For technical problems, email is fastest." />
+        </div>
         <p className="mt-2 text-sm text-slate-600">
-          Start in the docs, run an ingest, show the overview metrics reacting, drill into tiers, open a case, and finish
-          with the roadmap. The console is ready for customer conversations today while the automation footprint
-          continues to expand.
+          If something doesn't look right or you have questions, reach out to the team. We're here to help you succeed.
+        </p>
+        <p className="mt-4">
+          <a
+            href="mailto:support@dragonflycivil.com?subject=Help%20Request%20from%20Operations%20Console"
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            Email Support
+          </a>
         </p>
       </section>
     </div>

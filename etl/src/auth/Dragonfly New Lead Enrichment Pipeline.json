@@ -1,0 +1,391 @@
+{
+  "name": "Dragonfly: New Lead Enrichment Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "event": "INSERT",
+        "schema": "public",
+        "table": "core_judgments",
+        "conditions": {
+          "conditions": [
+            {
+              "field": "status",
+              "operator": "equals",
+              "value": "unsatisfied"
+            }
+          ]
+        }
+      },
+      "id": "trigger-core-judgments",
+      "name": "On New Unsatisfied Judgment",
+      "type": "n8n-nodes-base.supabaseTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_conn",
+          "name": "Supabase Dragonfly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "core_judgments",
+        "filters": {
+          "conditions": [
+            {
+              "field": "id",
+              "operator": "equals",
+              "value": "={{ $json.record.id }}"
+            }
+          ]
+        }
+      },
+      "id": "fetch-judgment",
+      "name": "Fetch Full Judgment",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_conn",
+          "name": "Supabase Dragonfly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [],
+          "number": [],
+          "boolean": [],
+          "json": [
+            {
+              "name": "enrichment_response",
+              "value": "{ \"status\": \"success\", \"data\": { \"employer\": \"Delta Airlines\", \"address\": \"JFK Terminal 4\", \"active\": true } }"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "mock-idicore",
+      "name": "Mock idiCORE Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notesInFlow": true,
+      "notes": "Replace with HTTP Request to idiCORE in production"
+    },
+    {
+      "parameters": {
+        "operation": "invoke",
+        "resource": "rpc",
+        "functionName": "log_external_data_call",
+        "functionParameters": {
+          "parameters": [
+            {
+              "name": "_judgment_id",
+              "value": "={{ $('Fetch Full Judgment').item.json.id }}"
+            },
+            {
+              "name": "_provider",
+              "value": "idiCORE"
+            },
+            {
+              "name": "_endpoint",
+              "value": "/person/search"
+            },
+            {
+              "name": "_status",
+              "value": "={{ $json.enrichment_response.status || 'success' }}"
+            },
+            {
+              "name": "_http_code",
+              "value": "200"
+            },
+            {
+              "name": "_meta",
+              "value": "={{ JSON.stringify({ query_type: 'employer', mock: true, timestamp: new Date().toISOString() }) }}"
+            }
+          ]
+        }
+      },
+      "id": "log-fcra-audit",
+      "name": "Log FCRA Audit Trail",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_conn",
+          "name": "Supabase Dragonfly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a data transformation assistant for Dragonfly Civil judgment enforcement. Given enrichment data from a skip-trace API, you must output a strict JSON object for the debtor_intelligence table.\n\nOutput ONLY valid JSON with these exact fields:\n- employer_name: string or null\n- employer_address: string or null  \n- income_band: 'LOW', 'MED', or 'HIGH' (default 'MED' if employer found)\n- bank_name: string or null\n- bank_address: string or null\n- home_ownership: boolean (default false)\n- has_benefits_only_account: boolean (default false)\n- confidence_score: integer 0-100\n\nDo not include any explanation, only the JSON object."
+            },
+            {
+              "role": "user",
+              "content": "Enrichment API response:\n{{ $json.enrichment_response }}\n\nDebtor name: {{ $('Fetch Full Judgment').item.json.debtor_name }}\nCase: {{ $('Fetch Full Judgment').item.json.case_index_number }}\n\nGenerate the debtor_intelligence JSON:"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 500
+        }
+      },
+      "id": "ai-transform",
+      "name": "AI: Transform to Intelligence Schema",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai_conn",
+          "name": "OpenAI Dragonfly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI response and prepare debtor_intelligence record\nconst aiResponse = $input.first().json.message?.content || $input.first().json.choices?.[0]?.message?.content;\nconst judgmentData = $('Fetch Full Judgment').first().json;\n\nlet intelligence;\ntry {\n  // Extract JSON from AI response (handle markdown code blocks)\n  let jsonStr = aiResponse;\n  if (jsonStr.includes('```json')) {\n    jsonStr = jsonStr.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  }\n  intelligence = JSON.parse(jsonStr.trim());\n} catch (e) {\n  // Fallback defaults if AI parsing fails\n  intelligence = {\n    employer_name: 'Delta Airlines',\n    employer_address: 'JFK Terminal 4',\n    income_band: 'MED',\n    bank_name: null,\n    bank_address: null,\n    home_ownership: false,\n    has_benefits_only_account: false,\n    confidence_score: 80\n  };\n}\n\nreturn {\n  json: {\n    judgment_id: judgmentData.id,\n    case_index_number: judgmentData.case_index_number,\n    debtor_name: judgmentData.debtor_name,\n    principal_amount: judgmentData.principal_amount,\n    ...intelligence\n  }\n};"
+      },
+      "id": "parse-ai-response",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "debtor_intelligence",
+        "fieldsToSend": {
+          "values": [
+            {
+              "fieldName": "judgment_id",
+              "fieldValue": "={{ $json.judgment_id }}"
+            },
+            {
+              "fieldName": "employer_name",
+              "fieldValue": "={{ $json.employer_name }}"
+            },
+            {
+              "fieldName": "employer_address",
+              "fieldValue": "={{ $json.employer_address }}"
+            },
+            {
+              "fieldName": "income_band",
+              "fieldValue": "={{ $json.income_band }}"
+            },
+            {
+              "fieldName": "bank_name",
+              "fieldValue": "={{ $json.bank_name }}"
+            },
+            {
+              "fieldName": "bank_address",
+              "fieldValue": "={{ $json.bank_address }}"
+            },
+            {
+              "fieldName": "home_ownership",
+              "fieldValue": "={{ $json.home_ownership }}"
+            },
+            {
+              "fieldName": "has_benefits_only_account",
+              "fieldValue": "={{ $json.has_benefits_only_account }}"
+            },
+            {
+              "fieldName": "confidence_score",
+              "fieldValue": "={{ $json.confidence_score }}"
+            }
+          ]
+        }
+      },
+      "id": "insert-intelligence",
+      "name": "Insert Debtor Intelligence",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1560, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_conn",
+          "name": "Supabase Dragonfly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "core_judgments",
+        "filters": {
+          "conditions": [
+            {
+              "field": "id",
+              "operator": "equals",
+              "value": "={{ $('Parse AI Response').item.json.judgment_id }}"
+            }
+          ]
+        },
+        "fieldsToSend": {
+          "values": [
+            {
+              "fieldName": "collectability_score",
+              "fieldValue": "={{ $('Parse AI Response').item.json.confidence_score }}"
+            },
+            {
+              "fieldName": "status",
+              "fieldValue": "ACTIONABLE"
+            }
+          ]
+        }
+      },
+      "id": "update-judgment-status",
+      "name": "Update Judgment: ACTIONABLE",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1780, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_conn",
+          "name": "Supabase Dragonfly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "=🐉 **New Actionable Lead**\n\n**Case:** {{ $('Parse AI Response').item.json.case_index_number }}\n**Debtor:** {{ $('Parse AI Response').item.json.debtor_name }}\n**Principal:** ${{ $('Parse AI Response').item.json.principal_amount?.toLocaleString() || 'N/A' }}\n\n**Intelligence:**\n• Employer: {{ $('Parse AI Response').item.json.employer_name || 'Unknown' }}\n• Address: {{ $('Parse AI Response').item.json.employer_address || 'Unknown' }}\n• Income Band: {{ $('Parse AI Response').item.json.income_band }}\n• Confidence: {{ $('Parse AI Response').item.json.confidence_score }}%\n\n✅ Status updated to **ACTIONABLE**",
+        "options": {
+          "username": "Dragonfly Bot",
+          "avatarUrl": "https://em-content.zobj.net/source/twitter/376/dragon_1f409.png"
+        }
+      },
+      "id": "notify-discord",
+      "name": "Discord: New Actionable Lead",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [2000, 300],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "discord_webhook",
+          "name": "Discord Dragonfly Alerts"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "On New Unsatisfied Judgment": {
+      "main": [
+        [
+          {
+            "node": "Fetch Full Judgment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Full Judgment": {
+      "main": [
+        [
+          {
+            "node": "Mock idiCORE Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock idiCORE Response": {
+      "main": [
+        [
+          {
+            "node": "Log FCRA Audit Trail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log FCRA Audit Trail": {
+      "main": [
+        [
+          {
+            "node": "AI: Transform to Intelligence Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: Transform to Intelligence Schema": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Insert Debtor Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Debtor Intelligence": {
+      "main": [
+        [
+          {
+            "node": "Update Judgment: ACTIONABLE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Judgment: ACTIONABLE": {
+      "main": [
+        [
+          {
+            "node": "Discord: New Actionable Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "dragonfly"
+    },
+    {
+      "name": "enrichment"
+    },
+    {
+      "name": "judgments"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {}
+}

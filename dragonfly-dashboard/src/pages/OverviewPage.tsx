@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { supabaseClient } from '../lib/supabaseClient';
+import HelpTooltip from '../components/HelpTooltip';
+import ZeroStateCard from '../components/ZeroStateCard';
 
 type CollectabilityTier = 'A' | 'B' | 'C';
 
@@ -231,31 +233,30 @@ const OverviewPage: React.FC = () => {
   const metricCards = [
     {
       key: 'cases',
-      label: 'Cases in pipeline',
+      label: 'Total judgments',
       value: metrics.casesInPipeline,
-      description: 'Judgments currently tracked with collectability scoring and enrichment history.',
+      description: 'All the judgments we\'re currently working on.',
     },
     {
       key: 'active',
-      label: 'Active workflows',
+      label: 'Being researched',
       value: metrics.activeWorkflows,
-      description: 'Cases whose latest enrichment run is in progress, queued, or being researched.',
+      description: 'Cases where we\'re actively gathering information right now.',
     },
     {
       key: 'recent',
-      label: 'Recent enrichments',
+      label: 'Updated this week',
       value: metrics.recentEnrichments,
-      description: `Cases enriched within the last ${RECENT_WINDOW_DAYS} days.`,
+      description: `Cases with new information added in the last ${RECENT_WINDOW_DAYS} days.`,
     },
   ];
 
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Executive Summary</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Today's Snapshot</h2>
         <p className="mt-2 text-sm text-slate-600">
-          These metrics reflect the live collectability snapshot stored in Supabase. Use them to monitor throughput,
-          surfaced opportunities, and enrichment momentum across the portfolio.
+          Here's the big picture of all the judgments we're tracking. Check these numbers each morning to see what's happening across the portfolio.
         </p>
         {!collectabilityLoading && metrics.lastRefresh && (
           <p className="mt-4 text-xs font-medium uppercase tracking-wide text-slate-400">
@@ -264,6 +265,15 @@ const OverviewPage: React.FC = () => {
           </p>
         )}
       </section>
+
+      {!collectabilityLoading && !collectabilityError && rows.length === 0 && (
+        <ZeroStateCard
+          title="No judgments yet"
+          description="Once cases are imported into the system, you'll see them here. Check back soon or ask if you're expecting data."
+          actionLink="/help"
+          actionLabel="View the Help Guide"
+        />
+      )}
 
       <section className="grid gap-4 md:grid-cols-3">
         {collectabilityError ? (
@@ -283,7 +293,10 @@ const OverviewPage: React.FC = () => {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Tier distribution</h3>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Tier distribution
+          <HelpTooltip text="We sort cases into A, B, and C tiers based on how likely they are to pay. A = best chances, B = worth pursuing, C = lower priority." />
+        </h3>
         {collectabilityError ? (
           <div className="mt-3">
             <StatusMessage message={collectabilityError.message} tone="error" />
@@ -302,7 +315,7 @@ const OverviewPage: React.FC = () => {
                   {metrics.tierCounts[tier].toLocaleString()}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Share of cases classified as tier {tier} in the collectability snapshot.
+                  {tier === 'A' ? 'Best chances to collect — focus here first.' : tier === 'B' ? 'Good potential — worth following up.' : 'Lower priority — check periodically.'}
                 </p>
               </div>
             ))}
@@ -311,9 +324,12 @@ const OverviewPage: React.FC = () => {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">FOIL activity</h3>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Public Records Activity
+          <HelpTooltip text="When we request information from government agencies (like DMV or tax offices), their responses appear here. This helps us find assets to collect on." />
+        </h3>
         <p className="mt-1 text-sm text-slate-500">
-          Monitor freedom-of-information responses flowing back from agency partners.
+          Responses we've received back from government agencies.
         </p>
         {foilError ? (
           <div className="mt-3">
@@ -326,16 +342,19 @@ const OverviewPage: React.FC = () => {
             {foilSummary ? (
               <FoilSummaryCard summary={foilSummary} />
             ) : (
-              <StatusMessage message="No FOIL responses recorded yet." tone="neutral" />
+              <StatusMessage message="No public records responses yet. These will appear as agencies reply to our requests." tone="neutral" />
             )}
           </div>
         )}
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Next actions</h3>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Next actions
+          <HelpTooltip text="These are your highest-priority cases that haven't been touched recently. Start here each morning — work from top to bottom." />
+        </h3>
         <p className="mt-1 text-sm text-slate-500">
-          Prioritized list of cases for outreach/enforcement this week.
+          Your top priority cases to work on today, sorted by dollar amount.
         </p>
         {collectabilityError ? (
           <div className="mt-3">
@@ -345,7 +364,7 @@ const OverviewPage: React.FC = () => {
           <p className="mt-3 text-sm text-slate-500">Evaluating enforcement priorities…</p>
         ) : nextActions.length === 0 ? (
           <div className="mt-4">
-            <StatusMessage message="No cases need immediate outreach based on current filters." tone="neutral" />
+            <StatusMessage message="Great news — no urgent cases need attention right now. Check back tomorrow or review the Cases tab for the full list." tone="neutral" />
           </div>
         ) : (
           <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">

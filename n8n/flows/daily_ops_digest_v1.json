@@ -1,0 +1,242 @@
+{
+  "name": "Dragonfly: Daily Ops Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Daily Ops Digest\n\n**Purpose:** Post a morning summary to Discord with:\n- Pipeline stage counts\n- Pending signatures count\n- Top 10 call queue plaintiffs\n- Stalled enforcement cases\n\n**Schedule:** Weekdays 8:30 AM ET (13:30 UTC)\n\n**Data Source:** Python API endpoint `/api/ops/digest` OR direct Supabase view queries.\n\n**Architecture:**\n- No business logic in this flow\n- Read-only view queries\n- Single Discord post with Markdown formatting"
+      },
+      "id": "notes_digest",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 120]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 13 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "cron_trigger",
+      "name": "Weekday 8:30 AM ET",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_enforcement_pipeline_status",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"{{ $env.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Authorization\": \"Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Content-Type\": \"application/json\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"pipeline_stage\"\n}"
+      },
+      "id": "fetch_pipeline",
+      "name": "Fetch Pipeline Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 240],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_enforcement_actions_pending_signature",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"{{ $env.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Authorization\": \"Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Content-Type\": \"application/json\",\n  \"Prefer\": \"count=exact\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"action_id\",\n  \"limit\": \"1\"\n}"
+      },
+      "id": "fetch_signatures",
+      "name": "Fetch Pending Signatures",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 360],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://<project-ref>.supabase.co/rest/v1/v_plaintiff_call_queue",
+        "jsonParameters": false,
+        "options": {
+          "responseFormat": "json",
+          "retryOnFail": true,
+          "maxAttempts": 3
+        },
+        "headerParametersJson": "={\n  \"apikey\": \"{{ $env.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Authorization\": \"Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}\",\n  \"Content-Type\": \"application/json\"\n}",
+        "queryParametersJson": "={\n  \"select\": \"plaintiff_name,tier,phone,due_at,total_judgment_amount\",\n  \"order\": \"due_at.asc.nullsfirst\",\n  \"limit\": \"10\"\n}"
+      },
+      "id": "fetch_call_queue",
+      "name": "Fetch Call Queue Top 10",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 480],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "generic-credential-id",
+          "name": "Generic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "merge_data",
+      "name": "Merge All Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [680, 360]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate pipeline data from first input\nconst pipelineData = $items('Fetch Pipeline Status') ?? [];\nconst pipelineRows = pipelineData.map(item => item.json ?? {}).filter(r => r.pipeline_stage);\n\nconst stageCounts = {};\nfor (const row of pipelineRows) {\n  const stage = row.pipeline_stage ?? 'unknown';\n  stageCounts[stage] = (stageCounts[stage] || 0) + 1;\n}\n\n// Get signature count from response headers or data\nconst signatureItems = $items('Fetch Pending Signatures') ?? [];\nlet pendingSignatures = 0;\n\n// Try to get count from content-range header or data length\nif (signatureItems.length > 0) {\n  const firstItem = signatureItems[0].json;\n  // If we got headers with count\n  if (firstItem && typeof firstItem === 'object') {\n    // Check for _count or count in response\n    pendingSignatures = firstItem._count ?? signatureItems.length ?? 0;\n  }\n}\n\n// Format call queue\nconst callQueueItems = $items('Fetch Call Queue Top 10') ?? [];\nconst callQueue = callQueueItems\n  .map(item => item.json ?? {})\n  .filter(r => r.plaintiff_name)\n  .slice(0, 10)\n  .map((r, i) => {\n    const amount = r.total_judgment_amount \n      ? parseFloat(r.total_judgment_amount).toLocaleString('en-US', { style: 'currency', currency: 'USD' })\n      : 'N/A';\n    return `${i + 1}. **${r.plaintiff_name}** (Tier ${r.tier ?? '?'}) - ${amount}`;\n  });\n\n// Build stage summary\nconst stageOrder = [\n  'awaiting_enrichment',\n  'awaiting_action_plan', \n  'awaiting_signature',\n  'actions_in_progress',\n  'actions_complete',\n  'closed'\n];\n\nconst stageEmoji = {\n  'awaiting_enrichment': '🔍',\n  'awaiting_action_plan': '📋',\n  'awaiting_signature': '✍️',\n  'actions_in_progress': '⚡',\n  'actions_complete': '✅',\n  'closed': '🏁',\n  'unknown': '❓'\n};\n\nconst stageSummary = stageOrder\n  .filter(stage => stageCounts[stage] > 0)\n  .map(stage => `${stageEmoji[stage] ?? '•'} ${stage.replace(/_/g, ' ')}: **${stageCounts[stage]}**`)\n  .join('\\n');\n\nconst totalCases = Object.values(stageCounts).reduce((a, b) => a + b, 0);\n\nconst today = new Date().toLocaleDateString('en-US', { \n  weekday: 'long', \n  year: 'numeric', \n  month: 'long', \n  day: 'numeric' \n});\n\nreturn {\n  json: {\n    today,\n    total_cases: totalCases,\n    stage_summary: stageSummary || 'No active cases',\n    pending_signatures: pendingSignatures,\n    call_queue_formatted: callQueue.length > 0 ? callQueue.join('\\n') : 'Queue empty',\n    call_queue_count: callQueue.length\n  }\n};"
+      },
+      "id": "build_digest",
+      "name": "Build Digest Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 360]
+    },
+    {
+      "parameters": {
+        "content": "=🐉 **Dragonfly Daily Ops Digest**\n📅 {{ $json.today }}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n**📊 Pipeline Overview** ({{ $json.total_cases }} total)\n{{ $json.stage_summary }}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n**✍️ Pending Signatures:** {{ $json.pending_signatures }}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n**📞 Call Queue** (Top {{ $json.call_queue_count }})\n{{ $json.call_queue_formatted }}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n_Good morning! Let's collect some judgments._ 💪",
+        "additionalFields": {
+          "username": "Dragonfly Daily",
+          "avatarUrl": "https://em-content.zobj.net/source/twitter/376/dragon_1f409.png"
+        }
+      },
+      "id": "discord_digest",
+      "name": "Discord: Daily Digest",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [1120, 360],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "discord_webhook",
+          "name": "Discord Dragonfly Alerts"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekday 8:30 AM ET": {
+      "main": [
+        [
+          {
+            "node": "Fetch Pipeline Status",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Pending Signatures",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Call Queue Top 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Pipeline Status": {
+      "main": [
+        [
+          {
+            "node": "Merge All Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Pending Signatures": {
+      "main": [
+        [
+          {
+            "node": "Merge All Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Fetch Call Queue Top 10": {
+      "main": [
+        [
+          {
+            "node": "Merge All Data",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge All Data": {
+      "main": [
+        [
+          {
+            "node": "Build Digest Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Digest Summary": {
+      "main": [
+        [
+          {
+            "node": "Discord: Daily Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "dragonfly" },
+    { "name": "notifications" },
+    { "name": "daily" },
+    { "name": "v2" }
+  ],
+  "triggerCount": 1,
+  "pinData": {}
+}
