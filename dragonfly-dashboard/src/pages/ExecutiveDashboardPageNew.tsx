@@ -10,7 +10,7 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { BarChart3, AlertTriangle, Target, DollarSign, TrendingUp } from 'lucide-react';
+import { BarChart3, AlertTriangle, Target, DollarSign, TrendingUp, Briefcase } from 'lucide-react';
 import MetricsGate from '../components/MetricsGate';
 import { EnforcementFlowChart } from '../components/EnforcementFlowChart';
 import type { EnforcementFlowPoint } from '../components/EnforcementFlowChart';
@@ -266,7 +266,7 @@ const ExecutiveDashboardPageNew: React.FC = () => {
       />
 
       {/* KPI Cards Row */}
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <KPICard
           title="Total Liquidation Value"
           value={`$${(activeExposure / 1_000_000).toFixed(2)}M`}
@@ -282,6 +282,13 @@ const ExecutiveDashboardPageNew: React.FC = () => {
           icon={<TrendingUp className="h-4 w-4" />}
           loading={isLoading}
         />
+        <KPICard
+          title="Active Cases"
+          value={activeCases.toLocaleString()}
+          subtitle="Judgments in enforcement pipeline"
+          icon={<Briefcase className="h-4 w-4" />}
+          loading={isLoading}
+        />
       </div>
 
       {/* Charts Row */}
@@ -295,8 +302,8 @@ const ExecutiveDashboardPageNew: React.FC = () => {
         />
         <PortfolioDonutChart
           data={portfolioData}
-          title="Portfolio Composition"
-          subtitle="Enforcement method distribution"
+          title="Enforcement Mix"
+          subtitle="Wage garnishments vs bank levies"
           loading={isLoading}
           centerLabel="Total Value"
         />
