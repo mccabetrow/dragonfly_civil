@@ -10,6 +10,7 @@ import {
   type MetricsHookResult,
   type MetricsState,
 } from './metricsState';
+import { useOnRefresh } from '../context/RefreshContext';
 
 export interface EnforcementOverviewRow {
   enforcementStage: string;
@@ -68,6 +69,9 @@ export function useEnforcementOverview(): MetricsHookResult<EnforcementOverviewR
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // Subscribe to global refresh
+  useOnRefresh(() => fetchData());
 
   const refetch = useCallback(() => fetchData(), [fetchData]);
 

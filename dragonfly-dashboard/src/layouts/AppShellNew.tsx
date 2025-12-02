@@ -16,6 +16,7 @@ import {
 import ReleaseNotesModal, { useReleaseNotesModal } from '../components/ReleaseNotesModal';
 import { cn } from '../lib/design-tokens';
 import { Button, IconButton } from '../components/ui/Button';
+import { useRefreshBus } from '../context/RefreshContext';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NAVIGATION CONFIG
@@ -71,6 +72,7 @@ const SECONDARY_NAVIGATION: NavigationItem[] = [
 const AppShellNew: FC = () => {
   const location = useLocation();
   const releaseNotes = useReleaseNotesModal();
+  const { triggerRefresh, isRefreshing } = useRefreshBus();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
@@ -105,7 +107,7 @@ const AppShellNew: FC = () => {
 
   const handleRefresh = () => {
     setLastRefresh(new Date());
-    window.location.reload();
+    triggerRefresh();
   };
 
   return (
@@ -260,9 +262,10 @@ const AppShellNew: FC = () => {
                 variant="ghost"
                 size="sm"
                 onClick={handleRefresh}
+                disabled={isRefreshing}
                 aria-label="Refresh data"
               >
-                <RefreshCw className="h-4 w-4" />
+                <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
               </IconButton>
 
               {/* Notifications (placeholder) */}

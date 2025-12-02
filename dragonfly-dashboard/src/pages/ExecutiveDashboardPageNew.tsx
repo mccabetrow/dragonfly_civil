@@ -1,20 +1,25 @@
 /**
  * ExecutiveDashboardPage - Dad's quick-glance scoreboard
  *
- * Simplified layout: Scoreboard → Trend Chart
+ * Simplified layout: Scoreboard → Today's Priorities → Trend Chart
  * Fast, clean, no cognitive load.
  */
-import React, { useCallback, useMemo, useState } from 'react';
-import { RefreshCw, BarChart3 } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { BarChart3, RefreshCw, AlertTriangle } from 'lucide-react';
 import { ExecutiveScoreboard } from '../components/ExecutiveScoreboard';
 import type { ScoreboardMetric } from '../components/ExecutiveScoreboard';
 import MetricsGate from '../components/MetricsGate';
 import { EnforcementFlowChart } from '../components/EnforcementFlowChart';
 import type { EnforcementFlowPoint } from '../components/EnforcementFlowChart';
 import EmptyState from '../components/EmptyState';
+import ActionList from '../components/dashboard/ActionList';
+import { DashboardError } from '../components/DashboardError';
+import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { useEnforcementMetrics, useIntakeMetrics, type IntakeMetricRow } from '../hooks/useExecutiveMetrics';
 import { useEnforcementOverview } from '../hooks/useEnforcementOverview';
 import { usePlaintiffCallQueue, type PlaintiffCallQueueRow } from '../hooks/usePlaintiffCallQueue';
+import { usePriorityCases, toActionItems } from '../hooks/usePriorityCases';
+import { useRefreshBus } from '../context/RefreshContext';
 import { formatCurrency } from '../utils/formatters';
 
 const RECENT_WINDOW_DAYS = 7;
@@ -25,26 +30,13 @@ const RANGE_OPTIONS = [
 ];
 
 const ExecutiveDashboardPageNew: React.FC = () => {
-  const { state: intakeState, refetch: refetchIntake } = useIntakeMetrics(45);
-  const { state: enforcementOverviewState, refetch: refetchEnforcementOverview } = useEnforcementOverview();
-  const { state: callQueueState, refetch: refetchCallQueue } = usePlaintiffCallQueue(40);
+  const { state: intakeState } = useIntakeMetrics(45);
+  const { state: enforcementOverviewState } = useEnforcementOverview();
+  const { state: callQueueState } = usePlaintiffCallQueue(40);
+  const { state: priorityCasesState } = usePriorityCases(5);
   const [rangeWeeks, setRangeWeeks] = useState<number>(12);
-  const { state: enforcementTrendState, refetch: refetchEnforcementTrend } = useEnforcementMetrics(rangeWeeks);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const handleRefreshAll = useCallback(async () => {
-    setIsRefreshing(true);
-    try {
-      await Promise.allSettled([
-        refetchIntake(),
-        refetchEnforcementOverview(),
-        refetchCallQueue(),
-        refetchEnforcementTrend(),
-      ]);
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [refetchCallQueue, refetchEnforcementOverview, refetchEnforcementTrend, refetchIntake]);
+  const { state: enforcementTrendState } = useEnforcementMetrics(rangeWeeks);
+  const { triggerRefresh, isRefreshing } = useRefreshBus();
 
   // Derive scoreboard metrics
   const newPlaintiffs = useMemo(() => {
@@ -70,6 +62,22 @@ const ExecutiveDashboardPageNew: React.FC = () => {
   const isLoading = [intakeState, enforcementOverviewState, callQueueState].some(
     (s) => s.status === 'loading' || s.status === 'idle'
   );
+
+  // Convert priority cases to action items for ActionList
+  const priorityActionItems = useMemo(() => {
+    if (priorityCasesState.status !== 'ready' || !priorityCasesState.data) return [];
+    return toActionItems(priorityCasesState.data);
+  }, [priorityCasesState]);
+
+  const isPriorityLoading = priorityCasesState.status === 'loading' || priorityCasesState.status === 'idle';
+  const isPriorityError = priorityCasesState.status === 'error';
+
+  // Check for scoreboard errors (any of the underlying hooks)
+  const scoreboardHasError = [intakeState, enforcementOverviewState, callQueueState].some(
+    (s) => s.status === 'error'
+  );
+  const scoreboardErrorMessage = [intakeState, enforcementOverviewState, callQueueState]
+    .find((s) => s.status === 'error')?.errorMessage ?? 'Unable to load metrics';
 
   const scoreboardMetrics: ScoreboardMetric[] = [
     {
@@ -120,24 +128,58 @@ const ExecutiveDashboardPageNew: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Scoreboard</h1>
-          <p className="mt-1 text-sm text-slate-500">Business health at a glance</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void handleRefreshAll()}
-          disabled={isRefreshing}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+      <div>
+        <h1 className="text-2xl font-semibold text-slate-900">Scoreboard</h1>
+        <p className="mt-1 text-sm text-slate-500">Business health at a glance</p>
       </div>
 
-      {/* Scoreboard */}
-      <ExecutiveScoreboard metrics={scoreboardMetrics} isLoading={isLoading} />
+      {/* Scoreboard - with error handling */}
+      {scoreboardHasError ? (
+        <DashboardError
+          title="Scoreboard unavailable"
+          message={scoreboardErrorMessage}
+          onRetry={triggerRefresh}
+        />
+      ) : (
+        <ExecutiveScoreboard metrics={scoreboardMetrics} isLoading={isLoading} />
+      )}
+
+      {/* Today's Priorities - Top cases to work */}
+      {isPriorityError ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-rose-700">
+              <AlertTriangle className="h-5 w-5" />
+              Unable to load priorities
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-slate-600 mb-3">
+              {priorityCasesState.errorMessage ?? 'We couldn\'t fetch today\'s priority cases.'}
+            </p>
+            <button
+              type="button"
+              onClick={triggerRefresh}
+              className="text-sm font-medium text-blue-600 hover:text-blue-700"
+            >
+              Try again
+            </button>
+          </CardContent>
+        </Card>
+      ) : (
+        <ActionList
+          title="Today's Priorities"
+          description="Top-tier cases ready for action"
+          items={priorityActionItems}
+          loading={isPriorityLoading}
+          maxItems={5}
+          emptyMessage="No high-priority cases right now. Great work!"
+          onItemClick={(item) => {
+            // TODO: Open case detail drawer or navigate to case page
+            console.log('[Priority Action]', item.id, item.caseNumber);
+          }}
+        />
+      )}
 
       {/* Enforcement Trend Chart */}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -164,9 +206,9 @@ const ExecutiveDashboardPageNew: React.FC = () => {
               </select>
               <button
                 type="button"
-                onClick={() => void refetchEnforcementTrend()}
-                disabled={enforcementTrendState.status === 'loading'}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200"
+                onClick={triggerRefresh}
+                disabled={isRefreshing || enforcementTrendState.status === 'loading'}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-50"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${enforcementTrendState.status === 'loading' ? 'animate-spin' : ''}`} />
                 Refresh
@@ -180,7 +222,7 @@ const ExecutiveDashboardPageNew: React.FC = () => {
             state={enforcementTrendState}
             loadingFallback={<ChartSkeleton />}
             errorTitle="Unable to load trend data"
-            onRetry={() => void refetchEnforcementTrend()}
+            onRetry={triggerRefresh}
             ready={
               chartData.length === 0 ? (
                 <EmptyState

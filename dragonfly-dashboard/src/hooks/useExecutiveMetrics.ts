@@ -10,6 +10,7 @@ import {
   type MetricsHookResult,
   type MetricsState,
 } from './metricsState';
+import { useOnRefresh } from '../context/RefreshContext';
 
 export interface IntakeMetricRow {
   activityDate: string;
@@ -95,6 +96,9 @@ export function useIntakeMetrics(limit = 90): MetricsHookResult<IntakeMetricRow[
     void fetchData();
   }, [fetchData]);
 
+  // Subscribe to global refresh
+  useOnRefresh(() => fetchData());
+
   return { ...snapshot, state: snapshot, refetch: fetchData };
 }
 
@@ -149,6 +153,9 @@ export function usePipelineMetrics(): MetricsHookResult<PipelineMetricRow[]> {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // Subscribe to global refresh
+  useOnRefresh(() => fetchData());
 
   return { ...snapshot, state: snapshot, refetch: fetchData };
 }
@@ -208,6 +215,9 @@ export function useEnforcementMetrics(limit = 12): MetricsHookResult<Enforcement
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // Subscribe to global refresh
+  useOnRefresh(() => fetchData());
 
   return { ...snapshot, state: snapshot, refetch: fetchData };
 }

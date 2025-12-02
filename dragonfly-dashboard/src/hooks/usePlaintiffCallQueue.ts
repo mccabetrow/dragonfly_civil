@@ -10,6 +10,7 @@ import {
   type MetricsHookResult,
   type MetricsState,
 } from './metricsState';
+import { useOnRefresh } from '../context/RefreshContext';
 
 type PlaintiffStatusCode =
   | 'new'
@@ -139,6 +140,9 @@ export function usePlaintiffCallQueue(limit: number = 25): MetricsHookResult<Pla
   useEffect(() => {
     void fetchQueue();
   }, [fetchQueue]);
+
+  // Subscribe to global refresh
+  useOnRefresh(() => fetchQueue());
 
   const refetch = useCallback(() => fetchQueue(), [fetchQueue]);
 
