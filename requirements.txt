@@ -2,7 +2,6 @@
 # psycopg v3 (psycopg[binary]) is preferred; keep psycopg2-binary temporarily for compatibility
 psycopg[binary]
 psycopg2-binary
-asyncpg>=0.29.0,<0.30.0
 pandas
 python-dotenv>=1.0
 phonenumbers
