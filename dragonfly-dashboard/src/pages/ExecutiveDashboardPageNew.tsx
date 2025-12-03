@@ -244,6 +244,11 @@ const ExecutiveDashboardPageNew: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* TEST BANNER - REMOVE AFTER CONFIRMING DEPLOY */}
+      <div className="rounded-xl bg-fuchsia-600 px-6 py-4 text-center text-white font-bold text-xl shadow-lg">
+        🚀 HEDGE FUND MODE v0.1 — IF YOU SEE THIS, VERCEL IS DEPLOYING THE NEW DASHBOARD 🚀
+      </div>
+
       {/* Error state */}
       {hasError && (
         <DashboardError
