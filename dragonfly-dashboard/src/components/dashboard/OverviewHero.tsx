@@ -159,7 +159,7 @@ export const OverviewHero: FC<OverviewHeroProps> = ({
         {/* Left: Snapshot metrics */}
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-medium text-slate-400">Today's Snapshot</h2>
+            <h2 className="text-sm font-medium text-slate-400">Command Center — HEDGE FUND MODE v0.1</h2>
             {isRefreshing && (
               <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-500" />
             )}
