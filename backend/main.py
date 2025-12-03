@@ -17,7 +17,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .config import configure_logging, get_settings
 from .db import close_db_pool, init_db_pool
-from .routers import health_router
+from .routers import (
+    analytics_router,
+    budget_router,
+    enforcement_router,
+    foil_router,
+    health_router,
+    ingest_router,
+)
 from .scheduler import init_scheduler
 
 # Configure logging before anything else
@@ -70,8 +77,6 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI application
     """
-    settings = get_settings()
-
     app = FastAPI(
         title="Dragonfly Engine",
         description=(
@@ -79,9 +84,9 @@ def create_app() -> FastAPI:
             "Handles scheduled jobs, enforcement workflows, and API endpoints."
         ),
         version=__version__,
-        docs_url="/docs" if settings.is_development else None,
-        redoc_url="/redoc" if settings.is_development else None,
-        openapi_url="/openapi.json" if settings.is_development else None,
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
         lifespan=lifespan,
     )
 
@@ -100,7 +105,17 @@ def create_app() -> FastAPI:
     )
 
     # Include routers
+    # Health check - no auth required
     app.include_router(health_router, prefix="/api")
+
+    # Core functionality routers
+    app.include_router(ingest_router, prefix="/api")
+    app.include_router(foil_router, prefix="/api")
+
+    # v0.2.0 routers
+    app.include_router(analytics_router, prefix="/api")
+    app.include_router(budget_router, prefix="/api")
+    app.include_router(enforcement_router, prefix="/api")
 
     # Initialize scheduler (uses on_event internally)
     init_scheduler(app)
@@ -113,7 +128,7 @@ def create_app() -> FastAPI:
             "service": "Dragonfly Engine",
             "version": __version__,
             "status": "running",
-            "docs": "/docs" if settings.is_development else "disabled",
+            "docs": "/docs",
         }
 
     @app.get("/api", tags=["Root"])

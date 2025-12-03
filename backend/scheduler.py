@@ -96,6 +96,57 @@ async def enforcement_check_job() -> None:
     # Placeholder - will query enforcement_actions table
 
 
+async def daily_health_broadcast_job() -> None:
+    """
+    Daily job to broadcast system health to Discord.
+    Runs at 5 PM Eastern to summarize the day's activity.
+
+    This wrapper handles exceptions so the scheduler doesn't crash.
+    """
+    logger.info("🩺 Running daily health broadcast...")
+
+    try:
+        from .services.health_service import broadcast_daily_health
+
+        result = await broadcast_daily_health()
+
+        if result.get("status") == "success":
+            logger.info("🩺 Daily health broadcast completed successfully")
+        else:
+            logger.warning(
+                f"🩺 Daily health broadcast had issues: {result.get('error')}"
+            )
+
+    except Exception as e:
+        logger.exception(f"🩺 Daily health broadcast job failed: {e}")
+        # Don't re-raise - we don't want to crash the scheduler
+
+
+async def foil_followup_job() -> None:
+    """
+    Daily job to process FOIL follow-ups.
+    Runs at 10 AM Eastern to send follow-ups for pending requests.
+
+    This wrapper handles exceptions so the scheduler doesn't crash.
+    """
+    logger.info("📋 Running FOIL follow-up job...")
+
+    try:
+        from .services.foil_service import (
+            broadcast_foil_followup_result,
+            process_foil_followups,
+        )
+
+        processed = await process_foil_followups()
+        await broadcast_foil_followup_result(processed)
+
+        logger.info(f"📋 FOIL follow-up job completed: {processed} processed")
+
+    except Exception as e:
+        logger.exception(f"📋 FOIL follow-up job failed: {e}")
+        # Don't re-raise - we don't want to crash the scheduler
+
+
 # =============================================================================
 # Scheduler Initialization
 # =============================================================================
@@ -187,6 +238,24 @@ def _register_jobs(scheduler: AsyncIOScheduler, settings: Any) -> None:
         replace_existing=True,
     )
 
+    # Daily health broadcast - 5 PM Eastern every day
+    scheduler.add_job(
+        daily_health_broadcast_job,
+        trigger=CronTrigger(hour=17, minute=0),
+        id="daily_health_broadcast",
+        name="Daily Health Broadcast",
+        replace_existing=True,
+    )
+
+    # FOIL follow-up - 10 AM Eastern every day
+    scheduler.add_job(
+        foil_followup_job,
+        trigger=CronTrigger(hour=10, minute=0),
+        id="foil_followup",
+        name="FOIL Follow-up Processing",
+        replace_existing=True,
+    )
+
     logger.info("Registered scheduled jobs")
 
 
@@ -227,12 +296,28 @@ def list_jobs() -> list[dict[str, Any]]:
         List of job info dicts
     """
     scheduler = get_scheduler()
-    return [
-        {
-            "id": job.id,
-            "name": job.name,
-            "trigger": str(job.trigger),
-            "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
-        }
-        for job in scheduler.get_jobs()
-    ]
+    result = []
+    for job in scheduler.get_jobs():
+        next_run = None
+        if hasattr(job, "next_run_time") and job.next_run_time:
+            next_run = job.next_run_time.isoformat()
+        elif hasattr(job, "trigger"):
+            # Try to get next fire time from trigger
+            try:
+                from datetime import datetime
+
+                next_fire = job.trigger.get_next_fire_time(None, datetime.now())
+                if next_fire:
+                    next_run = next_fire.isoformat()
+            except Exception:
+                pass
+
+        result.append(
+            {
+                "id": job.id,
+                "name": job.name,
+                "trigger": str(job.trigger),
+                "next_run": next_run,
+            }
+        )
+    return result

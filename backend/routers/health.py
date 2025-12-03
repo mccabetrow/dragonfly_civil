@@ -194,3 +194,28 @@ async def list_scheduled_jobs() -> dict[str, Any]:
             "count": 0,
             "note": "Scheduler not initialized",
         }
+
+
+@router.get(
+    "/daily",
+    summary="Trigger daily health broadcast",
+    description="Manually triggers the daily health broadcast for testing.",
+)
+async def trigger_daily_health() -> dict[str, Any]:
+    """
+    Manually trigger the daily health broadcast.
+
+    This endpoint is useful for testing the health broadcast
+    without waiting for the scheduled 5 PM run.
+    """
+    from ..services.health_service import broadcast_daily_health
+
+    result = await broadcast_daily_health()
+
+    if result.get("status") == "error":
+        raise HTTPException(
+            status_code=500,
+            detail={"error": result.get("error"), "status": "error"},
+        )
+
+    return result

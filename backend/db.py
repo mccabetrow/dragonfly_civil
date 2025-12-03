@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator, Optional, Sequence
 
 import psycopg
-from psycopg.rows import dict_row
 from loguru import logger
-from supabase import create_client, Client
+from psycopg.rows import dict_row
+
+from supabase import Client, create_client
 
 from .config import get_settings
 
@@ -92,6 +94,74 @@ async def get_pool() -> Optional[psycopg.AsyncConnection]:
         await init_db_pool()
 
     return _db_conn
+
+
+@asynccontextmanager
+async def get_connection() -> AsyncGenerator["AsyncConnectionWrapper", None]:
+    """
+    Get a database connection for use in a context manager.
+
+    This provides backwards compatibility with code that uses:
+        async with get_connection() as conn:
+            rows = await conn.fetch("SELECT ...")
+
+    The wrapper provides fetch/fetchrow/execute methods that work
+    similarly to asyncpg's Connection interface.
+    """
+    conn = await get_pool()
+    if conn is None:
+        raise RuntimeError("Database connection is not initialized")
+
+    wrapper = AsyncConnectionWrapper(conn)
+    yield wrapper
+
+
+class AsyncConnectionWrapper:
+    """
+    Wrapper around psycopg.AsyncConnection that provides asyncpg-like interface.
+
+    Provides fetch(), fetchrow(), and execute() methods that match asyncpg's API.
+    """
+
+    def __init__(self, conn: psycopg.AsyncConnection):
+        self._conn = conn
+
+    async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
+        """Fetch all rows as a list of dicts."""
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(query, args or None)
+            rows = await cur.fetchall()
+            return list(rows) if rows else []
+
+    async def fetchrow(self, query: str, *args: Any) -> Optional[dict[str, Any]]:
+        """Fetch a single row as a dict."""
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(query, args or None)
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def fetchval(self, query: str, *args: Any) -> Any:
+        """Fetch a single value."""
+        async with self._conn.cursor() as cur:
+            await cur.execute(query, args or None)
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+    async def execute(self, query: str, *args: Any) -> str:
+        """Execute a query without returning results."""
+        async with self._conn.cursor() as cur:
+            await cur.execute(query, args or None)
+            return cur.statusmessage or ""
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncGenerator[None, None]:
+        """
+        Context manager for a database transaction.
+
+        Note: psycopg3 auto-commits, so we need to use a transaction block.
+        """
+        async with self._conn.transaction():
+            yield
 
 
 # ---------------------------------------------------------------------------
