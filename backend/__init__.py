@@ -5,4 +5,4 @@ FastAPI + APScheduler service for Dragonfly Civil enforcement automation.
 Connects to Supabase for data, runs scheduled jobs, and provides API endpoints.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

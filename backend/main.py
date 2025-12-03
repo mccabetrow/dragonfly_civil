@@ -25,6 +25,7 @@ from .routers import (
     health_router,
     ingest_router,
 )
+from .routers.ingest_v2 import router as ingest_v2_router
 from .scheduler import init_scheduler
 
 # Configure logging before anything else
@@ -108,9 +109,12 @@ def create_app() -> FastAPI:
     # Health check - no auth required
     app.include_router(health_router, prefix="/api")
 
-    # Core functionality routers
+    # Core functionality routers (legacy)
     app.include_router(ingest_router, prefix="/api")
     app.include_router(foil_router, prefix="/api")
+
+    # v0.2.x enterprise ingest router
+    app.include_router(ingest_v2_router)
 
     # v0.2.0 routers
     app.include_router(analytics_router, prefix="/api")

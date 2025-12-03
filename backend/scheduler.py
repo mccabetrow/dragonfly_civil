@@ -147,6 +147,65 @@ async def foil_followup_job() -> None:
         # Don't re-raise - we don't want to crash the scheduler
 
 
+async def pending_batch_processor_job() -> None:
+    """
+    Periodic job to process pending ingest batches.
+    Runs every 5 minutes to pick up batches that weren't processed inline.
+
+    This ensures batches uploaded with process_now=False eventually get processed,
+    and provides a retry mechanism for any transient failures.
+
+    The processing function is idempotent, so re-running is safe.
+    """
+    logger.info("📦 Running pending batch processor...")
+
+    try:
+        from .services.ingest_service_v2 import (
+            get_pending_batches,
+            process_simplicity_batch,
+        )
+        from .services.notifications import notify_pending_batches_processed
+
+        pending = await get_pending_batches()
+
+        if not pending:
+            logger.debug("📦 No pending batches to process")
+            return
+
+        logger.info(f"📦 Found {len(pending)} pending batches")
+
+        success_count = 0
+        failure_count = 0
+
+        for batch_id in pending:
+            try:
+                result = await process_simplicity_batch(batch_id)
+                if result.status == "completed":
+                    success_count += 1
+                else:
+                    failure_count += 1
+            except Exception as batch_err:
+                logger.error(f"📦 Failed to process batch {batch_id}: {batch_err}")
+                failure_count += 1
+
+        # Notify if any batches were processed
+        if success_count > 0 or failure_count > 0:
+            await notify_pending_batches_processed(
+                processed_count=len(pending),
+                success_count=success_count,
+                failure_count=failure_count,
+            )
+
+        logger.info(
+            f"📦 Batch processor complete: {success_count} succeeded, "
+            f"{failure_count} failed"
+        )
+
+    except Exception as e:
+        logger.exception(f"📦 Pending batch processor job failed: {e}")
+        # Don't re-raise - we don't want to crash the scheduler
+
+
 # =============================================================================
 # Scheduler Initialization
 # =============================================================================
@@ -253,6 +312,15 @@ def _register_jobs(scheduler: AsyncIOScheduler, settings: Any) -> None:
         trigger=CronTrigger(hour=10, minute=0),
         id="foil_followup",
         name="FOIL Follow-up Processing",
+        replace_existing=True,
+    )
+
+    # Pending batch processor - every 5 minutes
+    scheduler.add_job(
+        pending_batch_processor_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="pending_batch_processor",
+        name="Pending Batch Processor",
         replace_existing=True,
     )
 
