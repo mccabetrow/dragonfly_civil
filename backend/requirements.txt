@@ -5,8 +5,8 @@
 fastapi>=0.109.0,<1.0.0
 uvicorn[standard]>=0.27.0,<1.0.0
 
-# Async database
-asyncpg>=0.29.0,<1.0.0
+# Sync/async database (psycopg v3)
+psycopg[binary]>=3.1.0,<4.0.0
 
 # Job scheduling
 apscheduler>=3.10.0,<4.0.0

@@ -1,261 +1,114 @@
-"""
-Dragonfly Engine - Database Layer
+# backend/db.py
 
-Async Postgres connection pool using asyncpg.
-Also provides a thin Supabase HTTP client for REST API calls.
-"""
+from __future__ import annotations
 
-import logging
-from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
+from typing import Any, Optional, Sequence
 
-import asyncpg
-import httpx
+import psycopg
+from loguru import logger
+from psycopg.rows import dict_row
 
-from .config import Settings, get_settings
+from supabase import Client, create_client
 
-logger = logging.getLogger(__name__)
+from .config import get_settings
 
-# Global connection pool
-_pool: asyncpg.Pool | None = None
+settings = get_settings()
+
+# We don't actually need a heavy connection pool yet.
+# We just keep a single async connection for health checks, etc.
+_db_conn: Optional[psycopg.AsyncConnection] = None
+_supabase_client: Optional[Client] = None
 
 
-async def init_db_pool(settings: Settings | None = None) -> asyncpg.Pool:
+def get_supabase_client() -> Client:
     """
-    Initialize the async database connection pool.
-
-    Args:
-        settings: Application settings (uses default if not provided)
-
-    Returns:
-        asyncpg.Pool: The connection pool
+    Lazily create and return a Supabase Python client that uses the
+    SERVICE ROLE key. This is what the services use for RPC/views.
     """
-    global _pool
-
-    if settings is None:
-        settings = get_settings()
-
-    if _pool is not None:
-        logger.warning("Database pool already initialized")
-        return _pool
-
-    logger.info("Initializing database connection pool...")
-
-    try:
-        _pool = await asyncpg.create_pool(
-            dsn=settings.supabase_db_url,
-            min_size=2,
-            max_size=10,
-            max_inactive_connection_lifetime=300,  # 5 minutes
-            command_timeout=60,
+    global _supabase_client
+    if _supabase_client is None:
+        logger.info("Creating Supabase client")
+        _supabase_client = create_client(
+            settings.supabase_url, settings.supabase_service_role_key
         )
-        logger.info("Database pool initialized successfully")
-        return _pool
-    except Exception as e:
-        logger.error(f"Failed to initialize database pool: {e}")
-        raise
+    return _supabase_client
+
+
+async def init_db_pool() -> None:
+    """
+    Called from FastAPI lifespan startup.
+
+    We don't create a full pool – just open one async connection and
+    run a trivial SELECT to verify the DB URL and credentials.
+    """
+    global _db_conn
+
+    if _db_conn is not None:
+        return
+
+    if not settings.supabase_db_url:
+        logger.warning("SUPABASE_DB_URL is not set; skipping DB init")
+        return
+
+    logger.info("Opening async PostgreSQL connection for health checks")
+    _db_conn = await psycopg.AsyncConnection.connect(settings.supabase_db_url)
+    # Simple ping
+    async with _db_conn.cursor() as cur:
+        await cur.execute("SELECT 1;")
+        await cur.fetchone()
+    logger.info("Database connection OK")
 
 
 async def close_db_pool() -> None:
     """
-    Close the database connection pool.
+    Called from FastAPI lifespan shutdown.
     """
-    global _pool
-
-    if _pool is not None:
-        logger.info("Closing database connection pool...")
-        await _pool.close()
-        _pool = None
-        logger.info("Database pool closed")
+    global _db_conn
+    if _db_conn is not None:
+        logger.info("Closing PostgreSQL connection")
+        await _db_conn.close()
+        _db_conn = None
 
 
-def get_pool() -> asyncpg.Pool:
+async def ping_db() -> bool:
     """
-    Get the current database pool.
-
-    Raises:
-        RuntimeError: If pool is not initialized
+    Used by /api/health/db to check live DB connectivity.
     """
-    if _pool is None:
-        raise RuntimeError("Database pool not initialized. Call init_db_pool() first.")
-    return _pool
+    global _db_conn
+
+    if _db_conn is None:
+        # Lazily connect if init_db_pool wasn't called for some reason.
+        await init_db_pool()
+
+    if _db_conn is None:
+        return False
+
+    try:
+        async with _db_conn.cursor() as cur:
+            await cur.execute("SELECT 1 AS ok;")
+            row = await cur.fetchone()
+        return bool(row and row[0] == 1)
+    except Exception as exc:
+        logger.error(f"DB ping failed: {exc}")
+        return False
 
 
-@asynccontextmanager
-async def get_connection() -> AsyncGenerator[asyncpg.Connection, None]:
+async def fetch_one(
+    query: str, params: Sequence[Any] | None = None
+) -> Optional[dict[str, Any]]:
     """
-    Get a database connection from the pool.
-
-    Usage:
-        async with get_connection() as conn:
-            result = await conn.fetch("SELECT * FROM users")
+    Convenience helper if any service wants to run a one-off SELECT.
+    Not heavily used yet, but keeps the API similar to the old asyncpg version.
     """
-    pool = get_pool()
-    async with pool.acquire() as connection:
-        yield connection
+    global _db_conn
 
+    if _db_conn is None:
+        await init_db_pool()
 
-async def execute_query(query: str, *args: Any) -> str:
-    """
-    Execute a query that doesn't return rows.
+    if _db_conn is None:
+        raise RuntimeError("Database connection is not initialized")
 
-    Returns:
-        Status string (e.g., "INSERT 0 1")
-    """
-    async with get_connection() as conn:
-        return await conn.execute(query, *args)
-
-
-async def fetch_all(query: str, *args: Any) -> list[asyncpg.Record]:
-    """
-    Fetch all rows from a query.
-    """
-    async with get_connection() as conn:
-        return await conn.fetch(query, *args)
-
-
-async def fetch_one(query: str, *args: Any) -> asyncpg.Record | None:
-    """
-    Fetch a single row from a query.
-    """
-    async with get_connection() as conn:
-        return await conn.fetchrow(query, *args)
-
-
-async def fetch_val(query: str, *args: Any) -> Any:
-    """
-    Fetch a single value from a query.
-    """
-    async with get_connection() as conn:
-        return await conn.fetchval(query, *args)
-
-
-# =============================================================================
-# Supabase HTTP Client
-# =============================================================================
-
-
-class SupabaseClient:
-    """
-    Thin async HTTP client for Supabase REST API.
-
-    Use this for operations that should go through PostgREST/RLS,
-    or when you need Supabase-specific features like Storage.
-    """
-
-    def __init__(self, settings: Settings | None = None):
-        if settings is None:
-            settings = get_settings()
-
-        self.base_url = str(settings.supabase_url).rstrip("/")
-        self.headers = {
-            "apikey": settings.supabase_service_role_key,
-            "Authorization": f"Bearer {settings.supabase_service_role_key}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation",
-        }
-        self._client: httpx.AsyncClient | None = None
-
-    async def __aenter__(self) -> "SupabaseClient":
-        self._client = httpx.AsyncClient(
-            base_url=self.base_url,
-            headers=self.headers,
-            timeout=30.0,
-        )
-        return self
-
-    async def __aexit__(self, *args: Any) -> None:
-        if self._client:
-            await self._client.aclose()
-            self._client = None
-
-    @property
-    def client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            raise RuntimeError("SupabaseClient not initialized. Use async with.")
-        return self._client
-
-    async def rpc(
-        self, function_name: str, params: dict[str, Any] | None = None
-    ) -> Any:
-        """
-        Call a Supabase RPC function.
-
-        Args:
-            function_name: Name of the Postgres function
-            params: Parameters to pass to the function
-
-        Returns:
-            The function result
-        """
-        response = await self.client.post(
-            f"/rest/v1/rpc/{function_name}",
-            json=params or {},
-        )
-        response.raise_for_status()
-        return response.json()
-
-    async def select(
-        self,
-        table: str,
-        columns: str = "*",
-        filters: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """
-        Select rows from a table.
-
-        Args:
-            table: Table name
-            columns: Columns to select (default: *)
-            filters: Query filters as key-value pairs
-
-        Returns:
-            List of rows
-        """
-        params = {"select": columns}
-        if filters:
-            for key, value in filters.items():
-                params[key] = f"eq.{value}"
-
-        response = await self.client.get(f"/rest/v1/{table}", params=params)
-        response.raise_for_status()
-        return response.json()
-
-    async def insert(
-        self,
-        table: str,
-        data: dict[str, Any] | list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """
-        Insert rows into a table.
-        """
-        response = await self.client.post(f"/rest/v1/{table}", json=data)
-        response.raise_for_status()
-        return response.json()
-
-    async def update(
-        self,
-        table: str,
-        data: dict[str, Any],
-        match: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """
-        Update rows in a table.
-        """
-        params = {k: f"eq.{v}" for k, v in match.items()}
-        response = await self.client.patch(
-            f"/rest/v1/{table}",
-            params=params,
-            json=data,
-        )
-        response.raise_for_status()
-        return response.json()
-
-
-# Convenience function for one-off Supabase calls
-async def supabase_rpc(function_name: str, params: dict[str, Any] | None = None) -> Any:
-    """
-    Quick helper to call a Supabase RPC function.
-    """
-    async with SupabaseClient() as client:
-        return await client.rpc(function_name, params)
+    async with _db_conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(query, params or [])
+        row = await cur.fetchone()
+        return row
