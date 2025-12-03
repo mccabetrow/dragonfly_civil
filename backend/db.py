@@ -43,11 +43,12 @@ def get_supabase_client() -> Client:
 # ---------------------------------------------------------------------------
 
 
-async def init_db_pool() -> None:
+async def init_db_pool(app: Any | None = None) -> None:
     """
     Called from FastAPI startup.
 
     We don't use a full pool here; just a single AsyncConnection that we reuse.
+    `app` is accepted for FastAPI startup compatibility but is unused.
     """
     global _db_conn
 
