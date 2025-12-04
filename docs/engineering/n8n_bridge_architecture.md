@@ -2,6 +2,8 @@
 
 > **Principle:** n8n is a notification and trigger layer only. All business logic lives in Python workers + Supabase RPCs.
 
+> ⚠️ **WARNING:** Do not run migrations locally. Push SQL files to `supabase/migrations/` and let GitHub Actions handle it. See `.github/workflows/supabase-migrate.yml`.
+
 ## Current Flow Summary
 
 | Flow                                        | Current State | Action                                        | Notes                                                     |
