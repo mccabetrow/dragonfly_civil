@@ -4,6 +4,7 @@
  * Layout: Integrations cards + Team Access + Preferences
  */
 import type { FC } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Plug,
   Users,
@@ -14,6 +15,8 @@ import {
   CheckCircle,
   XCircle,
   ExternalLink,
+  Upload,
+  ChevronRight,
 } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import { cn } from '../lib/design-tokens';
@@ -147,6 +150,31 @@ const SettingsPageNew: FC = () => {
             );
           })}
         </div>
+      </section>
+
+      {/* Data Management Section */}
+      <section>
+        <div className="mb-4 flex items-center gap-2">
+          <Upload className="h-5 w-5 text-slate-400" />
+          <h2 className="text-lg font-semibold text-slate-900">Data Management</h2>
+        </div>
+        <Link
+          to="/settings/ingestion"
+          className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:border-indigo-200 hover:shadow-md"
+        >
+          <div className="flex items-start gap-4">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50">
+              <Upload className="h-5 w-5 text-indigo-600" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-slate-900">Data Ingestion</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Upload Simplicity CSV exports and monitor batch processing status
+              </p>
+            </div>
+          </div>
+          <ChevronRight className="h-5 w-5 text-slate-300 transition-colors group-hover:text-indigo-500" />
+        </Link>
       </section>
 
       {/* Team Access Section */}

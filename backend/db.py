@@ -62,7 +62,10 @@ async def init_db_pool(app: Any | None = None) -> None:
         return
 
     logger.info("Opening async PostgreSQL connection for health checks")
-    _db_conn = await psycopg.AsyncConnection.connect(settings.supabase_db_url)
+    _db_conn = await psycopg.AsyncConnection.connect(
+        settings.supabase_db_url,
+        autocommit=True,  # Enable autocommit mode - transactions must be explicit
+    )
 
     # Simple ping to verify credentials & connectivity
     async with _db_conn.cursor() as cur:

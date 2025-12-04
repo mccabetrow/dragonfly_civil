@@ -32,6 +32,8 @@ import {
   Briefcase,
   User,
   Hash,
+  Search,
+  Loader2,
 } from 'lucide-react';
 import {
   Card,
@@ -56,6 +58,11 @@ import {
 } from '../../hooks/useEnforcementRadar';
 import { useRefreshBus } from '../../context/RefreshContext';
 import { cn } from '../../lib/design-tokens';
+import {
+  searchSimilarJudgments,
+  buildJudgmentContext,
+  type JudgmentSearchResult,
+} from '../../lib/semanticSearchClient';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -348,6 +355,144 @@ const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SIMILAR JUDGMENTS DRAWER
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface SimilarJudgmentsDrawerProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  sourceRow: RadarRow | null;
+  results: JudgmentSearchResult[];
+  isLoading: boolean;
+  error: string | null;
+  formatCurrency: (value: number) => string;
+}
+
+const SimilarJudgmentsDrawer: React.FC<SimilarJudgmentsDrawerProps> = ({
+  open,
+  onOpenChange,
+  sourceRow,
+  results,
+  isLoading,
+  error,
+  formatCurrency,
+}) => (
+  <Drawer open={open} onOpenChange={onOpenChange}>
+    <DrawerContent side="right" size="md">
+      <DrawerHeader>
+        <DrawerTitle className="flex items-center gap-2">
+          <Search className="h-5 w-5" />
+          Similar Judgments
+        </DrawerTitle>
+        <DrawerDescription>
+          {sourceRow
+            ? `Cases similar to ${sourceRow.caseNumber}`
+            : 'Finding similar cases...'}
+        </DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody>
+        {/* Source Case Summary */}
+        {sourceRow && (
+          <DrawerSection title="Source Case">
+            <div className="rounded-lg bg-muted/50 p-3 space-y-1">
+              <p className="text-sm font-medium">{sourceRow.plaintiffName}</p>
+              <p className="text-xs text-muted-foreground">
+                vs {sourceRow.defendantName}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {formatCurrency(sourceRow.judgmentAmount)} • {sourceRow.county ?? 'Unknown County'}
+              </p>
+            </div>
+          </DrawerSection>
+        )}
+
+        {/* Loading State */}
+        {isLoading && (
+          <div className="flex flex-col items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 text-primary animate-spin mb-3" />
+            <p className="text-sm text-muted-foreground">Searching for similar cases...</p>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && !isLoading && (
+          <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-center">
+            <AlertCircle className="h-6 w-6 text-destructive mx-auto mb-2" />
+            <p className="text-sm text-destructive">{error}</p>
+          </div>
+        )}
+
+        {/* Results */}
+        {!isLoading && !error && results.length > 0 && (
+          <DrawerSection title={`Top ${results.length} Similar Cases`}>
+            <div className="space-y-3">
+              {results.map((result, index) => (
+                <div
+                  key={result.id}
+                  className="rounded-lg border p-3 hover:bg-muted/30 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-primary/10 text-primary text-xs font-bold">
+                          {index + 1}
+                        </span>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {result.case_number ?? '—'}
+                        </span>
+                      </div>
+                      <p className="text-sm font-medium truncate">
+                        {result.plaintiff_name ?? 'Unknown Plaintiff'}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        vs {result.defendant_name ?? 'Unknown Defendant'}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-semibold tabular-nums">
+                        {result.judgment_amount
+                          ? formatCurrency(result.judgment_amount)
+                          : '—'}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {result.county ?? '—'}
+                      </p>
+                    </div>
+                  </div>
+                  {/* Similarity score bar */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-primary rounded-full transition-all"
+                        style={{ width: `${Math.round(result.score * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground tabular-nums w-10">
+                      {Math.round(result.score * 100)}%
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </DrawerSection>
+        )}
+
+        {/* No Results */}
+        {!isLoading && !error && results.length === 0 && sourceRow && (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <Search className="h-8 w-8 text-muted-foreground/50 mb-3" />
+            <p className="text-sm text-muted-foreground">No similar cases found</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Try adjusting the search or check if embeddings are enabled
+            </p>
+          </div>
+        )}
+      </DrawerBody>
+    </DrawerContent>
+  </Drawer>
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CSV EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -409,6 +554,13 @@ const EnforcementRadarPage: React.FC = () => {
   // Detail drawer state
   const [selectedRow, setSelectedRow] = useState<RadarRow | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Similar judgments drawer state
+  const [similarDrawerOpen, setSimilarDrawerOpen] = useState(false);
+  const [similarSourceRow, setSimilarSourceRow] = useState<RadarRow | null>(null);
+  const [similarResults, setSimilarResults] = useState<JudgmentSearchResult[]>([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarError, setSimilarError] = useState<string | null>(null);
 
   // Fetch data with filters
   const { state } = useEnforcementRadar({
@@ -476,6 +628,38 @@ const EnforcementRadarPage: React.FC = () => {
   const handleRowClick = useCallback((row: RadarRow) => {
     setSelectedRow(row);
     setDrawerOpen(true);
+  }, []);
+
+  // Handle find similar
+  const handleFindSimilar = useCallback(async (row: RadarRow) => {
+    setSimilarSourceRow(row);
+    setSimilarResults([]);
+    setSimilarError(null);
+    setSimilarLoading(true);
+    setSimilarDrawerOpen(true);
+
+    const contextQuery = buildJudgmentContext({
+      plaintiffName: row.plaintiffName,
+      defendantName: row.defendantName,
+      judgmentAmount: row.judgmentAmount,
+      court: row.court,
+      county: row.county,
+      caseNumber: row.caseNumber,
+    });
+
+    const result = await searchSimilarJudgments(contextQuery, 5);
+
+    setSimilarLoading(false);
+
+    if (result.ok) {
+      // Filter out the source row itself from results
+      const filtered = result.data.results.filter(
+        (r) => r.case_number !== row.caseNumber
+      );
+      setSimilarResults(filtered);
+    } else {
+      setSimilarError(result.error);
+    }
   }, []);
 
   // Handle export
@@ -750,7 +934,7 @@ const EnforcementRadarPage: React.FC = () => {
                     onSort={handleSort}
                     align="left"
                   />
-                  <th className="px-4 py-3 text-center font-medium w-20">Actions</th>
+                  <th className="px-4 py-3 text-center font-medium w-32">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -789,15 +973,26 @@ const EnforcementRadarPage: React.FC = () => {
                         {formatDate(row.judgmentDate)}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRowClick(row)}
-                          className="h-7 px-2 text-xs gap-1"
-                        >
-                          <Eye className="h-3 w-3" />
-                          View
-                        </Button>
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRowClick(row)}
+                            className="h-7 px-2 text-xs gap-1"
+                            title="View case details"
+                          >
+                            <Eye className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleFindSimilar(row)}
+                            className="h-7 px-2 text-xs gap-1"
+                            title="Find similar cases"
+                          >
+                            <Search className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -818,6 +1013,17 @@ const EnforcementRadarPage: React.FC = () => {
           formatDate={formatDate}
         />
       )}
+
+      {/* Similar Judgments Drawer */}
+      <SimilarJudgmentsDrawer
+        open={similarDrawerOpen}
+        onOpenChange={setSimilarDrawerOpen}
+        sourceRow={similarSourceRow}
+        results={similarResults}
+        isLoading={similarLoading}
+        error={similarError}
+        formatCurrency={formatCurrency}
+      />
     </div>
   );
 };

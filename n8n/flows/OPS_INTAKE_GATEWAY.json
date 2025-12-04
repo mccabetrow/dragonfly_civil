@@ -1,0 +1,449 @@
+{
+  "name": "OPS_INTAKE_GATEWAY",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## OPS Intake Gateway\n\n**Purpose:** Daily automated validation of new lead candidates for ops review.\n\n**Schedule:** 10:00 AM daily\n\n**Flow:**\n1. Fetch `new_candidate` judgments from Supabase\n2. AI validates: name, address, case_number format\n3. Store results to `intake_results` table\n4. Update judgment status to `awaiting_ops_review`\n5. Notify ops via Discord/Slack\n\n**Setup:**\n- Replace `<PROJECT_REF>` with your Supabase project reference\n- Configure Supabase credentials\n- Configure Discord/Slack webhook URL\n- Enable workflow in production"
+      },
+      "id": "notes-main",
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 10,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Daily 10 AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM public.fetch_new_candidates(100)"
+      },
+      "id": "fetch-candidates",
+      "name": "Fetch New Candidates",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_conn",
+          "name": "Supabase Dragonfly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-has-records",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true
+      },
+      "id": "has-candidates",
+      "name": "Has Candidates?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ \n  const items = $input.all();\n  return items.map(item => item.json);\n}}",
+        "options": {}
+      },
+      "id": "split-items",
+      "name": "Split Into Individual Items",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.1
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a data validation assistant for a legal judgment enforcement system. Analyze the following judgment record and determine if it appears valid for intake processing.\n\nCheck the following criteria:\n1. **Name Check**: Is the debtor_name a valid-looking personal or business name? (Not gibberish, not obviously fake like \"John Doe\", \"Test User\", \"ZZZZZ\")\n2. **Address Check**: Does any address appear to NOT be a PO Box? (We need a physical address for service of process)\n3. **Case Number Check**: Does the case_index_number follow a valid court index format? (Typically: numbers/year format like \"12345/2023\" or \"CV-2023-001234\")\n\nRespond with a JSON object containing:\n- result: \"valid\", \"invalid\", or \"needs_review\"\n- confidence_score: 0-100\n- name_check_passed: boolean\n- name_check_note: brief explanation\n- address_check_passed: boolean  \n- address_check_note: brief explanation\n- case_number_check_passed: boolean\n- case_number_check_note: brief explanation\n\nIMPORTANT: Respond ONLY with the JSON object, no markdown formatting.",
+              "role": "system"
+            },
+            {
+              "content": "=Judgment Record to Validate:\n\nCase Index Number: {{ $json.case_index_number }}\nDebtor Name: {{ $json.debtor_name }}\nOriginal Creditor: {{ $json.original_creditor }}\nJudgment Date: {{ $json.judgment_date }}\nPrincipal Amount: {{ $json.principal_amount }}\nCounty: {{ $json.county }}\nCourt Name: {{ $json.court_name }}",
+              "role": "user"
+            }
+          ]
+        }
+      },
+      "id": "ai-validation",
+      "name": "AI Validate Record",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [1120, 200],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai_conn",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI response and prepare for Supabase\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const judgment = item.json;\n  const aiResponse = item.json.message?.content || item.json.text || '{}';\n  \n  let parsed;\n  try {\n    // Try to parse the AI response\n    parsed = JSON.parse(aiResponse);\n  } catch (e) {\n    // If parsing fails, mark as needs_review\n    parsed = {\n      result: 'needs_review',\n      confidence_score: 0,\n      name_check_passed: null,\n      name_check_note: 'AI response parsing failed',\n      address_check_passed: null,\n      address_check_note: 'AI response parsing failed',\n      case_number_check_passed: null,\n      case_number_check_note: 'AI response parsing failed'\n    };\n  }\n  \n  // Validate result enum\n  const validResults = ['valid', 'invalid', 'needs_review'];\n  if (!validResults.includes(parsed.result)) {\n    parsed.result = 'needs_review';\n  }\n  \n  // Clamp confidence score\n  parsed.confidence_score = Math.max(0, Math.min(100, parseInt(parsed.confidence_score) || 50));\n  \n  results.push({\n    json: {\n      judgment_id: judgment.id,\n      result: parsed.result,\n      confidence_score: parsed.confidence_score,\n      name_check_passed: parsed.name_check_passed ?? null,\n      name_check_note: parsed.name_check_note || null,\n      address_check_passed: parsed.address_check_passed ?? null,\n      address_check_note: parsed.address_check_note || null,\n      case_number_check_passed: parsed.case_number_check_passed ?? null,\n      case_number_check_note: parsed.case_number_check_note || null,\n      ai_response: parsed,\n      original_judgment: {\n        case_index_number: judgment.case_index_number,\n        debtor_name: judgment.debtor_name\n      }\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "parse-ai-response",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT public.store_intake_validation(\n  _judgment_id := '{{ $json.judgment_id }}'::uuid,\n  _result := '{{ $json.result }}',\n  _confidence_score := {{ $json.confidence_score }},\n  _name_check_passed := {{ $json.name_check_passed === null ? 'NULL' : $json.name_check_passed }},\n  _name_check_note := {{ $json.name_check_note ? \"'\" + $json.name_check_note.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  _address_check_passed := {{ $json.address_check_passed === null ? 'NULL' : $json.address_check_passed }},\n  _address_check_note := {{ $json.address_check_note ? \"'\" + $json.address_check_note.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  _case_number_check_passed := {{ $json.case_number_check_passed === null ? 'NULL' : $json.case_number_check_passed }},\n  _case_number_check_note := {{ $json.case_number_check_note ? \"'\" + $json.case_number_check_note.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  _ai_response := '{{ JSON.stringify($json.ai_response).replace(/'/g, \"''\") }}'::jsonb\n)"
+      },
+      "id": "store-validation",
+      "name": "Store Validation Result",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1560, 200],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_conn",
+          "name": "Supabase Dragonfly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all validation results for summary\nconst items = $input.all();\n\nconst summary = {\n  total: items.length,\n  valid: 0,\n  invalid: 0,\n  needs_review: 0,\n  cases: []\n};\n\nfor (const item of items) {\n  const data = item.json;\n  if (data.result === 'valid') summary.valid++;\n  else if (data.result === 'invalid') summary.invalid++;\n  else summary.needs_review++;\n  \n  summary.cases.push({\n    case_number: data.original_judgment?.case_index_number || 'Unknown',\n    debtor: data.original_judgment?.debtor_name || 'Unknown',\n    result: data.result,\n    confidence: data.confidence_score\n  });\n}\n\nreturn [{ json: summary }];"
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-needs-review",
+              "leftValue": "={{ $json.needs_review + $json.valid }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true
+      },
+      "id": "should-notify",
+      "name": "Should Notify?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "content": "=🔔 **Dragonfly Intake Gateway**\n\n📊 **Daily Intake Summary**\n\n✅ Valid: {{ $json.valid }}\n❌ Invalid: {{ $json.invalid }}\n👁️ Needs Review: {{ $json.needs_review }}\n📋 Total Processed: {{ $json.total }}\n\n{{ $json.needs_review > 0 ? '⚠️ **Action Required:** ' + $json.needs_review + ' cases need human review!' : '' }}\n\n🔗 [Open Intake Queue](https://your-dashboard-url/ops/intake)"
+      },
+      "id": "format-message",
+      "name": "Format Notification",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [2220, 100]
+    },
+    {
+      "parameters": {
+        "webhookUri": "={{$env.DISCORD_WEBHOOK_URL}}",
+        "text": "={{ $json.content }}",
+        "options": {}
+      },
+      "id": "notify-discord",
+      "name": "Notify Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [2440, 100],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "discord_webhook",
+          "name": "Discord Webhook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "text",
+              "value": "=🔔 *Dragonfly Intake Gateway*\\n\\n📊 *Daily Intake Summary*\\n\\n✅ Valid: {{ $json.valid }}\\n❌ Invalid: {{ $json.invalid }}\\n👁️ Needs Review: {{ $json.needs_review }}\\n📋 Total Processed: {{ $json.total }}\\n\\n{{ $json.needs_review > 0 ? '⚠️ *Action Required:* ' + $json.needs_review + ' cases need human review!' : '' }}"
+            }
+          ]
+        }
+      },
+      "id": "notify-slack",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2440, 300],
+      "notes": "Alternative to Discord - configure webhook URL"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "no_new_candidates"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "no-candidates",
+      "name": "No Candidates Today",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "content": "## Error Handling\n\nThis branch handles any errors during the validation process.\nErrors are logged and ops is notified."
+      },
+      "id": "notes-error",
+      "name": "Error Handling Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1100, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.get_intake_stats()"
+      },
+      "id": "get-final-stats",
+      "name": "Get Final Stats",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2660, 200],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_conn",
+          "name": "Supabase Dragonfly"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 10 AM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch New Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch New Candidates": {
+      "main": [
+        [
+          {
+            "node": "Has Candidates?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Candidates?": {
+      "main": [
+        [
+          {
+            "node": "Split Into Individual Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Candidates Today",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Into Individual Items": {
+      "main": [
+        [
+          {
+            "node": "AI Validate Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Validate Record": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Store Validation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Validation Result": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Should Notify?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Notify?": {
+      "main": [
+        [
+          {
+            "node": "Format Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Final Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Notification": {
+      "main": [
+        [
+          {
+            "node": "Notify Discord",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Discord": {
+      "main": [
+        [
+          {
+            "node": "Get Final Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "intake",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "ops",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "daily",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-12-02T10:00:00.000Z",
+  "versionId": "1.0.0"
+}

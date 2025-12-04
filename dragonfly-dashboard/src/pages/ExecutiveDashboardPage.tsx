@@ -9,6 +9,7 @@ import type { EnforcementFlowPoint } from '../components/EnforcementFlowChart';
 import RefreshButton from '../components/RefreshButton';
 import DemoLockCard from '../components/DemoLockCard';
 import { DashboardError } from '../components/DashboardError';
+import LitigationBudgetCard from '../components/LitigationBudgetCard';
 import { useEnforcementMetrics, useIntakeMetrics, type IntakeMetricRow } from '../hooks/useExecutiveMetrics';
 import { useEnforcementOverview, type EnforcementOverviewRow } from '../hooks/useEnforcementOverview';
 import { usePlaintiffCallQueue, type PlaintiffCallQueueRow } from '../hooks/usePlaintiffCallQueue';
@@ -230,9 +231,21 @@ const ExecutiveDashboardPage: React.FC = () => {
         <SectionHeader
           eyebrow="Snapshot"
           title="Executive summary"
-          description="Quick view of pipeline intake, active exposure, and today’s call queue."
+          description="Quick view of pipeline intake, active exposure, and today's call queue."
         />
         <div className="mt-4">{metricSectionContent}</div>
+      </section>
+
+      {/* Litigation Budget Section */}
+      <section>
+        <SectionHeader
+          eyebrow="Financial Modeling"
+          title="Daily Litigation Budget"
+          description="Budget allocations for skip tracing, litigation, marshals, and FOIL based on Tier A + B liquidity."
+        />
+        <div className="mt-4">
+          <LitigationBudgetCard />
+        </div>
       </section>
 
       <section className="df-card space-y-6">

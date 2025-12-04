@@ -168,7 +168,7 @@ pdf_client = PDFClient()
 # ---------------------------------------------------------------------------
 
 
-async def queue_enrichment(judgment_id: str, amount: float) -> UUID:
+async def queue_enrichment(judgment_id: str, amount: float) -> Optional[UUID]:
     """
     Queue an enrichment job for a judgment.
 
@@ -181,32 +181,57 @@ async def queue_enrichment(judgment_id: str, amount: float) -> UUID:
         amount: Judgment amount (determines enrichment source)
 
     Returns:
-        UUID of the created job
+        UUID of the created job, or None if queueing is not available
     """
     job_type = "enrich_tlo" if amount > 5000 else "enrich_idicore"
     payload = {"judgment_id": judgment_id, "amount": amount}
 
     conn = await get_pool()
     if conn is None:
-        raise RuntimeError("Database connection not available")
+        logger.warning("Database connection not available, skipping enrichment queue")
+        return None
 
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
+    try:
+        # Check if the job_queue table exists first
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables 
+                    WHERE table_schema = 'ops' AND table_name = 'job_queue'
+                )
             """
-            INSERT INTO ops.job_queue (job_type, payload, status)
-            VALUES (%s::ops.job_type_enum, %s::jsonb, 'pending')
-            RETURNING id
-            """,
-            (job_type, psycopg.types.json.Json(payload)),
-        )
-        row = await cur.fetchone()
+            )
+            row = await cur.fetchone()
+            if not row or not row[0]:
+                logger.debug(
+                    "ops.job_queue table does not exist, skipping enrichment queue"
+                )
+                return None
 
-    if row is None:
-        raise RuntimeError("Failed to create job")
+        async with conn.transaction():
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO ops.job_queue (job_type, payload, status)
+                    VALUES (%s::ops.job_type_enum, %s::jsonb, 'pending')
+                    RETURNING id
+                    """,
+                    (job_type, psycopg.types.json.Json(payload)),
+                )
+                row = await cur.fetchone()
 
-    job_id = row["id"]
-    logger.info(f"Queued {job_type} job {job_id} for judgment {judgment_id}")
-    return job_id
+        if row is None:
+            logger.warning("Failed to create job - no row returned")
+            return None
+
+        job_id = row["id"]
+        logger.info(f"Queued {job_type} job {job_id} for judgment {judgment_id}")
+        return job_id
+
+    except Exception as e:
+        logger.warning(f"Failed to queue enrichment job: {e}")
+        return None
 
 
 async def queue_pdf_generation(judgment_id: str, **kwargs: Any) -> UUID:

@@ -1,0 +1,6 @@
+case_number,court,plaintiff_name,defendant_name,judgment_amount,judgment_date,county
+2024-CV-98765,Queens Supreme,Alpha Capital Holdings LLC,Marcus J. Thompson,25000.00,2024-03-15,Queens
+2024-CV-43210,Brooklyn Civil,Midtown Finance Corp,Sarah L. Chen,3000.00,2024-06-22,Kings
+2024-CV-11111,Nassau District,Small Claims LLC,David R. Miller,750.00,2024-08-10,Nassau
+2024-CV-55555,Suffolk County,Eastside Lending Inc,Jennifer M. Garcia,18500.00,2024-01-08,Suffolk
+2024-CV-22222,Bronx Civil,Credit Solutions Group,Robert K. Williams,2100.00,2024-09-30,Bronx

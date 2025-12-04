@@ -237,6 +237,9 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
     inserted = 0
     failed = 0
 
+    # Collect judgments to queue for enrichment AFTER transaction commits
+    judgments_to_enrich: list[tuple[str, float]] = []
+
     async with get_connection() as conn:
         # Start transaction
         async with conn.transaction():
@@ -273,57 +276,59 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
                     # Build INSERT with ON CONFLICT DO NOTHING
                     # This handles duplicate case_numbers gracefully
                     # Use RETURNING id to capture the inserted judgment for enrichment
-                    row_result = await conn.fetchrow(
-                        """
-                        INSERT INTO public.judgments (
-                            case_number,
-                            plaintiff_name,
-                            defendant_name,
-                            judgment_amount,
-                            entry_date,
-                            source_file,
-                            description_embedding
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
-                        ON CONFLICT (case_number) DO NOTHING
-                        RETURNING id
-                        """,
-                        row["case_number"],
-                        row["plaintiff_name"],
-                        row["defendant_name"],
-                        row["judgment_amount"],
-                        row["entry_date"],  # Now a date object, not string
-                        row["source_file"],
-                        str(embedding) if embedding else None,
-                    )
+                    # Note: description_embedding is optional - only include if pgvector is set up
+                    if embedding:
+                        row_result = await conn.fetchrow(
+                            """
+                            INSERT INTO public.judgments (
+                                case_number,
+                                plaintiff_name,
+                                defendant_name,
+                                judgment_amount,
+                                entry_date,
+                                source_file,
+                                description_embedding
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s::vector)
+                            ON CONFLICT (case_number) DO NOTHING
+                            RETURNING id
+                            """,
+                            row["case_number"],
+                            row["plaintiff_name"],
+                            row["defendant_name"],
+                            row["judgment_amount"],
+                            row["entry_date"],
+                            row["source_file"],
+                            str(embedding),
+                        )
+                    else:
+                        # No embedding - insert without the vector column
+                        row_result = await conn.fetchrow(
+                            """
+                            INSERT INTO public.judgments (
+                                case_number,
+                                plaintiff_name,
+                                defendant_name,
+                                judgment_amount,
+                                entry_date,
+                                source_file
+                            ) VALUES (%s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (case_number) DO NOTHING
+                            RETURNING id
+                            """,
+                            row["case_number"],
+                            row["plaintiff_name"],
+                            row["defendant_name"],
+                            row["judgment_amount"],
+                            row["entry_date"],
+                            row["source_file"],
+                        )
 
                     if row_result and row_result["id"]:
                         inserted += 1
                         judgment_id = row_result["id"]
-
-                        # Queue enrichment job for the new judgment
-                        try:
-                            # Local import to avoid circular dependencies
-                            from .enrichment_service import (  # type: ignore
-                                queue_enrichment,
-                            )
-
-                            amount = float(row["judgment_amount"] or 0)
-                            await queue_enrichment(
-                                judgment_id=str(judgment_id),
-                                amount=amount,
-                            )
-                            logger.debug(
-                                "Queued enrichment for judgment %s (amount: %s)",
-                                judgment_id,
-                                amount,
-                            )
-                        except Exception as enrich_err:
-                            # Don't fail the ingest if enrichment queueing fails
-                            logger.warning(
-                                "Failed to queue enrichment for judgment %s: %s",
-                                judgment_id,
-                                enrich_err,
-                            )
+                        amount = float(row["judgment_amount"] or 0)
+                        # Collect for enrichment after transaction commits
+                        judgments_to_enrich.append((str(judgment_id), amount))
                     else:
                         # Conflict - already exists
                         logger.debug(
@@ -333,6 +338,32 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
                 except Exception as e:
                     logger.warning(f"Failed to insert row {row['case_number']}: {e}")
                     failed += 1
+
+    # Queue enrichment jobs AFTER the transaction has committed
+    if judgments_to_enrich:
+        try:
+            # Local import to avoid circular dependencies
+            from .enrichment_service import queue_enrichment  # type: ignore
+
+            for judgment_id, amount in judgments_to_enrich:
+                try:
+                    await queue_enrichment(judgment_id=judgment_id, amount=amount)
+                    logger.debug(
+                        "Queued enrichment for judgment %s (amount: %s)",
+                        judgment_id,
+                        amount,
+                    )
+                except Exception as enrich_err:
+                    # Don't fail the ingest if enrichment queueing fails
+                    logger.warning(
+                        "Failed to queue enrichment for judgment %s: %s",
+                        judgment_id,
+                        enrich_err,
+                    )
+        except ImportError:
+            logger.warning(
+                "enrichment_service not available, skipping enrichment queueing"
+            )
 
     logger.info(
         f"Ingest complete: {total_rows} rows processed, "

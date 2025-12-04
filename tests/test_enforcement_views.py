@@ -1,0 +1,226 @@
+"""
+tests/test_enforcement_views.py
+═══════════════════════════════════════════════════════════════════════════════
+
+Integration tests for the enforcement/ops views:
+  - enforcement.v_radar
+  - ops.v_enrichment_health
+
+These tests connect to the dev database and verify that the views are present,
+have the expected columns, and return sane data after the seed batch has run.
+
+Note: These tests require the views to have been created via migrations:
+  - 20251205001000_enrichment_jobs.sql (creates ops.job_queue)
+  - 20251205101000_fix_enforcement_radar_views.sql (creates the views)
+
+If the views don't exist, tests will skip with clear messages indicating
+which migrations need to be applied.
+"""
+
+import psycopg
+import pytest
+
+from src.supabase_client import get_supabase_db_url, get_supabase_env
+
+# Expected columns for v_radar (subset - we only check the required ones)
+REQUIRED_V_RADAR_COLUMNS = {
+    "id",
+    "plaintiff_name",
+    "defendant_name",
+    "judgment_amount",
+    "collectability_score",
+    "offer_strategy",
+}
+
+# Valid offer_strategy values per the view definition
+VALID_OFFER_STRATEGIES = {
+    "BUY_CANDIDATE",
+    "CONTINGENCY",
+    "ENRICHMENT_PENDING",
+    "LOW_PRIORITY",
+}
+
+
+def _get_connection_url() -> str:
+    """Return the database connection URL for the current environment."""
+    env = get_supabase_env()
+    return get_supabase_db_url(env)
+
+
+def _view_exists(cur: psycopg.Cursor, schema: str, view_name: str) -> bool:
+    """Check if a view exists in the given schema."""
+    cur.execute(
+        """
+        SELECT 1
+        FROM pg_views
+        WHERE schemaname = %s
+          AND viewname = %s
+        """,
+        (schema, view_name),
+    )
+    return cur.fetchone() is not None
+
+
+@pytest.mark.integration
+class TestEnforcementRadarView:
+    """Tests for enforcement.v_radar view."""
+
+    @pytest.fixture(autouse=True)
+    def _check_view_exists(self):
+        """Skip all tests in this class if the view doesn't exist."""
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                if not _view_exists(cur, "enforcement", "v_radar"):
+                    pytest.skip(
+                        "enforcement.v_radar not found - run migration "
+                        "20251205101000_fix_enforcement_radar_views.sql"
+                    )
+
+    def test_v_radar_exists_in_pg_views(self):
+        """Verify enforcement.v_radar is registered in pg_views."""
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                assert _view_exists(
+                    cur, "enforcement", "v_radar"
+                ), "enforcement.v_radar not found in pg_views"
+
+    def test_v_radar_has_required_columns(self):
+        """Verify v_radar exposes the required columns."""
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'enforcement'
+                      AND table_name = 'v_radar'
+                    """
+                )
+                actual_columns = {row[0] for row in cur.fetchall()}
+
+        missing = REQUIRED_V_RADAR_COLUMNS - actual_columns
+        assert not missing, f"v_radar missing columns: {missing}"
+
+    def test_v_radar_returns_rows_after_seed(self):
+        """Verify v_radar returns at least one row when seed batch has run."""
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM enforcement.v_radar")
+                row = cur.fetchone()
+                assert row is not None
+                count = row[0]
+                # If seed has run, we expect at least one row; otherwise skip gracefully
+                if count == 0:
+                    pytest.skip(
+                        "No rows in enforcement.v_radar; seed batch may not have run"
+                    )
+                assert count >= 1, f"Expected at least 1 row, got {count}"
+
+    def test_v_radar_offer_strategy_values_valid(self):
+        """Verify all offer_strategy values are in the allowed set."""
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT offer_strategy
+                    FROM enforcement.v_radar
+                    """
+                )
+                strategies = {row[0] for row in cur.fetchall()}
+
+        if not strategies:
+            pytest.skip("No data in v_radar to validate offer_strategy values")
+
+        invalid = strategies - VALID_OFFER_STRATEGIES
+        assert not invalid, (
+            f"Invalid offer_strategy values found: {invalid}. "
+            f"Expected one of {VALID_OFFER_STRATEGIES}"
+        )
+
+
+@pytest.mark.integration
+class TestEnrichmentHealthView:
+    """Tests for ops.v_enrichment_health view."""
+
+    @pytest.fixture(autouse=True)
+    def _check_view_exists(self):
+        """Skip all tests in this class if the view doesn't exist."""
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                if not _view_exists(cur, "ops", "v_enrichment_health"):
+                    pytest.skip(
+                        "ops.v_enrichment_health not found - run migration "
+                        "20251205101000_fix_enforcement_radar_views.sql"
+                    )
+
+    def test_v_enrichment_health_exists_in_pg_views(self):
+        """Verify ops.v_enrichment_health is registered in pg_views."""
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                assert _view_exists(
+                    cur, "ops", "v_enrichment_health"
+                ), "ops.v_enrichment_health not found in pg_views"
+
+    def test_v_enrichment_health_has_expected_columns(self):
+        """Verify v_enrichment_health has the job count columns."""
+        expected_columns = {
+            "pending_jobs",
+            "processing_jobs",
+            "failed_jobs",
+            "completed_jobs",
+        }
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'ops'
+                      AND table_name = 'v_enrichment_health'
+                    """
+                )
+                actual_columns = {row[0] for row in cur.fetchall()}
+
+        missing = expected_columns - actual_columns
+        assert not missing, f"v_enrichment_health missing columns: {missing}"
+
+    def test_v_enrichment_health_returns_single_row(self):
+        """Verify v_enrichment_health returns exactly one aggregated row."""
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM ops.v_enrichment_health")
+                row = cur.fetchone()
+                assert row is not None
+                count = row[0]
+                assert (
+                    count == 1
+                ), f"Expected exactly 1 row from v_enrichment_health, got {count}"
+
+    def test_v_enrichment_health_counts_are_non_negative(self):
+        """Verify all job counts are non-negative integers."""
+        url = _get_connection_url()
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT pending_jobs, processing_jobs, failed_jobs, completed_jobs
+                    FROM ops.v_enrichment_health
+                    """
+                )
+                row = cur.fetchone()
+                assert row is not None, "v_enrichment_health returned no rows"
+
+                pending, processing, failed, completed = row
+                assert pending >= 0, f"pending_jobs is negative: {pending}"
+                assert processing >= 0, f"processing_jobs is negative: {processing}"
+                assert failed >= 0, f"failed_jobs is negative: {failed}"
+                assert completed >= 0, f"completed_jobs is negative: {completed}"

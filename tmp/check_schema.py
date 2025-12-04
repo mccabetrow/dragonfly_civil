@@ -1,7 +1,23 @@
 """Quick script to check table schemas."""
 
-from src.supabase_client import get_supabase_db_url
+import os
+import sys
+
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
+os.environ.setdefault("SUPABASE_MODE", "dev")
+
 import psycopg
+
+from src.supabase_client import get_supabase_db_url
 
 conn = psycopg.connect(get_supabase_db_url())
 

@@ -21,7 +21,6 @@ import pytest
 
 from backend.services import enrichment_service
 
-
 # ---------------------------------------------------------------------------
 # Collectability Score Tests
 # ---------------------------------------------------------------------------
