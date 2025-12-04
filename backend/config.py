@@ -51,6 +51,11 @@ class Settings(BaseSettings):
         default=None, description="Discord webhook URL for notifications"
     )
 
+    # OpenAI (for embeddings)
+    openai_api_key: str | None = Field(
+        default=None, description="OpenAI API key for embedding generation"
+    )
+
     # Environment
     environment: Literal["dev", "staging", "prod"] = Field(
         default="dev", description="Deployment environment"

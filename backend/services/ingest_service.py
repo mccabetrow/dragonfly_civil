@@ -3,16 +3,18 @@ Dragonfly Engine - Ingest Service
 
 Business logic for ingesting judgment data from various sources.
 Handles CSV parsing, column normalization, and bulk database inserts.
+Integrates with AI service for immediate embedding generation.
 """
 
 import logging
 import uuid
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
 from ..db import get_connection
+from .ai_service import build_judgment_context, generate_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -240,9 +242,38 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
         async with conn.transaction():
             for _, row in valid_df.iterrows():
                 try:
+                    # Generate embedding for semantic search
+                    # Extract court from source_file if present
+                    source_parts = str(row["source_file"]).split("|")
+                    court_name = source_parts[0] if len(source_parts) > 1 else None
+
+                    context = build_judgment_context(
+                        plaintiff_name=row.get("plaintiff_name"),
+                        defendant_name=row.get("defendant_name"),
+                        court_name=court_name,
+                        judgment_amount=row.get("judgment_amount"),
+                        case_number=row.get("case_number"),
+                        judgment_date=(
+                            str(row.get("entry_date"))
+                            if row.get("entry_date")
+                            else None
+                        ),
+                    )
+
+                    # Generate embedding (returns None on failure - graceful degradation)
+                    embedding: Optional[list[float]] = None
+                    if context:
+                        try:
+                            embedding = await generate_embedding(context)
+                        except Exception as e:
+                            logger.warning(
+                                f"Embedding generation failed for {row['case_number']}: {e}"
+                            )
+
                     # Build INSERT with ON CONFLICT DO NOTHING
                     # This handles duplicate case_numbers gracefully
-                    result = await conn.execute(
+                    # Use RETURNING id to capture the inserted judgment for enrichment
+                    row_result = await conn.fetchrow(
                         """
                         INSERT INTO public.judgments (
                             case_number,
@@ -250,9 +281,11 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
                             defendant_name,
                             judgment_amount,
                             entry_date,
-                            source_file
-                        ) VALUES ($1, $2, $3, $4, $5, $6)
+                            source_file,
+                            description_embedding
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
                         ON CONFLICT (case_number) DO NOTHING
+                        RETURNING id
                         """,
                         row["case_number"],
                         row["plaintiff_name"],
@@ -260,11 +293,37 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
                         row["judgment_amount"],
                         row["entry_date"],  # Now a date object, not string
                         row["source_file"],
+                        str(embedding) if embedding else None,
                     )
 
-                    # asyncpg returns "INSERT 0 1" or "INSERT 0 0"
-                    if result and result.endswith("1"):
+                    if row_result and row_result["id"]:
                         inserted += 1
+                        judgment_id = row_result["id"]
+
+                        # Queue enrichment job for the new judgment
+                        try:
+                            # Local import to avoid circular dependencies
+                            from .enrichment_service import (  # type: ignore
+                                queue_enrichment,
+                            )
+
+                            amount = float(row["judgment_amount"] or 0)
+                            await queue_enrichment(
+                                judgment_id=str(judgment_id),
+                                amount=amount,
+                            )
+                            logger.debug(
+                                "Queued enrichment for judgment %s (amount: %s)",
+                                judgment_id,
+                                amount,
+                            )
+                        except Exception as enrich_err:
+                            # Don't fail the ingest if enrichment queueing fails
+                            logger.warning(
+                                "Failed to queue enrichment for judgment %s: %s",
+                                judgment_id,
+                                enrich_err,
+                            )
                     else:
                         # Conflict - already exists
                         logger.debug(

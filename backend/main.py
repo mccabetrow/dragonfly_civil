@@ -24,6 +24,7 @@ from .routers import (
     foil_router,
     health_router,
     ingest_router,
+    search_router,
 )
 from .routers.ingest_v2 import router as ingest_v2_router
 from .scheduler import init_scheduler
@@ -120,6 +121,9 @@ def create_app() -> FastAPI:
     app.include_router(analytics_router, prefix="/api")
     app.include_router(budget_router, prefix="/api")
     app.include_router(enforcement_router, prefix="/api")
+
+    # v0.2.x search router (semantic search)
+    app.include_router(search_router, prefix="/api/v1", tags=["search"])
 
     # Initialize scheduler (uses on_event internally)
     init_scheduler(app)

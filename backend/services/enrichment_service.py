@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import date, datetime, timezone
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 import psycopg
@@ -23,6 +23,68 @@ from ..db import get_pool
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+# ---------------------------------------------------------------------------
+# Collectability Score Helpers
+# ---------------------------------------------------------------------------
+
+
+def _years_since(dt: date | datetime | None) -> Optional[float]:
+    """Calculate years elapsed since a given date."""
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        dt = dt.date()
+    today = date.today()
+    days = (today - dt).days
+    return days / 365.25
+
+
+def calculate_collectability_score(
+    enrichment_data: Dict[str, Any],
+    judgment_date: Optional[date | datetime],
+) -> int:
+    """
+    Compute a v1 collectability score (0–100) based on simple rules.
+
+    Rules:
+      - +40 if employed
+      - +30 if homeowner
+      - +10 if has_bank_account
+      - +20 if judgment < 5 years old
+
+    Args:
+        enrichment_data: Dict with enrichment fields (employed, homeowner, has_bank_account)
+        judgment_date: Original judgment date for age calculation
+
+    Returns:
+        Integer score 0-100
+    """
+    score = 0
+
+    employed = bool(enrichment_data.get("employed"))
+    homeowner = bool(enrichment_data.get("homeowner"))
+    has_bank_account = bool(enrichment_data.get("has_bank_account"))
+
+    if employed:
+        score += 40
+    if homeowner:
+        score += 30
+    if has_bank_account:
+        score += 10
+
+    age_years = _years_since(judgment_date)
+    if age_years is not None and age_years < 5:
+        score += 20
+
+    if score > 100:
+        score = 100
+    if score < 0:
+        score = 0
+
+    return int(score)
+
 
 # ---------------------------------------------------------------------------
 # External client stubs (to be replaced with real implementations)
@@ -99,50 +161,6 @@ class PDFClient:
 tlo_client = TLOClient()
 idicore_client = IDICoreClient()
 pdf_client = PDFClient()
-
-
-# ---------------------------------------------------------------------------
-# Collectability Score Calculation
-# ---------------------------------------------------------------------------
-
-
-def compute_collectability_score(
-    enrichment_data: dict[str, Any],
-    judgment_date: Optional[datetime] = None,
-) -> int:
-    """
-    Compute collectability score (0-100) based on enrichment signals.
-
-    Scoring rules (v1):
-    - employed: +40
-    - homeowner: +30
-    - judgment_age < 5 years: +20
-    - has_bank_account: +10
-
-    Args:
-        enrichment_data: Dict with enrichment fields
-        judgment_date: Original judgment date for age calculation
-
-    Returns:
-        Integer score 0-100
-    """
-    score = 0
-
-    if enrichment_data.get("employed"):
-        score += 40
-
-    if enrichment_data.get("homeowner"):
-        score += 30
-
-    if judgment_date:
-        age_years = (datetime.now(timezone.utc) - judgment_date).days / 365.25
-        if age_years < 5:
-            score += 20
-
-    if enrichment_data.get("has_bank_account"):
-        score += 10
-
-    return min(score, 100)
 
 
 # ---------------------------------------------------------------------------
@@ -341,19 +359,27 @@ async def _execute_job(job_type: str, payload: dict[str, Any]) -> None:
         raise ValueError(f"Unknown job type: {job_type}")
 
 
-async def _apply_enrichment(judgment_id: str, enrichment_data: dict[str, Any]) -> None:
+async def _apply_enrichment(judgment_id: str, result: dict[str, Any]) -> None:
     """
     Apply enrichment results to a judgment.
 
-    Updates collectability_score and optionally stores detailed enrichment data.
+    Extracts scoring signals from the enrichment result, fetches the judgment date,
+    computes the collectability score, and updates the judgment record.
 
     Args:
-        judgment_id: UUID of the judgment
-        enrichment_data: Dict with enrichment fields
+        judgment_id: UUID/ID of the judgment
+        result: Raw result dict from TLO/idiCORE with enrichment fields
     """
     conn = await get_pool()
     if conn is None:
         raise RuntimeError("Database connection not available")
+
+    # Extract scoring signals from enrichment result
+    enrichment_data: Dict[str, Any] = {
+        "employed": result.get("employed"),
+        "homeowner": result.get("homeowner"),
+        "has_bank_account": result.get("has_bank_account"),
+    }
 
     # Fetch judgment date for score calculation
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -363,19 +389,14 @@ async def _apply_enrichment(judgment_id: str, enrichment_data: dict[str, Any]) -
         )
         row = await cur.fetchone()
 
-    judgment_date = None
-    if row and row.get("entry_date"):
-        entry_date = row["entry_date"]
-        if isinstance(entry_date, datetime):
-            judgment_date = entry_date
-        else:
-            # Convert date to datetime for calculation
-            judgment_date = datetime.combine(
-                entry_date, datetime.min.time(), tzinfo=timezone.utc
-            )
+    # Normalize judgment date (handle both date and datetime)
+    judgment_date: Optional[date] = None
+    if row and row.get("entry_date") is not None:
+        jd = row["entry_date"]
+        judgment_date = jd if isinstance(jd, date) else jd.date()
 
     # Compute collectability score
-    score = compute_collectability_score(enrichment_data, judgment_date)
+    score = calculate_collectability_score(enrichment_data, judgment_date)
 
     # Update judgment with score
     async with conn.cursor() as cur:
@@ -388,7 +409,7 @@ async def _apply_enrichment(judgment_id: str, enrichment_data: dict[str, Any]) -
             (score, int(judgment_id) if judgment_id.isdigit() else judgment_id),
         )
 
-    logger.info(f"Updated judgment {judgment_id} with collectability_score={score}")
+    logger.info("Judgment %s scored: %s", judgment_id, score)
 
     # TODO: Store detailed enrichment data in normalized tables
     # e.g., enrichment.employers, enrichment.assets
