@@ -4,13 +4,14 @@
  *
  * Daily cockpit for enforcement operations.
  * Shows prioritized cases ranked by collectability + offer strategy.
- * 
+ *
  * Layout inspired by high-frequency trading desks:
  * - KPI strip at top
  * - Filter bar
  * - Dense data table with colored badges
+ * - Detail drawer for case inspection
  */
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   Target,
@@ -21,16 +22,52 @@ import {
   ArrowUpDown,
   Sparkles,
   AlertCircle,
+  Download,
+  Eye,
+  ChevronUp,
+  ChevronDown,
+  FileText,
+  Calendar,
+  MapPin,
+  Briefcase,
+  User,
+  Hash,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, Button } from '../../components/primitives';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Button,
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerDescription,
+  DrawerBody,
+  DrawerSection,
+} from '../../components/primitives';
 import { EnrichmentHealth } from '../../components/ops/EnrichmentHealth';
 import {
   useEnforcementRadar,
   computeRadarKPIs,
   type OfferStrategy,
+  type RadarRow,
 } from '../../hooks/useEnforcementRadar';
 import { useRefreshBus } from '../../context/RefreshContext';
 import { cn } from '../../lib/design-tokens';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════════════════
+
+type SortField = 'collectabilityScore' | 'judgmentAmount' | 'judgmentDate';
+type SortDirection = 'asc' | 'desc';
+
+interface SortConfig {
+  field: SortField;
+  direction: SortDirection;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -50,12 +87,18 @@ const STRATEGY_OPTIONS: { value: OfferStrategy | 'ALL'; label: string }[] = [
 
 interface ScoreBadgeProps {
   score: number | null;
+  size?: 'sm' | 'md';
 }
 
-const ScoreBadge: React.FC<ScoreBadgeProps> = ({ score }) => {
+const ScoreBadge: React.FC<ScoreBadgeProps> = ({ score, size = 'sm' }) => {
   if (score === null) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+      <span
+        className={cn(
+          'inline-flex items-center gap-1 rounded-full font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+          size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm'
+        )}
+      >
         <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
         —
       </span>
@@ -74,8 +117,9 @@ const ScoreBadge: React.FC<ScoreBadgeProps> = ({ score }) => {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold tabular-nums',
-        colorClasses
+        'inline-flex items-center gap-1 rounded-full font-semibold tabular-nums',
+        colorClasses,
+        size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm'
       )}
     >
       {score}
@@ -85,24 +129,25 @@ const ScoreBadge: React.FC<ScoreBadgeProps> = ({ score }) => {
 
 interface StrategyBadgeProps {
   strategy: OfferStrategy;
+  size?: 'sm' | 'md';
 }
 
-const StrategyBadge: React.FC<StrategyBadgeProps> = ({ strategy }) => {
+const StrategyBadge: React.FC<StrategyBadgeProps> = ({ strategy, size = 'sm' }) => {
   const config: Record<OfferStrategy, { label: string; classes: string }> = {
     BUY_CANDIDATE: {
-      label: 'BUY',
+      label: size === 'sm' ? 'BUY' : 'Buy Candidate',
       classes: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
     },
     CONTINGENCY: {
-      label: 'CONT',
+      label: size === 'sm' ? 'CONT' : 'Contingency',
       classes: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
     },
     ENRICHMENT_PENDING: {
-      label: 'PEND',
+      label: size === 'sm' ? 'PEND' : 'Pending',
       classes: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
     },
     LOW_PRIORITY: {
-      label: 'LOW',
+      label: size === 'sm' ? 'LOW' : 'Low Priority',
       classes: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
     },
   };
@@ -112,8 +157,9 @@ const StrategyBadge: React.FC<StrategyBadgeProps> = ({ strategy }) => {
   return (
     <span
       className={cn(
-        'inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide',
-        classes
+        'inline-flex items-center rounded font-bold uppercase tracking-wide',
+        classes,
+        size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm'
       )}
     >
       {label}
@@ -133,7 +179,13 @@ interface KPICardProps {
   iconColor?: string;
 }
 
-const KPICard: React.FC<KPICardProps> = ({ title, value, subtitle, icon: Icon, iconColor = 'text-primary' }) => (
+const KPICard: React.FC<KPICardProps> = ({
+  title,
+  value,
+  subtitle,
+  icon: Icon,
+  iconColor = 'text-primary',
+}) => (
   <Card className="relative overflow-hidden">
     <CardContent className="p-4">
       <div className="flex items-start justify-between">
@@ -151,6 +203,195 @@ const KPICard: React.FC<KPICardProps> = ({ title, value, subtitle, icon: Icon, i
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SORTABLE HEADER
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface SortableHeaderProps {
+  label: string;
+  field: SortField;
+  currentSort: SortConfig | null;
+  onSort: (field: SortField) => void;
+  align?: 'left' | 'center' | 'right';
+}
+
+const SortableHeader: React.FC<SortableHeaderProps> = ({
+  label,
+  field,
+  currentSort,
+  onSort,
+  align = 'left',
+}) => {
+  const isActive = currentSort?.field === field;
+  const direction = isActive ? currentSort.direction : null;
+
+  return (
+    <th
+      className={cn(
+        'px-4 py-3 font-medium cursor-pointer hover:bg-muted/70 transition-colors select-none',
+        align === 'right' && 'text-right',
+        align === 'center' && 'text-center'
+      )}
+      onClick={() => onSort(field)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className="inline-flex flex-col">
+          <ChevronUp
+            className={cn(
+              'h-3 w-3 -mb-1',
+              isActive && direction === 'asc' ? 'text-primary' : 'text-muted-foreground/40'
+            )}
+          />
+          <ChevronDown
+            className={cn(
+              'h-3 w-3 -mt-1',
+              isActive && direction === 'desc' ? 'text-primary' : 'text-muted-foreground/40'
+            )}
+          />
+        </span>
+      </span>
+    </th>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DETAIL DRAWER
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface DetailFieldProps {
+  icon: React.ElementType;
+  label: string;
+  value: React.ReactNode;
+}
+
+const DetailField: React.FC<DetailFieldProps> = ({ icon: Icon, label, value }) => (
+  <div className="flex items-start gap-3 py-2">
+    <Icon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+    <div className="min-w-0 flex-1">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-sm font-medium break-words">{value ?? '—'}</p>
+    </div>
+  </div>
+);
+
+interface CaseDetailDrawerProps {
+  row: RadarRow;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  formatCurrency: (value: number) => string;
+  formatDate: (dateStr: string | null) => string;
+}
+
+const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
+  row,
+  open,
+  onOpenChange,
+  formatCurrency,
+  formatDate,
+}) => (
+  <Drawer open={open} onOpenChange={onOpenChange}>
+    <DrawerContent side="right" size="md">
+      <DrawerHeader>
+        <DrawerTitle>Case Details</DrawerTitle>
+        <DrawerDescription>{row.caseNumber}</DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody>
+        {/* Core Fields Section */}
+        <DrawerSection title="Case Information">
+          <div className="space-y-1 divide-y">
+            <DetailField icon={Hash} label="Case Number" value={row.caseNumber} />
+            <DetailField icon={User} label="Plaintiff" value={row.plaintiffName} />
+            <DetailField icon={User} label="Defendant" value={row.defendantName} />
+            <DetailField
+              icon={DollarSign}
+              label="Judgment Amount"
+              value={formatCurrency(row.judgmentAmount)}
+            />
+            <DetailField icon={Calendar} label="Judgment Date" value={formatDate(row.judgmentDate)} />
+            <DetailField icon={Briefcase} label="Court" value={row.court} />
+            <DetailField icon={MapPin} label="County" value={row.county} />
+          </div>
+        </DrawerSection>
+
+        {/* Scoring Section */}
+        <DrawerSection title="Scoring & Strategy">
+          <div className="flex items-center gap-4 py-2">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Collectability Score</p>
+              <ScoreBadge score={row.collectabilityScore} size="md" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Offer Strategy</p>
+              <StrategyBadge strategy={row.offerStrategy} size="md" />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            Created: {new Date(row.createdAt).toLocaleDateString()}
+          </p>
+        </DrawerSection>
+
+        {/* Next Actions Placeholder */}
+        <DrawerSection title="Next Actions">
+          <div className="rounded-lg border border-dashed border-muted-foreground/30 p-4 text-center">
+            <FileText className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">
+              Packet generation coming soon
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Generate demand letters, lien filings, and enforcement packets
+            </p>
+          </div>
+        </DrawerSection>
+      </DrawerBody>
+    </DrawerContent>
+  </Drawer>
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CSV EXPORT
+// ═══════════════════════════════════════════════════════════════════════════
+
+function exportToCSV(rows: RadarRow[], filename: string) {
+  const headers = [
+    'Case Number',
+    'Plaintiff',
+    'Defendant',
+    'Judgment Amount',
+    'Collectability Score',
+    'Offer Strategy',
+    'Court',
+    'County',
+    'Judgment Date',
+    'Created At',
+  ];
+
+  const csvRows = rows.map((row) => [
+    row.caseNumber,
+    `"${(row.plaintiffName ?? '').replace(/"/g, '""')}"`,
+    `"${(row.defendantName ?? '').replace(/"/g, '""')}"`,
+    row.judgmentAmount,
+    row.collectabilityScore ?? '',
+    row.offerStrategy,
+    row.court ?? '',
+    row.county ?? '',
+    row.judgmentDate ?? '',
+    row.createdAt,
+  ]);
+
+  const csvContent = [headers.join(','), ...csvRows.map((row) => row.join(','))].join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -161,6 +402,13 @@ const EnforcementRadarPage: React.FC = () => {
   const [strategyFilter, setStrategyFilter] = useState<OfferStrategy | 'ALL'>('ALL');
   const [minScore, setMinScore] = useState<number>(0);
   const [minAmount, setMinAmount] = useState<string>('');
+
+  // Sort state
+  const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
+
+  // Detail drawer state
+  const [selectedRow, setSelectedRow] = useState<RadarRow | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Fetch data with filters
   const { state } = useEnforcementRadar({
@@ -176,6 +424,65 @@ const EnforcementRadarPage: React.FC = () => {
     }
     return computeRadarKPIs(state.data);
   }, [state]);
+
+  // Sort rows
+  const sortedRows = useMemo(() => {
+    if (state.status !== 'ready' || !state.data) return [];
+    const rows = [...state.data];
+
+    if (!sortConfig) return rows;
+
+    return rows.sort((a, b) => {
+      const { field, direction } = sortConfig;
+      const multiplier = direction === 'asc' ? 1 : -1;
+
+      if (field === 'collectabilityScore') {
+        const aVal = a.collectabilityScore ?? -1;
+        const bVal = b.collectabilityScore ?? -1;
+        return (aVal - bVal) * multiplier;
+      }
+
+      if (field === 'judgmentAmount') {
+        return (a.judgmentAmount - b.judgmentAmount) * multiplier;
+      }
+
+      if (field === 'judgmentDate') {
+        const aVal = a.judgmentDate ? new Date(a.judgmentDate).getTime() : 0;
+        const bVal = b.judgmentDate ? new Date(b.judgmentDate).getTime() : 0;
+        return (aVal - bVal) * multiplier;
+      }
+
+      return 0;
+    });
+  }, [state, sortConfig]);
+
+  // Handle sort toggle
+  const handleSort = useCallback((field: SortField) => {
+    setSortConfig((prev) => {
+      if (prev?.field === field) {
+        // Toggle direction or clear
+        if (prev.direction === 'asc') {
+          return { field, direction: 'desc' };
+        } else {
+          return null; // Clear sort
+        }
+      }
+      // New field, start with desc (highest first)
+      return { field, direction: 'desc' };
+    });
+  }, []);
+
+  // Handle row click
+  const handleRowClick = useCallback((row: RadarRow) => {
+    setSelectedRow(row);
+    setDrawerOpen(true);
+  }, []);
+
+  // Handle export
+  const handleExport = useCallback(() => {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    exportToCSV(sortedRows, `enforcement_radar_${timestamp}.csv`);
+  }, [sortedRows]);
 
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('en-US', {
@@ -253,8 +560,6 @@ const EnforcementRadarPage: React.FC = () => {
     );
   }
 
-  const rows = state.data ?? [];
-
   // ─────────────────────────────────────────────────────────────────────────
   // READY STATE
   // ─────────────────────────────────────────────────────────────────────────
@@ -272,16 +577,28 @@ const EnforcementRadarPage: React.FC = () => {
             Prioritized cases ranked by collectability and offer strategy
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={triggerRefresh}
-          disabled={isRefreshing}
-          className="gap-2"
-        >
-          <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExport}
+            disabled={sortedRows.length === 0}
+            className="gap-2"
+          >
+            <Download className="h-4 w-4" />
+            Export CSV
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={triggerRefresh}
+            disabled={isRefreshing}
+            className="gap-2"
+          >
+            <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* KPI Strip */}
@@ -398,7 +715,7 @@ const EnforcementRadarPage: React.FC = () => {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center justify-between">
-            <span>Radar Queue ({rows.length} cases)</span>
+            <span>Radar Queue ({sortedRows.length} cases)</span>
             <ArrowUpDown className="h-4 w-4 text-muted-foreground" />
           </CardTitle>
         </CardHeader>
@@ -410,25 +727,44 @@ const EnforcementRadarPage: React.FC = () => {
                   <th className="px-4 py-3 text-left font-medium">Case #</th>
                   <th className="px-4 py-3 text-left font-medium">Plaintiff</th>
                   <th className="px-4 py-3 text-left font-medium">Defendant</th>
-                  <th className="px-4 py-3 text-right font-medium">Amount</th>
-                  <th className="px-4 py-3 text-center font-medium">Score</th>
+                  <SortableHeader
+                    label="Amount"
+                    field="judgmentAmount"
+                    currentSort={sortConfig}
+                    onSort={handleSort}
+                    align="right"
+                  />
+                  <SortableHeader
+                    label="Score"
+                    field="collectabilityScore"
+                    currentSort={sortConfig}
+                    onSort={handleSort}
+                    align="center"
+                  />
                   <th className="px-4 py-3 text-center font-medium">Strategy</th>
                   <th className="px-4 py-3 text-left font-medium">Court</th>
-                  <th className="px-4 py-3 text-left font-medium">Date</th>
+                  <SortableHeader
+                    label="Date"
+                    field="judgmentDate"
+                    currentSort={sortConfig}
+                    onSort={handleSort}
+                    align="left"
+                  />
+                  <th className="px-4 py-3 text-center font-medium w-20">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {rows.length === 0 ? (
+                {sortedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-12 text-center text-muted-foreground">
                       No cases match the current filters.
                     </td>
                   </tr>
                 ) : (
-                  rows.map((row) => (
+                  sortedRows.map((row) => (
                     <tr
                       key={row.id}
-                      className="hover:bg-muted/30 transition-colors cursor-pointer"
+                      className="hover:bg-muted/30 transition-colors"
                     >
                       <td className="px-4 py-3 font-mono text-xs">{row.caseNumber}</td>
                       <td className="px-4 py-3 max-w-[180px] truncate" title={row.plaintiffName}>
@@ -452,6 +788,17 @@ const EnforcementRadarPage: React.FC = () => {
                       <td className="px-4 py-3 text-muted-foreground text-xs tabular-nums">
                         {formatDate(row.judgmentDate)}
                       </td>
+                      <td className="px-4 py-3 text-center">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRowClick(row)}
+                          className="h-7 px-2 text-xs gap-1"
+                        >
+                          <Eye className="h-3 w-3" />
+                          View
+                        </Button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -460,6 +807,17 @@ const EnforcementRadarPage: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Detail Drawer */}
+      {selectedRow && (
+        <CaseDetailDrawer
+          row={selectedRow}
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          formatCurrency={formatCurrency}
+          formatDate={formatDate}
+        />
+      )}
     </div>
   );
 };
