@@ -22,19 +22,18 @@ import { useOnRefresh } from '../context/RefreshContext';
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-export interface EnrichmentHealthRow {
-  metric: string;
-  value: number;
-  asOf: string | null;
-}
+export type EnrichmentStatus = 'active' | 'idle' | 'backlog' | 'degraded';
 
 export interface EnrichmentHealthSummary {
-  queuedCount: number;
-  processingCount: number;
-  completedCount: number;
-  failedCount: number;
-  lastProcessed: string | null;
-  isHealthy: boolean;
+  pendingJobs: number;
+  processingJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  lastJobCreatedAt: string | null;
+  lastJobUpdatedAt: string | null;
+  timeSinceLastActivity: string | null;
+  status: EnrichmentStatus;
+  statusLabel: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -55,11 +54,14 @@ export function useEnrichmentHealth(): MetricsHookResult<EnrichmentHealthSummary
     setSnapshot((previous) => buildLoadingMetricsState(previous));
 
     try {
+      // Query the view directly - it returns a single row with aggregated metrics
       const query = supabaseClient
         .from('v_enrichment_health')
-        .select('metric, value, as_of');
+        .select('pending_jobs, processing_jobs, failed_jobs, completed_jobs, last_job_created_at, last_job_updated_at, time_since_last_activity')
+        .limit(1)
+        .single();
 
-      const result = await demoSafeSelect<Array<Record<string, unknown>> | null>(query);
+      const result = await demoSafeSelect<Record<string, unknown> | null>(query);
 
       if (result.kind === 'demo_locked') {
         setSnapshot(buildDemoLockedState<EnrichmentHealthSummary>());
@@ -70,23 +72,28 @@ export function useEnrichmentHealth(): MetricsHookResult<EnrichmentHealthSummary
         throw result.error;
       }
 
-      const rows = (result.data ?? []) as Array<Record<string, unknown>>;
-      
-      // Parse the health metrics into a summary
-      const summary = parseHealthMetrics(rows);
+      const row = result.data;
+      const summary = parseHealthRow(row);
       setSnapshot(buildReadyMetricsState(summary));
     } catch (err) {
-      // If the view doesn't exist, return a "no data" state rather than error
+      // If the view doesn't exist or returns no rows, return a "no data" state
       const errorMessage = err instanceof Error ? err.message : String(err);
-      if (errorMessage.includes('does not exist') || errorMessage.includes('404')) {
+      if (
+        errorMessage.includes('does not exist') ||
+        errorMessage.includes('404') ||
+        errorMessage.includes('PGRST116') // single row not found
+      ) {
         setSnapshot(
           buildReadyMetricsState<EnrichmentHealthSummary>({
-            queuedCount: 0,
-            processingCount: 0,
-            completedCount: 0,
-            failedCount: 0,
-            lastProcessed: null,
-            isHealthy: true, // No queue = healthy
+            pendingJobs: 0,
+            processingJobs: 0,
+            completedJobs: 0,
+            failedJobs: 0,
+            lastJobCreatedAt: null,
+            lastJobUpdatedAt: null,
+            timeSinceLastActivity: null,
+            status: 'idle',
+            statusLabel: 'Idle',
           })
         );
         return;
@@ -122,31 +129,99 @@ export function useEnrichmentHealth(): MetricsHookResult<EnrichmentHealthSummary
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-function parseHealthMetrics(rows: Array<Record<string, unknown>>): EnrichmentHealthSummary {
-  const metricsMap = new Map<string, { value: number; asOf: string | null }>();
-
-  for (const row of rows) {
-    const metric = String(row.metric ?? '');
-    const value = Number(row.value ?? 0);
-    const asOf = row.as_of != null ? String(row.as_of) : null;
-    metricsMap.set(metric, { value, asOf });
+function parseHealthRow(row: Record<string, unknown> | null): EnrichmentHealthSummary {
+  if (!row) {
+    return {
+      pendingJobs: 0,
+      processingJobs: 0,
+      completedJobs: 0,
+      failedJobs: 0,
+      lastJobCreatedAt: null,
+      lastJobUpdatedAt: null,
+      timeSinceLastActivity: null,
+      status: 'idle',
+      statusLabel: 'Idle',
+    };
   }
 
-  const queuedCount = metricsMap.get('queued')?.value ?? 0;
-  const processingCount = metricsMap.get('processing')?.value ?? 0;
-  const completedCount = metricsMap.get('completed')?.value ?? 0;
-  const failedCount = metricsMap.get('failed')?.value ?? 0;
-  const lastProcessed = metricsMap.get('completed')?.asOf ?? null;
+  const pendingJobs = Number(row.pending_jobs ?? 0);
+  const processingJobs = Number(row.processing_jobs ?? 0);
+  const completedJobs = Number(row.completed_jobs ?? 0);
+  const failedJobs = Number(row.failed_jobs ?? 0);
+  const lastJobCreatedAt = row.last_job_created_at != null ? String(row.last_job_created_at) : null;
+  const lastJobUpdatedAt = row.last_job_updated_at != null ? String(row.last_job_updated_at) : null;
+  const timeSinceLastActivity = row.time_since_last_activity != null ? String(row.time_since_last_activity) : null;
 
-  // Healthy if no failed jobs and queue isn't backing up excessively
-  const isHealthy = failedCount === 0 && queuedCount < 100;
+  // Determine status based on the priority rules
+  let status: EnrichmentStatus;
+  let statusLabel: string;
+
+  if (failedJobs > 0) {
+    status = 'degraded';
+    statusLabel = 'System Degraded';
+  } else if (pendingJobs > 100) {
+    status = 'backlog';
+    statusLabel = 'Backlog High';
+  } else if (pendingJobs === 0 && processingJobs === 0) {
+    status = 'idle';
+    statusLabel = 'Idle';
+  } else {
+    status = 'active';
+    statusLabel = 'Enrichment Active';
+  }
 
   return {
-    queuedCount,
-    processingCount,
-    completedCount,
-    failedCount,
-    lastProcessed,
-    isHealthy,
+    pendingJobs,
+    processingJobs,
+    completedJobs,
+    failedJobs,
+    lastJobCreatedAt,
+    lastJobUpdatedAt,
+    timeSinceLastActivity,
+    status,
+    statusLabel,
   };
+}
+
+/**
+ * Humanize a PostgreSQL interval string (e.g., "00:03:45.123456") to "3m ago"
+ */
+export function humanizeInterval(interval: string | null): string {
+  if (!interval) return 'Never';
+
+  // PostgreSQL interval format: "HH:MM:SS.microseconds" or "X days HH:MM:SS"
+  const dayMatch = interval.match(/(\d+)\s*days?\s+(\d+):(\d+):(\d+)/);
+  const timeMatch = interval.match(/^(\d+):(\d+):(\d+)/);
+
+  let totalSeconds = 0;
+
+  if (dayMatch) {
+    const days = parseInt(dayMatch[1], 10);
+    const hours = parseInt(dayMatch[2], 10);
+    const minutes = parseInt(dayMatch[3], 10);
+    const seconds = parseInt(dayMatch[4], 10);
+    totalSeconds = days * 86400 + hours * 3600 + minutes * 60 + seconds;
+  } else if (timeMatch) {
+    const hours = parseInt(timeMatch[1], 10);
+    const minutes = parseInt(timeMatch[2], 10);
+    const seconds = parseInt(timeMatch[3], 10);
+    totalSeconds = hours * 3600 + minutes * 60 + seconds;
+  } else {
+    return interval; // Return as-is if we can't parse
+  }
+
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s ago`;
+  } else if (totalSeconds < 3600) {
+    const mins = Math.floor(totalSeconds / 60);
+    return `${mins}m ago`;
+  } else if (totalSeconds < 86400) {
+    const hours = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    return mins > 0 ? `${hours}h ${mins}m ago` : `${hours}h ago`;
+  } else {
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    return hours > 0 ? `${days}d ${hours}h ago` : `${days}d ago`;
+  }
 }
