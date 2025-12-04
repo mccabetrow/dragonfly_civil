@@ -34,6 +34,11 @@ import {
   Hash,
   Search,
   Loader2,
+  HelpCircle,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Phone,
 } from 'lucide-react';
 import {
   Card,
@@ -50,6 +55,10 @@ import {
   DrawerSection,
 } from '../../components/primitives';
 import { EnrichmentHealth } from '../../components/ops/EnrichmentHealth';
+import {
+  Tooltip,
+  TooltipProvider,
+} from '../../components/primitives/Tooltip';
 import {
   useEnforcementRadar,
   computeRadarKPIs,
@@ -87,6 +96,36 @@ const STRATEGY_OPTIONS: { value: OfferStrategy | 'ALL'; label: string }[] = [
   { value: 'ENRICHMENT_PENDING', label: 'Pending Enrichment' },
   { value: 'LOW_PRIORITY', label: 'Low Priority' },
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TOOLTIP CONTENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SCORE_TOOLTIP = (
+  <div className="max-w-xs space-y-1 text-left">
+    <p className="font-medium">Collectability Score (0–100)</p>
+    <p className="text-xs opacity-90">Predicts how likely we are to recover money.</p>
+    <div className="pt-1 space-y-0.5 text-xs">
+      <p>🟢 <strong>70–100:</strong> High confidence – great candidates</p>
+      <p>🟡 <strong>40–69:</strong> Medium confidence – worth pursuing</p>
+      <p>⚪ <strong>0–39:</strong> Low confidence – deprioritize</p>
+      <p>— <strong>NULL:</strong> Not scored yet (pending enrichment)</p>
+    </div>
+  </div>
+);
+
+const STRATEGY_TOOLTIP = (
+  <div className="max-w-xs space-y-1 text-left">
+    <p className="font-medium">Offer Strategy</p>
+    <p className="text-xs opacity-90">Tells you what action to take on each case.</p>
+    <div className="pt-1 space-y-0.5 text-xs">
+      <p>🟢 <strong>BUY:</strong> Call immediately & make a cash offer</p>
+      <p>🟡 <strong>CONT:</strong> Offer contingency collection</p>
+      <p>⚪ <strong>PEND:</strong> Wait for data enrichment</p>
+      <p>🔴 <strong>LOW:</strong> Deprioritize, check back later</p>
+    </div>
+  </div>
+);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BADGE COMPONENTS
@@ -219,6 +258,7 @@ interface SortableHeaderProps {
   currentSort: SortConfig | null;
   onSort: (field: SortField) => void;
   align?: 'left' | 'center' | 'right';
+  tooltip?: React.ReactNode;
 }
 
 const SortableHeader: React.FC<SortableHeaderProps> = ({
@@ -227,9 +267,33 @@ const SortableHeader: React.FC<SortableHeaderProps> = ({
   currentSort,
   onSort,
   align = 'left',
+  tooltip,
 }) => {
   const isActive = currentSort?.field === field;
   const direction = isActive ? currentSort.direction : null;
+
+  const headerContent = (
+    <span className="inline-flex items-center gap-1">
+      {label}
+      {tooltip && (
+        <HelpCircle className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
+      )}
+      <span className="inline-flex flex-col">
+        <ChevronUp
+          className={cn(
+            'h-3 w-3 -mb-1',
+            isActive && direction === 'asc' ? 'text-primary' : 'text-muted-foreground/40'
+          )}
+        />
+        <ChevronDown
+          className={cn(
+            'h-3 w-3 -mt-1',
+            isActive && direction === 'desc' ? 'text-primary' : 'text-muted-foreground/40'
+          )}
+        />
+      </span>
+    </span>
+  );
 
   return (
     <th
@@ -240,23 +304,13 @@ const SortableHeader: React.FC<SortableHeaderProps> = ({
       )}
       onClick={() => onSort(field)}
     >
-      <span className="inline-flex items-center gap-1">
-        {label}
-        <span className="inline-flex flex-col">
-          <ChevronUp
-            className={cn(
-              'h-3 w-3 -mb-1',
-              isActive && direction === 'asc' ? 'text-primary' : 'text-muted-foreground/40'
-            )}
-          />
-          <ChevronDown
-            className={cn(
-              'h-3 w-3 -mt-1',
-              isActive && direction === 'desc' ? 'text-primary' : 'text-muted-foreground/40'
-            )}
-          />
-        </span>
-      </span>
+      {tooltip ? (
+        <Tooltip content={tooltip} side="top" delayDuration={200}>
+          <span>{headerContent}</span>
+        </Tooltip>
+      ) : (
+        headerContent
+      )}
     </th>
   );
 };
@@ -348,6 +402,157 @@ const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
               Generate demand letters, lien filings, and enforcement packets
             </p>
           </div>
+        </DrawerSection>
+      </DrawerBody>
+    </DrawerContent>
+  </Drawer>
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELP DRAWER
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface HelpDrawerProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+const HelpDrawer: React.FC<HelpDrawerProps> = ({ open, onOpenChange }) => (
+  <Drawer open={open} onOpenChange={onOpenChange}>
+    <DrawerContent side="right" size="md">
+      <DrawerHeader>
+        <DrawerTitle className="flex items-center gap-2">
+          <HelpCircle className="h-5 w-5 text-primary" />
+          How to Use This Page
+        </DrawerTitle>
+        <DrawerDescription>
+          Your daily guide to the Enforcement Radar
+        </DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody>
+        {/* What Is It */}
+        <DrawerSection title="What Is the Radar?">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            The <strong>Enforcement Radar</strong> is your daily command center for identifying which judgments to pursue. 
+            It ranks every active case by collectability and recommends an action strategy—so you know exactly 
+            where to focus your time and capital.
+          </p>
+          <p className="text-sm text-muted-foreground leading-relaxed mt-2">
+            Think of it as a "hot list" that answers: <em>"Which cases should I call today, and why?"</em>
+          </p>
+        </DrawerSection>
+
+        {/* Morning Checklist */}
+        <DrawerSection title="Morning Checklist ☀️">
+          <div className="space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                <span className="text-xs font-bold text-primary">1</span>
+              </div>
+              <div>
+                <p className="text-sm font-medium">Work Buy Candidates First</p>
+                <p className="text-xs text-muted-foreground">
+                  Filter to BUY_CANDIDATE → Sort by Score → Call top 5–10 plaintiffs
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                <span className="text-xs font-bold text-primary">2</span>
+              </div>
+              <div>
+                <p className="text-sm font-medium">Then Work Contingency Cases</p>
+                <p className="text-xs text-muted-foreground">
+                  Filter to CONTINGENCY → Sort by Amount → Pitch top 10–15 plaintiffs
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                <span className="text-xs font-bold text-primary">3</span>
+              </div>
+              <div>
+                <p className="text-sm font-medium">Check Enrichment Health</p>
+                <p className="text-xs text-muted-foreground">
+                  Glance at the widget in the top-right. Green = healthy. Red = alert engineering.
+                </p>
+              </div>
+            </div>
+          </div>
+        </DrawerSection>
+
+        {/* Strategy Guide */}
+        <DrawerSection title="Offer Strategy Guide">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20">
+              <CheckCircle2 className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+              <div>
+                <p className="text-sm font-medium text-purple-700 dark:text-purple-300">BUY_CANDIDATE</p>
+                <p className="text-xs text-purple-600/80 dark:text-purple-400/80">
+                  High value + high score. Call immediately & make a cash offer.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+              <Phone className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <div>
+                <p className="text-sm font-medium text-blue-700 dark:text-blue-300">CONTINGENCY</p>
+                <p className="text-xs text-blue-600/80 dark:text-blue-400/80">
+                  Decent odds, lower value. Offer to collect for a percentage.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-yellow-50 dark:bg-yellow-900/20">
+              <Clock className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+              <div>
+                <p className="text-sm font-medium text-yellow-700 dark:text-yellow-300">ENRICHMENT_PENDING</p>
+                <p className="text-xs text-yellow-600/80 dark:text-yellow-400/80">
+                  Awaiting data enrichment. Wait for the system to score it.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-800">
+              <XCircle className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+              <div>
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">LOW_PRIORITY</p>
+                <p className="text-xs text-gray-600/80 dark:text-gray-400/80">
+                  Low recovery odds. Deprioritize and check back later.
+                </p>
+              </div>
+            </div>
+          </div>
+        </DrawerSection>
+
+        {/* Score Guide */}
+        <DrawerSection title="Collectability Score">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">70–100</span>
+              <span className="text-sm text-muted-foreground">High confidence – great candidates</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">40–69</span>
+              <span className="text-sm text-muted-foreground">Medium confidence – worth pursuing</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400">0–39</span>
+              <span className="text-sm text-muted-foreground">Low confidence – deprioritize</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400">—</span>
+              <span className="text-sm text-muted-foreground">Not scored yet (pending enrichment)</span>
+            </div>
+          </div>
+        </DrawerSection>
+
+        {/* Quick Tips */}
+        <DrawerSection title="Quick Tips">
+          <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+            <li>Click any column header to sort the table</li>
+            <li>Click a row to open the case detail drawer</li>
+            <li>Use "Find Similar" to discover related cases</li>
+            <li>Export CSV to share your filtered list</li>
+          </ul>
         </DrawerSection>
       </DrawerBody>
     </DrawerContent>
@@ -562,6 +767,9 @@ const EnforcementRadarPage: React.FC = () => {
   const [similarLoading, setSimilarLoading] = useState(false);
   const [similarError, setSimilarError] = useState<string | null>(null);
 
+  // Help drawer state
+  const [helpDrawerOpen, setHelpDrawerOpen] = useState(false);
+
   // Fetch data with filters
   const { state } = useEnforcementRadar({
     strategy: strategyFilter,
@@ -749,6 +957,7 @@ const EnforcementRadarPage: React.FC = () => {
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
+    <TooltipProvider>
     <div className="space-y-6 p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -781,6 +990,15 @@ const EnforcementRadarPage: React.FC = () => {
           >
             <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
             Refresh
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setHelpDrawerOpen(true)}
+            className="gap-2"
+          >
+            <HelpCircle className="h-4 w-4" />
+            Help
           </Button>
         </div>
       </div>
@@ -924,8 +1142,16 @@ const EnforcementRadarPage: React.FC = () => {
                     currentSort={sortConfig}
                     onSort={handleSort}
                     align="center"
+                    tooltip={SCORE_TOOLTIP}
                   />
-                  <th className="px-4 py-3 text-center font-medium">Strategy</th>
+                  <th className="px-4 py-3 text-center font-medium">
+                    <Tooltip content={STRATEGY_TOOLTIP} side="top" delayDuration={200}>
+                      <span className="inline-flex items-center gap-1 cursor-help">
+                        Strategy
+                        <HelpCircle className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
+                      </span>
+                    </Tooltip>
+                  </th>
                   <th className="px-4 py-3 text-left font-medium">Court</th>
                   <SortableHeader
                     label="Date"
@@ -1024,7 +1250,11 @@ const EnforcementRadarPage: React.FC = () => {
         error={similarError}
         formatCurrency={formatCurrency}
       />
+
+      {/* Help Drawer */}
+      <HelpDrawer open={helpDrawerOpen} onOpenChange={setHelpDrawerOpen} />
     </div>
+    </TooltipProvider>
   );
 };
 
