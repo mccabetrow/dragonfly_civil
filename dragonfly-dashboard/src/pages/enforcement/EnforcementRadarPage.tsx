@@ -391,17 +391,33 @@ const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
           </p>
         </DrawerSection>
 
-        {/* Next Actions Placeholder */}
-        <DrawerSection title="Next Actions">
-          <div className="rounded-lg border border-dashed border-muted-foreground/30 p-4 text-center">
-            <FileText className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">
-              Packet generation coming soon
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Generate demand letters, lien filings, and enforcement packets
-            </p>
+        {/* Legal Packets Section */}
+        <DrawerSection title="Legal Packets">
+          <p className="text-xs text-muted-foreground mb-3">
+            Generate court-ready enforcement documents pre-filled with case data.
+          </p>
+          <div className="space-y-2">
+            <Tooltip
+              content="Backend in progress – this will auto-fill the court packet for printing."
+              side="top"
+              delayDuration={200}
+            >
+              <span className="inline-block w-full">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled
+                  className="w-full justify-start gap-2 opacity-60"
+                >
+                  <FileText className="h-4 w-4" />
+                  Generate Income Execution Packet
+                </Button>
+              </span>
+            </Tooltip>
           </div>
+          <p className="text-xs text-muted-foreground mt-3 italic">
+            More packet types (demand letters, lien filings) coming soon.
+          </p>
         </DrawerSection>
       </DrawerBody>
     </DrawerContent>
