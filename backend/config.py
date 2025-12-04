@@ -70,6 +70,18 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, description="Server port")
 
+    # Document Assembly Engine
+    legal_packet_bucket: str = Field(
+        default="legal_packets",
+        description="Supabase Storage bucket for generated legal packets",
+    )
+    # NOTE: Confirm NY post-judgment interest rate with counsel before production.
+    # As of 2024, NY CPLR 5004 prescribes 9% per annum, but this can change.
+    ny_interest_rate_percent: float = Field(
+        default=9.0,
+        description="NY post-judgment interest rate (CPLR 5004). Confirm with counsel.",
+    )
+
     @property
     def is_production(self) -> bool:
         """Check if running in production."""

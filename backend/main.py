@@ -5,6 +5,9 @@ Main application entry point. Creates the FastAPI app, wires up routers,
 initializes database pool and scheduler on startup.
 
 Run with: uvicorn backend.main:app --reload
+
+Note: On Windows, psycopg async requires SelectorEventLoop. If you see
+"ProactorEventLoop" errors, run via WSL or deploy to Linux container.
 """
 
 import logging
@@ -26,7 +29,11 @@ from .routers import (
     ingest_router,
     search_router,
 )
+from .routers.events import router as events_router
 from .routers.ingest_v2 import router as ingest_v2_router
+from .routers.intelligence import router as intelligence_router
+from .routers.offers import router as offers_router
+from .routers.packets import router as packets_router
 from .scheduler import init_scheduler
 
 # Configure logging before anything else
@@ -124,6 +131,18 @@ def create_app() -> FastAPI:
 
     # v0.2.x search router (semantic search)
     app.include_router(search_router, prefix="/api/v1", tags=["search"])
+
+    # v0.2.x intelligence router (judgment graph)
+    app.include_router(intelligence_router, prefix="/api", tags=["intelligence"])
+
+    # v0.2.x offers router (transaction engine)
+    app.include_router(offers_router, prefix="/api", tags=["offers"])
+
+    # v0.2.x packets router (document assembly engine)
+    app.include_router(packets_router, prefix="/api", tags=["packets"])
+
+    # v0.2.x events router (event stream / timeline)
+    app.include_router(events_router, prefix="/api", tags=["events"])
 
     # Initialize scheduler (uses on_event internally)
     init_scheduler(app)

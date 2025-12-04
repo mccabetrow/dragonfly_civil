@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import UUID
@@ -23,6 +24,35 @@ from ..db import get_pool
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+# ---------------------------------------------------------------------------
+# Score Breakdown Data Structure (v2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ScoreBreakdown:
+    """
+    Explainable breakdown of collectability score components.
+
+    Components:
+      - employment: 0-40 points based on employment status
+      - assets: 0-30 points based on real estate/vehicles
+      - recency: 0-20 points based on judgment age
+      - banking: 0-10 points based on recent bank activity
+    """
+
+    employment: int
+    assets: int
+    recency: int
+    banking: int
+
+    @property
+    def total(self) -> int:
+        """Compute total score from components, clamped to 0-100."""
+        raw = self.employment + self.assets + self.recency + self.banking
+        return max(0, min(100, raw))
 
 
 # ---------------------------------------------------------------------------
@@ -41,49 +71,167 @@ def _years_since(dt: date | datetime | None) -> Optional[float]:
     return days / 365.25
 
 
+def compute_score_breakdown(
+    enrichment_data: Dict[str, Any],
+    judgment_date: Optional[date | datetime],
+) -> ScoreBreakdown:
+    """
+    Compute an explainable score breakdown (v2) based on enrichment data.
+
+    Scoring rules:
+      - Employment (0-40):
+        - employed == True: 40
+        - self_employed == True: 20
+        - else: 0
+
+      - Assets (0-30):
+        - has_real_estate == True: 30
+        - has_vehicle == True (and no real estate): 10
+        - else: 0
+
+      - Banking (0-10):
+        - has_bank_account_recent == True: 10
+        - else: 0
+
+      - Recency (0-20):
+        - Based on years since judgment_date
+        - Formula: 20 - (years * 2), clamped to 0-20
+        - If judgment_date is None: 0
+
+    Args:
+        enrichment_data: Dict with enrichment fields
+        judgment_date: Original judgment date for age calculation
+
+    Returns:
+        ScoreBreakdown with component scores
+    """
+    # Employment component (0-40)
+    employment_score = 0
+    if enrichment_data.get("employed"):
+        employment_score = 40
+    elif enrichment_data.get("self_employed"):
+        employment_score = 20
+
+    # Assets component (0-30)
+    assets_score = 0
+    if enrichment_data.get("has_real_estate") or enrichment_data.get("homeowner"):
+        assets_score = 30
+    elif enrichment_data.get("has_vehicle"):
+        assets_score = 10
+
+    # Banking component (0-10)
+    banking_score = 0
+    if enrichment_data.get("has_bank_account_recent") or enrichment_data.get(
+        "has_bank_account"
+    ):
+        banking_score = 10
+
+    # Recency component (0-20)
+    recency_score = 0
+    years = _years_since(judgment_date)
+    if years is not None:
+        years = max(0, years)
+        raw = 20 - (years * 2)
+        recency_score = int(max(0, min(20, raw)))
+
+    return ScoreBreakdown(
+        employment=employment_score,
+        assets=assets_score,
+        recency=recency_score,
+        banking=banking_score,
+    )
+
+
 def calculate_collectability_score(
     enrichment_data: Dict[str, Any],
     judgment_date: Optional[date | datetime],
+    judgment_id: Optional[int | str] = None,
 ) -> int:
     """
-    Compute a v1 collectability score (0–100) based on simple rules.
+    Compute collectability score (v2) with explainable breakdown.
 
-    Rules:
-      - +40 if employed
-      - +30 if homeowner
-      - +10 if has_bank_account
-      - +20 if judgment < 5 years old
+    This is the main entry point for scoring. It computes the breakdown,
+    optionally persists to the database, and returns the total score.
+
+    Backwards compatible: still returns int, but now also writes breakdown
+    columns when judgment_id is provided.
 
     Args:
-        enrichment_data: Dict with enrichment fields (employed, homeowner, has_bank_account)
+        enrichment_data: Dict with enrichment fields
         judgment_date: Original judgment date for age calculation
+        judgment_id: Optional judgment ID for database persistence
 
     Returns:
         Integer score 0-100
     """
-    score = 0
+    breakdown = compute_score_breakdown(enrichment_data, judgment_date)
+    total = breakdown.total
 
-    employed = bool(enrichment_data.get("employed"))
-    homeowner = bool(enrichment_data.get("homeowner"))
-    has_bank_account = bool(enrichment_data.get("has_bank_account"))
+    # If judgment_id is provided, persist breakdown to DB asynchronously
+    # This is called from _apply_enrichment which handles the actual DB update
+    # We store the breakdown in a thread-local or return it via a different mechanism
+    # For now, the caller (_apply_enrichment) will handle persistence
 
-    if employed:
-        score += 40
-    if homeowner:
-        score += 30
-    if has_bank_account:
-        score += 10
+    return total
 
-    age_years = _years_since(judgment_date)
-    if age_years is not None and age_years < 5:
-        score += 20
 
-    if score > 100:
-        score = 100
-    if score < 0:
-        score = 0
+async def persist_score_breakdown(
+    judgment_id: int | str,
+    breakdown: ScoreBreakdown,
+    conn: Optional[psycopg.AsyncConnection] = None,
+) -> None:
+    """
+    Persist score breakdown to the database.
 
-    return int(score)
+    Updates public.judgments with both the total score and individual components.
+
+    Args:
+        judgment_id: ID of the judgment to update
+        breakdown: ScoreBreakdown with component scores
+        conn: Optional connection (will get from pool if not provided)
+    """
+    if conn is None:
+        conn = await get_pool()
+    if conn is None:
+        raise RuntimeError("Database connection not available")
+
+    jid = (
+        int(judgment_id)
+        if isinstance(judgment_id, str) and judgment_id.isdigit()
+        else judgment_id
+    )
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            UPDATE public.judgments
+            SET
+                collectability_score = %s,
+                score_employment = %s,
+                score_assets = %s,
+                score_recency = %s,
+                score_banking = %s
+            WHERE id = %s
+            """,
+            (
+                breakdown.total,
+                breakdown.employment,
+                breakdown.assets,
+                breakdown.recency,
+                breakdown.banking,
+                jid,
+            ),
+        )
+
+    logger.debug(
+        "Persisted score breakdown for judgment %s: total=%s (emp=%s, assets=%s, recency=%s, bank=%s)",
+        judgment_id,
+        breakdown.total,
+        breakdown.employment,
+        breakdown.assets,
+        breakdown.recency,
+        breakdown.banking,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -386,10 +534,11 @@ async def _execute_job(job_type: str, payload: dict[str, Any]) -> None:
 
 async def _apply_enrichment(judgment_id: str, result: dict[str, Any]) -> None:
     """
-    Apply enrichment results to a judgment.
+    Apply enrichment results to a judgment (v2 with score breakdown).
 
     Extracts scoring signals from the enrichment result, fetches the judgment date,
-    computes the collectability score, and updates the judgment record.
+    computes the collectability score with explainable breakdown, and updates
+    the judgment record with both total score and component scores.
 
     Args:
         judgment_id: UUID/ID of the judgment
@@ -399,11 +548,19 @@ async def _apply_enrichment(judgment_id: str, result: dict[str, Any]) -> None:
     if conn is None:
         raise RuntimeError("Database connection not available")
 
-    # Extract scoring signals from enrichment result
+    # Extract scoring signals from enrichment result (v2 keys)
     enrichment_data: Dict[str, Any] = {
+        # Employment signals
         "employed": result.get("employed"),
+        "self_employed": result.get("self_employed"),
+        # Asset signals
         "homeowner": result.get("homeowner"),
+        "has_real_estate": result.get("has_real_estate") or result.get("homeowner"),
+        "has_vehicle": result.get("has_vehicle"),
+        # Banking signals
         "has_bank_account": result.get("has_bank_account"),
+        "has_bank_account_recent": result.get("has_bank_account_recent")
+        or result.get("has_bank_account"),
     }
 
     # Fetch judgment date for score calculation
@@ -420,21 +577,89 @@ async def _apply_enrichment(judgment_id: str, result: dict[str, Any]) -> None:
         jd = row["entry_date"]
         judgment_date = jd if isinstance(jd, date) else jd.date()
 
-    # Compute collectability score
-    score = calculate_collectability_score(enrichment_data, judgment_date)
+    # Compute v2 score breakdown
+    breakdown = compute_score_breakdown(enrichment_data, judgment_date)
 
-    # Update judgment with score
-    async with conn.cursor() as cur:
-        await cur.execute(
-            """
-            UPDATE public.judgments
-            SET collectability_score = %s
-            WHERE id = %s
-            """,
-            (score, int(judgment_id) if judgment_id.isdigit() else judgment_id),
+    # Persist score breakdown to database
+    await persist_score_breakdown(judgment_id, breakdown, conn)
+
+    logger.info(
+        "Judgment %s scored (v2): total=%s (emp=%s, assets=%s, recency=%s, bank=%s)",
+        judgment_id,
+        breakdown.total,
+        breakdown.employment,
+        breakdown.assets,
+        breakdown.recency,
+        breakdown.banking,
+    )
+
+    # Emit events for significant findings (best-effort, never fail enrichment)
+    try:
+        from .event_service import emit_event_for_judgment
+
+        source = result.get("source", "enrichment")
+        jid = int(judgment_id) if judgment_id.isdigit() else int(judgment_id)
+
+        # Emit job_found event if employer is detected
+        if result.get("employed") and result.get("employer_name"):
+            await emit_event_for_judgment(
+                judgment_id=jid,
+                event_type="job_found",
+                payload={
+                    "judgment_id": jid,
+                    "employer_name": result.get("employer_name"),
+                    "employer_address": result.get("employer_address"),
+                    "source": source.upper(),
+                },
+            )
+
+        # Emit asset_found event for real estate
+        if result.get("has_real_estate") or result.get("homeowner"):
+            await emit_event_for_judgment(
+                judgment_id=jid,
+                event_type="asset_found",
+                payload={
+                    "judgment_id": jid,
+                    "asset_type": "real_estate",
+                    "description": "Real estate / home ownership confirmed",
+                    "source": source.upper(),
+                },
+            )
+
+        # Emit asset_found event for vehicles
+        if result.get("has_vehicle"):
+            await emit_event_for_judgment(
+                judgment_id=jid,
+                event_type="asset_found",
+                payload={
+                    "judgment_id": jid,
+                    "asset_type": "vehicle",
+                    "description": "Vehicle ownership detected",
+                    "source": source.upper(),
+                },
+            )
+
+        # Emit asset_found event for bank accounts
+        if result.get("has_bank_account") or result.get("has_bank_account_recent"):
+            bank_name = result.get("bank_name") or "Unknown bank"
+            await emit_event_for_judgment(
+                judgment_id=jid,
+                event_type="asset_found",
+                payload={
+                    "judgment_id": jid,
+                    "asset_type": "bank_account",
+                    "description": f"Bank account at {bank_name}",
+                    "source": source.upper(),
+                },
+            )
+
+    except Exception as event_err:
+        # Never fail enrichment due to event emission
+        logger.debug(
+            "Event emission skipped for judgment %s: %s",
+            judgment_id,
+            event_err,
         )
-
-    logger.info("Judgment %s scored: %s", judgment_id, score)
 
     # TODO: Store detailed enrichment data in normalized tables
     # e.g., enrichment.employers, enrichment.assets

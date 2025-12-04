@@ -24,3 +24,6 @@ gunicorn>=21.2.0
 streamlit>=1.28.0
 supabase>=2.0.0
 PyJWT>=2.8.0
+
+# Document Assembly Engine
+docxtpl>=0.16.0

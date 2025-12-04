@@ -26,12 +26,6 @@ import {
   Eye,
   ChevronUp,
   ChevronDown,
-  FileText,
-  Calendar,
-  MapPin,
-  Briefcase,
-  User,
-  Hash,
   Search,
   Loader2,
   HelpCircle,
@@ -39,6 +33,7 @@ import {
   XCircle,
   Clock,
   Phone,
+  Receipt,
 } from 'lucide-react';
 import {
   Card,
@@ -72,6 +67,8 @@ import {
   buildJudgmentContext,
   type JudgmentSearchResult,
 } from '../../lib/semanticSearchClient';
+import { CaseDetailDrawerTabbed } from './CaseDetailDrawerTabbed';
+import { useOfferStats } from '../../hooks/useOfferStats';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -314,115 +311,6 @@ const SortableHeader: React.FC<SortableHeaderProps> = ({
     </th>
   );
 };
-
-// ═══════════════════════════════════════════════════════════════════════════
-// DETAIL DRAWER
-// ═══════════════════════════════════════════════════════════════════════════
-
-interface DetailFieldProps {
-  icon: React.ElementType;
-  label: string;
-  value: React.ReactNode;
-}
-
-const DetailField: React.FC<DetailFieldProps> = ({ icon: Icon, label, value }) => (
-  <div className="flex items-start gap-3 py-2">
-    <Icon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-    <div className="min-w-0 flex-1">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-sm font-medium break-words">{value ?? '—'}</p>
-    </div>
-  </div>
-);
-
-interface CaseDetailDrawerProps {
-  row: RadarRow;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  formatCurrency: (value: number) => string;
-  formatDate: (dateStr: string | null) => string;
-}
-
-const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
-  row,
-  open,
-  onOpenChange,
-  formatCurrency,
-  formatDate,
-}) => (
-  <Drawer open={open} onOpenChange={onOpenChange}>
-    <DrawerContent side="right" size="md">
-      <DrawerHeader>
-        <DrawerTitle>Case Details</DrawerTitle>
-        <DrawerDescription>{row.caseNumber}</DrawerDescription>
-      </DrawerHeader>
-      <DrawerBody>
-        {/* Core Fields Section */}
-        <DrawerSection title="Case Information">
-          <div className="space-y-1 divide-y">
-            <DetailField icon={Hash} label="Case Number" value={row.caseNumber} />
-            <DetailField icon={User} label="Plaintiff" value={row.plaintiffName} />
-            <DetailField icon={User} label="Defendant" value={row.defendantName} />
-            <DetailField
-              icon={DollarSign}
-              label="Judgment Amount"
-              value={formatCurrency(row.judgmentAmount)}
-            />
-            <DetailField icon={Calendar} label="Judgment Date" value={formatDate(row.judgmentDate)} />
-            <DetailField icon={Briefcase} label="Court" value={row.court} />
-            <DetailField icon={MapPin} label="County" value={row.county} />
-          </div>
-        </DrawerSection>
-
-        {/* Scoring Section */}
-        <DrawerSection title="Scoring & Strategy">
-          <div className="flex items-center gap-4 py-2">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Collectability Score</p>
-              <ScoreBadge score={row.collectabilityScore} size="md" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Offer Strategy</p>
-              <StrategyBadge strategy={row.offerStrategy} size="md" />
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            Created: {new Date(row.createdAt).toLocaleDateString()}
-          </p>
-        </DrawerSection>
-
-        {/* Legal Packets Section */}
-        <DrawerSection title="Legal Packets">
-          <p className="text-xs text-muted-foreground mb-3">
-            Generate court-ready enforcement documents pre-filled with case data.
-          </p>
-          <div className="space-y-2">
-            <Tooltip
-              content="Backend in progress – this will auto-fill the court packet for printing."
-              side="top"
-              delayDuration={200}
-            >
-              <span className="inline-block w-full">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled
-                  className="w-full justify-start gap-2 opacity-60"
-                >
-                  <FileText className="h-4 w-4" />
-                  Generate Income Execution Packet
-                </Button>
-              </span>
-            </Tooltip>
-          </div>
-          <p className="text-xs text-muted-foreground mt-3 italic">
-            More packet types (demand letters, lien filings) coming soon.
-          </p>
-        </DrawerSection>
-      </DrawerBody>
-    </DrawerContent>
-  </Drawer>
-);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELP DRAWER
@@ -764,6 +652,9 @@ function exportToCSV(rows: RadarRow[], filename: string) {
 const EnforcementRadarPage: React.FC = () => {
   const { triggerRefresh, isRefreshing } = useRefreshBus();
 
+  // Offer stats for the KPI strip
+  const { data: offerStats } = useOfferStats();
+
   // Filter state
   const [strategyFilter, setStrategyFilter] = useState<OfferStrategy | 'ALL'>('ALL');
   const [minScore, setMinScore] = useState<number>(0);
@@ -1057,6 +948,45 @@ const EnforcementRadarPage: React.FC = () => {
         </motion.div>
       )}
 
+      {/* Offer Stats KPI Strip */}
+      {offerStats && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="grid grid-cols-2 md:grid-cols-4 gap-4"
+        >
+          <KPICard
+            title="Total Offers"
+            value={offerStats.totalOffers}
+            subtitle="all time"
+            icon={Receipt}
+            iconColor="text-indigo-600"
+          />
+          <KPICard
+            title="Accepted"
+            value={offerStats.accepted}
+            subtitle={`${(offerStats.conversionRate * 100).toFixed(1)}% rate`}
+            icon={CheckCircle2}
+            iconColor="text-green-600"
+          />
+          <KPICard
+            title="In Negotiation"
+            value={offerStats.negotiation}
+            subtitle="active deals"
+            icon={Clock}
+            iconColor="text-amber-600"
+          />
+          <KPICard
+            title="Rejected"
+            value={offerStats.rejected}
+            subtitle="closed out"
+            icon={XCircle}
+            iconColor="text-red-600"
+          />
+        </motion.div>
+      )}
+
       {/* Filter Bar + Enrichment Health */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <Card className="lg:col-span-3">
@@ -1245,14 +1175,17 @@ const EnforcementRadarPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Detail Drawer */}
+      {/* Detail Drawer (CEO Cockpit with Tabs) */}
       {selectedRow && (
-        <CaseDetailDrawer
+        <CaseDetailDrawerTabbed
           row={selectedRow}
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
           formatCurrency={formatCurrency}
           formatDate={formatDate}
+          onOfferCreated={() => {
+            // Optionally refresh offer stats when an offer is created
+          }}
         />
       )}
 

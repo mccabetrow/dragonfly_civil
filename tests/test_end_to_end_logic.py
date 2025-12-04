@@ -194,3 +194,248 @@ def test_build_judgment_context_exists():
     )
     assert "ACME Corp" in context
     assert "John Doe" in context
+
+
+# ---------------------------------------------------------------------------
+# Scoring v2 Tests - ScoreBreakdown
+# ---------------------------------------------------------------------------
+
+
+class TestScoreBreakdown:
+    """Tests for the ScoreBreakdown dataclass."""
+
+    def test_breakdown_total_sums_components(self):
+        """Total should be sum of components."""
+        from backend.services.enrichment_service import ScoreBreakdown
+
+        breakdown = ScoreBreakdown(employment=40, assets=30, recency=20, banking=10)
+        assert breakdown.total == 100
+
+    def test_breakdown_total_clamps_to_100(self):
+        """Total should not exceed 100."""
+        from backend.services.enrichment_service import ScoreBreakdown
+
+        # This would sum to 110, but should clamp to 100
+        breakdown = ScoreBreakdown(employment=40, assets=30, recency=20, banking=20)
+        assert breakdown.total == 100
+
+    def test_breakdown_total_clamps_to_0(self):
+        """Total should not go below 0."""
+        from backend.services.enrichment_service import ScoreBreakdown
+
+        # Negative components (shouldn't happen, but test clamping)
+        breakdown = ScoreBreakdown(employment=-10, assets=0, recency=0, banking=0)
+        assert breakdown.total == 0
+
+    def test_breakdown_is_frozen(self):
+        """ScoreBreakdown should be immutable."""
+        from backend.services.enrichment_service import ScoreBreakdown
+
+        breakdown = ScoreBreakdown(employment=40, assets=30, recency=20, banking=10)
+        with pytest.raises(Exception):  # FrozenInstanceError
+            breakdown.employment = 50  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# Scoring v2 Tests - compute_score_breakdown
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "enriched, jd, expected_emp, expected_assets, expected_recency, expected_bank",
+    [
+        # Full employment + real estate + recent + bank = 40 + 30 + 20 + 10
+        (
+            {
+                "employed": True,
+                "has_real_estate": True,
+                "has_bank_account_recent": True,
+            },
+            date.today(),
+            40,
+            30,
+            20,
+            10,
+        ),
+        # Self-employed (partial employment score)
+        (
+            {"self_employed": True, "has_real_estate": False},
+            date.today(),
+            20,
+            0,
+            20,
+            0,
+        ),
+        # Vehicle only (partial assets score)
+        (
+            {"employed": False, "has_vehicle": True},
+            date.today(),
+            0,
+            10,
+            20,
+            0,
+        ),
+        # Homeowner maps to has_real_estate (backwards compat)
+        (
+            {"homeowner": True},
+            date.today(),
+            0,
+            30,
+            20,
+            0,
+        ),
+        # has_bank_account maps to has_bank_account_recent (backwards compat)
+        (
+            {"has_bank_account": True},
+            date.today(),
+            0,
+            0,
+            20,
+            10,
+        ),
+        # Old judgment (10 years) reduces recency score
+        (
+            {"employed": True},
+            date(date.today().year - 10, 1, 1),
+            40,
+            0,
+            0,  # 20 - (10 * 2) = 0
+            0,
+        ),
+        # 5 year old judgment
+        (
+            {"employed": True},
+            date(date.today().year - 5, date.today().month, date.today().day),
+            40,
+            0,
+            10,  # 20 - (5 * 2) = 10
+            0,
+        ),
+        # None judgment_date = 0 recency
+        (
+            {"employed": True},
+            None,
+            40,
+            0,
+            0,
+            0,
+        ),
+        # Empty enrichment data
+        (
+            {},
+            date.today(),
+            0,
+            0,
+            20,
+            0,
+        ),
+        # All False values
+        (
+            {
+                "employed": False,
+                "self_employed": False,
+                "has_real_estate": False,
+                "has_vehicle": False,
+                "has_bank_account_recent": False,
+            },
+            date.today(),
+            0,
+            0,
+            20,
+            0,
+        ),
+    ],
+)
+def test_compute_score_breakdown(
+    enriched: Dict[str, Any],
+    jd: date | None,
+    expected_emp: int,
+    expected_assets: int,
+    expected_recency: int,
+    expected_bank: int,
+):
+    """Validate v2 score breakdown computation."""
+    from backend.services.enrichment_service import compute_score_breakdown
+
+    breakdown = compute_score_breakdown(enriched, jd)
+
+    assert (
+        breakdown.employment == expected_emp
+    ), f"Employment: got {breakdown.employment}, expected {expected_emp}"
+    assert (
+        breakdown.assets == expected_assets
+    ), f"Assets: got {breakdown.assets}, expected {expected_assets}"
+    assert (
+        breakdown.recency == expected_recency
+    ), f"Recency: got {breakdown.recency}, expected {expected_recency}"
+    assert (
+        breakdown.banking == expected_bank
+    ), f"Banking: got {breakdown.banking}, expected {expected_bank}"
+
+
+def test_compute_score_breakdown_total_matches_sum():
+    """Total should equal sum of components (when under 100)."""
+    from backend.services.enrichment_service import compute_score_breakdown
+
+    enriched = {
+        "employed": True,
+        "has_real_estate": True,
+        "has_bank_account_recent": True,
+    }
+    breakdown = compute_score_breakdown(enriched, date.today())
+
+    expected_sum = (
+        breakdown.employment + breakdown.assets + breakdown.recency + breakdown.banking
+    )
+    assert breakdown.total == expected_sum
+
+
+def test_compute_score_breakdown_v1_backwards_compat():
+    """v2 should produce similar scores to v1 for common cases."""
+    from backend.services.enrichment_service import (
+        calculate_collectability_score,
+        compute_score_breakdown,
+    )
+
+    # v1 style input: employed + homeowner + has_bank_account + recent
+    enriched = {
+        "employed": True,
+        "homeowner": True,
+        "has_bank_account": True,
+    }
+    jd = date.today()
+
+    v1_score = calculate_collectability_score(enriched, jd)
+    v2_breakdown = compute_score_breakdown(enriched, jd)
+
+    # v1: 40 + 30 + 10 + 20 = 100
+    # v2: 40 + 30 + 20 + 10 = 100 (same total, different allocation)
+    assert v1_score == v2_breakdown.total == 100
+
+
+# ---------------------------------------------------------------------------
+# Scoring v2 Tests - persistence helpers
+# ---------------------------------------------------------------------------
+
+
+def test_persist_score_breakdown_is_callable():
+    """Verify persist_score_breakdown function is importable."""
+    from backend.services.enrichment_service import persist_score_breakdown
+
+    assert callable(persist_score_breakdown)
+
+
+def test_score_breakdown_can_be_created():
+    """ScoreBreakdown can be instantiated with keyword args."""
+    from backend.services.enrichment_service import ScoreBreakdown
+
+    breakdown = ScoreBreakdown(
+        employment=40,
+        assets=30,
+        recency=20,
+        banking=10,
+    )
+    assert breakdown.employment == 40
+    assert breakdown.assets == 30
+    assert breakdown.recency == 20
+    assert breakdown.banking == 10

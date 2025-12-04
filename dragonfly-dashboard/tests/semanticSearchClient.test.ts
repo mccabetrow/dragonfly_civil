@@ -11,7 +11,7 @@ import {
   searchSimilarJudgments,
   buildJudgmentContext,
   type SemanticSearchResponse,
-} from './semanticSearchClient';
+} from '../src/lib/semanticSearchClient';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MOCKS

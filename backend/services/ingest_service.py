@@ -329,6 +329,52 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
                         amount = float(row["judgment_amount"] or 0)
                         # Collect for enrichment after transaction commits
                         judgments_to_enrich.append((str(judgment_id), amount))
+
+                        # Queue graph build (fire-and-forget, wrapped in try/except)
+                        try:
+                            from .graph_service import process_judgment_for_graph
+
+                            await process_judgment_for_graph(int(judgment_id))
+                            logger.debug(
+                                "Queued graph build for judgment %s", judgment_id
+                            )
+
+                            # Emit new_judgment event (best-effort, after graph is built)
+                            # The graph build creates the entity we need for event tracking
+                            try:
+                                from .event_service import emit_event_for_judgment
+
+                                # Extract county from source_file if available
+                                source_parts = str(row["source_file"]).split("|")
+                                county = (
+                                    source_parts[0] if len(source_parts) > 1 else None
+                                )
+
+                                await emit_event_for_judgment(
+                                    judgment_id=int(judgment_id),
+                                    event_type="new_judgment",
+                                    payload={
+                                        "judgment_id": int(judgment_id),
+                                        "amount": str(amount),
+                                        "county": county,
+                                        "court": county,  # Often same as county for civil courts
+                                        "case_number": row.get("case_number"),
+                                    },
+                                )
+                            except Exception as event_err:
+                                # Never fail ingest due to event emission
+                                logger.debug(
+                                    "Event emission skipped for judgment %s: %s",
+                                    judgment_id,
+                                    event_err,
+                                )
+                        except Exception as graph_err:
+                            # Don't fail ingest if graph build fails
+                            logger.warning(
+                                "Graph build failed for judgment %s: %s",
+                                judgment_id,
+                                graph_err,
+                            )
                     else:
                         # Conflict - already exists
                         logger.debug(
