@@ -44,3 +44,13 @@ repos:
       - id: sqlfluff-fix
         args: ["--dialect=postgres", "--processes=4"]
         files: "^(dashboards/sql/|supabase/db/|supabase/schema.sql$)"
+
+  # Migration workflow reminder
+  - repo: local
+    hooks:
+      - id: migration-reminder
+        name: migration workflow reminder
+        entry: python -c "import sys; print('\\n📢 REMINDER: Migrations will auto-apply to DEV on push to main.\\n   For PROD, use Actions → Supabase Migrations → Run workflow (prod).\\n'); sys.exit(0)"
+        language: system
+        files: "^supabase/migrations/.*\\.sql$"
+        pass_filenames: false
