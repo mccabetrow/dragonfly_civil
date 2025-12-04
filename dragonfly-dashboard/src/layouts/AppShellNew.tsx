@@ -44,9 +44,15 @@ const MAIN_NAVIGATION: NavigationItem[] = [
     description: 'Call queue and daily tasks',
   },
   {
+    label: 'Radar',
+    path: '/radar',
+    icon: Target,
+    description: 'Enforcement radar & buy candidates',
+  },
+  {
     label: 'Collectability',
     path: '/collectability',
-    icon: Target,
+    icon: Sparkles,
     description: 'Tier-based case prioritization',
   },
   {
