@@ -262,8 +262,9 @@ def print_table(
         print("-" * 70)
         for rec in sorted(supabase, key=lambda r: r.version, reverse=True)[:20]:
             status = "✅ APPLIED" if rec.success else "❌ FAILED"
-            # Truncate name for display
-            name = rec.name[:38] + ".." if len(rec.name) > 40 else rec.name
+            # Truncate name for display (handle None)
+            display_name = rec.name or ""
+            name = display_name[:38] + ".." if len(display_name) > 40 else display_name
             print(f"{rec.version:<20} {name:<40} {status:<10}")
         if len(supabase) > 20:
             print(f"  ... and {len(supabase) - 20} more applied migrations")
