@@ -12,5 +12,12 @@ data/simplicity_status_export.csv
 *.log
 .venv/
 .DS_Store
-.env
 __pycache__/
+
+# Secrets - never commit these
+.env
+.env.local
+*/.env
+*/.env.local
+judgment_ingestor/.env
+dragonfly-dashboard/.env.local
