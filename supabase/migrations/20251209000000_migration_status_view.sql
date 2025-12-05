@@ -32,11 +32,13 @@ union all
 select 'supabase'::text as source,
     sm.version::text as version,
     sm.name as name,
-    -- Supabase uses 'inserted_at' not 'executed_at' in some versions
-    coalesce(sm.inserted_at, now()) as executed_at,
-    -- Default to true if success column doesn't exist (older Supabase CLI)
+    -- supabase_migrations.schema_migrations has no timestamp column
+    -- Use version as proxy (timestamp format: YYYYMMDDHHMMSS)
+    to_timestamp(sm.version::text, 'YYYYMMDDHH24MISS') as executed_at,
     true as success
-from supabase_migrations.schema_migrations sm;
+from supabase_migrations.schema_migrations sm
+where sm.version ~ '^\d{14}$';
+-- Only include timestamp-formatted versions
 -- Grant read access to authenticated users and service role
 grant select on public.v_migration_status to authenticated;
 grant select on public.v_migration_status to service_role;
