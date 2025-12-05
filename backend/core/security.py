@@ -12,8 +12,6 @@ from typing import Literal
 from fastapi import Depends, Header, HTTPException, status
 from loguru import logger
 
-from ..config import get_settings
-
 
 @dataclass
 class AuthContext:
@@ -30,10 +28,23 @@ class AuthContext:
 
 
 def _get_api_key() -> str | None:
-    """Get the configured API key from settings."""
+    """
+    Get the configured API key from environment.
+
+    Reads DRAGONFLY_API_KEY directly from os.environ (not file-based secrets).
+    In production, logs a warning if missing to aid debugging.
+    In dev/test, silently returns None to allow tests without secrets.
+    """
     import os
 
-    return os.environ.get("DRAGONFLY_API_KEY")
+    key = os.environ.get("DRAGONFLY_API_KEY")
+    if not key:
+        env = os.environ.get("ENVIRONMENT", "dev")
+        if env == "prod":
+            logger.warning(
+                "DRAGONFLY_API_KEY not set in production - API key auth will fail"
+            )
+    return key
 
 
 def _get_jwt_secret() -> str | None:
