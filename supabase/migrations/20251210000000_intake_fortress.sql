@@ -2,20 +2,42 @@
 -- Migration: Intake Fortress
 -- ===========================================================================
 -- The hardened intake system for the 900-plaintiff asset.
--- Builds on existing ops.ingest_batches with enhanced logging, monitoring,
--- and RLS security.
+-- Self-contained: Creates base tables if missing, then adds enhancements.
 --
 -- Components:
---   1. ops.intake_source_type - Enum for source systems
---   2. ops.intake_batches - Enhanced batch tracking (extends existing)
---   3. ops.intake_logs - Row-level processing logs
---   4. ops.v_intake_monitor - Real-time monitoring view
---   5. RLS Policies - service_role writes, authenticated reads
+--   1. ops schema and base ingest_batches table
+--   2. ops.intake_source_type - Enum for source systems
+--   3. ops.intake_batches - Enhanced batch tracking
+--   4. ops.intake_logs - Row-level processing logs
+--   5. ops.v_intake_monitor - Real-time monitoring view
+--   6. RLS Policies - service_role writes, authenticated reads
 -- ===========================================================================
 -- Ensure schema exists
 CREATE SCHEMA IF NOT EXISTS ops;
 -- ===========================================================================
--- 1. Source Type Enum
+-- 1A. BASE: Create ops.ingest_batches if not exists (from 20251203150000)
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS ops.ingest_batches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    row_count_raw INTEGER NOT NULL DEFAULT 0,
+    row_count_valid INTEGER NOT NULL DEFAULT 0,
+    row_count_invalid INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (
+        status IN ('pending', 'processing', 'completed', 'failed')
+    ),
+    error_summary TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processed_at TIMESTAMPTZ,
+    created_by TEXT
+);
+-- Create base indexes if they don't exist
+CREATE INDEX IF NOT EXISTS idx_ingest_batches_status ON ops.ingest_batches(status)
+WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_ingest_batches_created_at ON ops.ingest_batches(created_at DESC);
+-- ===========================================================================
+-- 1B. Source Type Enum
 -- ===========================================================================
 DO $$ BEGIN IF NOT EXISTS (
     SELECT 1
