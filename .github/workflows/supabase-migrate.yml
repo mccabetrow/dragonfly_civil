@@ -110,9 +110,9 @@ jobs:
         run: |
           set -euxo pipefail
           echo "🚀 Applying ${{ steps.pending.outputs.count }} migration(s) to ${{ steps.db-url.outputs.environment }}..."
-          echo "   Using: supabase migration up --db-url (never --linked)"
-          echo "   Connection: postgresql://...@db.*.supabase.co:5432 (direct, not pooler)"
-          supabase migration up --db-url "$DB_URL"
+          echo "   Using: supabase migration up --db-url --include-all"
+          # --include-all: Apply out-of-order local migrations that predate the last remote migration
+          supabase migration up --db-url "$DB_URL" --include-all
           echo "✅ Migrations applied successfully"
 
       - name: Skip if no pending migrations
