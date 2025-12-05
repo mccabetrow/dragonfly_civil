@@ -19,6 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .config import configure_logging, get_settings
+from .core.errors import setup_error_handlers
+from .core.middleware import (
+    RateLimitMiddleware,
+    RequestLoggingMiddleware,
+    ResponseSanitizationMiddleware,
+)
 from .db import close_db_pool, init_db_pool
 from .routers import (
     analytics_router,
@@ -79,13 +85,18 @@ def create_app() -> FastAPI:
 
     Creates and configures the FastAPI application with:
     - Lifespan handler for DB pool
+    - Request logging middleware
+    - Rate limiting middleware
     - CORS middleware
+    - Structured error handlers
     - Routers
     - Scheduler
 
     Returns:
         Configured FastAPI application
     """
+    settings = get_settings()
+
     app = FastAPI(
         title="Dragonfly Engine",
         description=(
@@ -99,7 +110,24 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS middleware
+    # ==========================================================================
+    # Middleware (order matters: first added = outermost = runs first)
+    # ==========================================================================
+
+    # 1. Request logging (outermost - logs all requests)
+    app.add_middleware(RequestLoggingMiddleware)
+
+    # 2. Rate limiting for sensitive endpoints
+    if settings.is_production:
+        app.add_middleware(RateLimitMiddleware)
+        logger.info("Rate limiting enabled for production")
+
+    # 3. Response sanitization (safety net for credential leaks)
+    app.add_middleware(
+        ResponseSanitizationMiddleware, strict_mode=settings.is_production
+    )
+
+    # 4. CORS (must be near the bottom to handle preflight correctly)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -113,7 +141,15 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Include routers
+    # ==========================================================================
+    # Error Handlers
+    # ==========================================================================
+    setup_error_handlers(app)
+
+    # ==========================================================================
+    # Routers
+    # ==========================================================================
+
     # Health check - no auth required
     app.include_router(health_router, prefix="/api")
 
