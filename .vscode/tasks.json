@@ -258,6 +258,40 @@
       "detail": "Run intake + enforcement doctor checks against dev"
     },
     {
+      "label": "Migration Status (Dev)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "tools.migration_status", "--env", "dev"],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Check migration status via REST API (no direct DB needed)"
+    },
+    {
+      "label": "Migration Status (Prod)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "tools.migration_status", "--env", "prod"],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "prod"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Check migration status via REST API (no direct DB needed)"
+    },
+    {
       "label": "DB Push (Dev)",
       "type": "shell",
       "command": "powershell",

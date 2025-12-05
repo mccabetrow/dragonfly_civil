@@ -3,16 +3,18 @@
 # ---------------------------------------------------------------------------
 # Purpose
 #   Apply all pending Supabase migrations automatically on:
-#     - push to main (when migrations change)
-#     - manual trigger from GitHub Actions UI
+#     - push to main (when migrations change)  -> applies to DEV
+#     - manual trigger with environment input  -> applies to DEV or PROD
 #
 # Required GitHub Secrets
-#   SUPABASE_ACCESS_TOKEN  : Supabase personal access token
+#   SUPABASE_DB_URL_DEV    : Direct PostgreSQL connection string for DEV
+#   SUPABASE_DB_URL_PROD   : Direct PostgreSQL connection string for PROD
 #   DISCORD_WEBHOOK_URL    : Discord webhook for failure alerts
 #
-# Notes
-#   - We rely on the linked project (ejiddanxtqcleyswqvkc) for DB connection.
-#   - No more local db_push.ps1 for remote; CI is the source of truth.
+# IMPORTANT
+#   - NEVER use --linked, supabase link, or pooler hostnames
+#   - ALWAYS use --db-url with explicit connection strings
+#   - Uses 'migration up' instead of 'db push' for reliability
 # ---------------------------------------------------------------------------
 
 name: Supabase Migrations
@@ -24,21 +26,31 @@ on:
       - "supabase/migrations/**"
       - ".github/workflows/supabase-migrate.yml"
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - prod
 
 permissions:
   contents: read
 
 concurrency:
-  group: supabase-migrations-main
-  cancel-in-progress: true
+  group: supabase-migrations-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false # Never cancel in-progress migrations
 
 env:
   SUPABASE_PROJECT_REF: ejiddanxtqcleyswqvkc
 
 jobs:
   migrate:
-    name: Apply Pending Migrations
+    name: Apply Migrations (${{ github.event.inputs.environment || 'dev' }})
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
 
     steps:
       - name: Checkout repository
@@ -49,25 +61,103 @@ jobs:
         with:
           version: latest
 
-      - name: Link Supabase project
+      - name: Determine DB URL
+        id: db-url
+        run: |
+          ENV="${{ github.event.inputs.environment || 'dev' }}"
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          if [ "$ENV" = "prod" ]; then
+            echo "db_url_secret=SUPABASE_DB_URL_PROD" >> $GITHUB_OUTPUT
+          else
+            echo "db_url_secret=SUPABASE_DB_URL_DEV" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate DB URL is set
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          DB_URL: ${{ secrets[steps.db-url.outputs.db_url_secret] }}
+        run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::error::${{ steps.db-url.outputs.db_url_secret }} secret is not configured"
+            exit 1
+          fi
+          echo "✅ ${{ steps.db-url.outputs.db_url_secret }} is configured"
 
       - name: Show migration status (before)
-        run: supabase migration list
+        env:
+          DB_URL: ${{ secrets[steps.db-url.outputs.db_url_secret] }}
+        run: |
+          echo "📋 Migration status for ${{ steps.db-url.outputs.environment }}:"
+          supabase migration list --db-url "$DB_URL"
+
+      - name: Count pending migrations
+        id: pending
+        env:
+          DB_URL: ${{ secrets[steps.db-url.outputs.db_url_secret] }}
+        run: |
+          set -euo pipefail
+          echo "📊 Checking pending migrations..."
+          OUTPUT=$(supabase migration list --db-url "$DB_URL")
+          echo "$OUTPUT"
+          # Count lines where Remote column is empty (pending migrations)
+          PENDING=$(echo "$OUTPUT" | grep -cE '^\s*[0-9]+\s*\|\s*\|' || echo "0")
+          echo "count=$PENDING" >> $GITHUB_OUTPUT
+          echo "📊 Pending migrations: $PENDING"
 
       - name: Apply pending migrations
-        run: supabase db push
+        if: steps.pending.outputs.count != '0'
+        env:
+          DB_URL: ${{ secrets[steps.db-url.outputs.db_url_secret] }}
+        run: |
+          set -euxo pipefail
+          echo "🚀 Applying ${{ steps.pending.outputs.count }} migration(s) to ${{ steps.db-url.outputs.environment }}..."
+          echo "   Using: supabase migration up --db-url (never --linked)"
+          echo "   Connection: postgresql://...@db.*.supabase.co:5432 (direct, not pooler)"
+          supabase migration up --db-url "$DB_URL"
+          echo "✅ Migrations applied successfully"
+
+      - name: Skip if no pending migrations
+        if: steps.pending.outputs.count == '0'
+        run: echo "✅ No pending migrations to apply"
 
       - name: Show migration status (after)
-        run: supabase migration list
+        env:
+          DB_URL: ${{ secrets[steps.db-url.outputs.db_url_secret] }}
+        run: |
+          set -euo pipefail
+          echo "📋 Final migration status for ${{ steps.db-url.outputs.environment }}:"
+          supabase migration list --db-url "$DB_URL"
+          echo ""
+          echo "✅ All migrations are now applied."
+
+      - name: Verify critical views exist
+        env:
+          DB_URL: ${{ secrets[steps.db-url.outputs.db_url_secret] }}
+        run: |
+          set -euo pipefail
+          echo "🔍 Verifying critical views..."
+          psql "$DB_URL" --set ON_ERROR_STOP=1 -c "
+            SELECT 'enforcement.v_radar' AS view, EXISTS(SELECT 1 FROM pg_views WHERE schemaname='enforcement' AND viewname='v_radar') AS exists
+            UNION ALL
+            SELECT 'enforcement.v_score_card', EXISTS(SELECT 1 FROM pg_views WHERE schemaname='enforcement' AND viewname='v_score_card')
+            UNION ALL
+            SELECT 'ops.v_enrichment_health', EXISTS(SELECT 1 FROM pg_views WHERE schemaname='ops' AND viewname='v_enrichment_health');
+          "
+          echo "✅ Critical views verified"
 
       - name: 🚨 Notify Discord on Failure
         if: failure()
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          title: "🚨 CRITICAL: Database Migration FAILED"
-          description: "The 'Iron Bank' schema update failed. Railway and Vercel deployments may crash.\n\n👉 [View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          title: "🚨 CRITICAL: Database Migration FAILED (${{ steps.db-url.outputs.environment }})"
+          description: "Migration to ${{ steps.db-url.outputs.environment }} failed. Check logs immediately.\n\n👉 [View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           color: 0xFF0000
+
+      - name: ✅ Notify Discord on Success (prod only)
+        if: success() && steps.db-url.outputs.environment == 'prod'
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          title: "✅ Production Migration Complete"
+          description: "Applied ${{ steps.pending.outputs.count }} migration(s) to production."
+          color: 0x00FF00

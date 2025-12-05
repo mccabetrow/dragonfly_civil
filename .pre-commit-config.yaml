@@ -45,12 +45,30 @@ repos:
         args: ["--dialect=postgres", "--processes=4"]
         files: "^(dashboards/sql/|supabase/db/|supabase/schema.sql$)"
 
-  # Migration workflow reminder
+  # Local hooks for Dragonfly-specific checks
   - repo: local
     hooks:
+      # Prevent use of --linked with Supabase CLI (causes pooler DNS issues on Windows)
+      - id: no-supabase-linked
+        name: no supabase --linked
+        entry: >
+          bash -c 'if grep -vE "^[[:space:]]*(#|//).*" "$@" 2>/dev/null | grep -qE "supabase[[:space:]]+(db|migration|link).*--linked|--linked"; then
+          echo "";
+          echo "ERROR: Use --db-url with SUPABASE_DB_URL_DEV/PROD instead of --linked.";
+          echo "The --linked flag causes pooler DNS issues on Windows.";
+          exit 1; fi; exit 0' --
+        language: system
+        files: '\.(ps1|yml|yaml|sh)$'
+        types: [text]
+
+      # Migration workflow reminder
       - id: migration-reminder
         name: migration workflow reminder
-        entry: python -c "import sys; print('\\n📢 REMINDER: Migrations will auto-apply to DEV on push to main.\\n   For PROD, use Actions → Supabase Migrations → Run workflow (prod).\\n'); sys.exit(0)"
+        entry: >
+          python -c "import sys;
+          print('REMINDER: Migrations auto-apply to DEV on push to main.');
+          print('For PROD, use Actions > Supabase Migrations > Run workflow (prod).');
+          sys.exit(0)"
         language: system
         files: "^supabase/migrations/.*\\.sql$"
         pass_filenames: false
