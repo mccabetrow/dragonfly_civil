@@ -13,6 +13,8 @@ import {
   Bell,
   ChevronRight,
   Headphones,
+  TrendingUp,
+  Terminal,
 } from 'lucide-react';
 import ReleaseNotesModal, { useReleaseNotesModal } from '../components/ReleaseNotesModal';
 import { cn } from '../lib/design-tokens';
@@ -32,6 +34,12 @@ interface NavigationItem {
 
 const MAIN_NAVIGATION: NavigationItem[] = [
   {
+    label: 'CEO Overview',
+    path: '/ceo/overview',
+    icon: TrendingUp,
+    description: 'Executive portfolio summary',
+  },
+  {
     label: 'Overview',
     path: '/overview',
     icon: LayoutDashboard,
@@ -42,6 +50,12 @@ const MAIN_NAVIGATION: NavigationItem[] = [
     path: '/ops',
     icon: Headphones,
     description: 'Call queue and daily tasks',
+  },
+  {
+    label: 'Command Center',
+    path: '/ops/console',
+    icon: Terminal,
+    description: 'Intake & system health mission control',
   },
   {
     label: 'Radar',

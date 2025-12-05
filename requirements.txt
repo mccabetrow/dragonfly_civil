@@ -1,6 +1,7 @@
 # Core ETL dependencies
 # psycopg v3 (psycopg[binary]) is preferred; keep psycopg2-binary temporarily for compatibility
 psycopg[binary]
+psycopg-pool>=3.2.0
 psycopg2-binary
 pandas
 python-dotenv>=1.0
@@ -27,3 +28,7 @@ PyJWT>=2.8.0
 
 # Document Assembly Engine
 docxtpl>=0.16.0
+
+# Notification Services
+sendgrid>=6.11.0
+twilio>=9.0.0

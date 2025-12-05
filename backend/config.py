@@ -51,6 +51,34 @@ class Settings(BaseSettings):
         default=None, description="Discord webhook URL for notifications"
     )
 
+    # Email notifications (SendGrid)
+    sendgrid_api_key: str | None = Field(
+        default=None, description="SendGrid API key for email notifications"
+    )
+    sendgrid_from_email: str | None = Field(
+        default=None, description="Default sender email for SendGrid"
+    )
+
+    # SMS notifications (Twilio)
+    twilio_account_sid: str | None = Field(
+        default=None, description="Twilio Account SID"
+    )
+    twilio_auth_token: str | None = Field(default=None, description="Twilio Auth Token")
+    twilio_from_number: str | None = Field(
+        default=None, description="Twilio sender phone number (E.164 format)"
+    )
+
+    # Notification recipients
+    ceo_email: str | None = Field(
+        default=None, description="CEO email for executive briefings"
+    )
+    ops_email: str | None = Field(
+        default=None, description="Ops team email for operational alerts"
+    )
+    ops_phone: str | None = Field(
+        default=None, description="Ops team phone for SMS alerts (E.164 format)"
+    )
+
     # OpenAI (for embeddings)
     openai_api_key: str | None = Field(
         default=None, description="OpenAI API key for embedding generation"

@@ -15,6 +15,8 @@ import DataIngestionPage from './pages/DataIngestionPage';
 import HelpPageNew from './pages/HelpPageNew';
 import EnforcementRadarPage from './pages/enforcement/EnforcementRadarPage';
 import OpsQueuePage from './pages/OpsQueuePage';
+import CeoOverviewPage from './pages/CeoOverviewPage';
+import OpsCommandCenter from './pages/ops/OpsCommandCenter';
 // Legacy pages (kept for reference, not wired)
 // import OverviewPage from './pages/OverviewPage';
 
@@ -27,10 +29,12 @@ const App: React.FC = () => {
           <Routes>
             <Route element={<AppShellNew />}>
               <Route path="/" element={<Navigate to="/overview" replace />} />
+              <Route path="/ceo/overview" element={<CeoOverviewPage />} />
               <Route path="/overview" element={<ExecutiveDashboardPageNew />} />
               <Route path="/ops" element={<OpsPage />} />
               <Route path="/ops/intake" element={<OpsIntakePage />} />
               <Route path="/ops/queue" element={<OpsQueuePage />} />
+              <Route path="/ops/console" element={<OpsCommandCenter />} />
               <Route path="/radar" element={<EnforcementRadarPage />} />
               <Route path="/collectability" element={<CollectabilityPageNew />} />
               <Route path="/cases" element={<CasesPageNew />} />

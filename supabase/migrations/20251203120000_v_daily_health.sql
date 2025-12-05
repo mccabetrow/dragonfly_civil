@@ -1,4 +1,4 @@
-﻿-- Migration: Create v_daily_health view for daily health broadcasts
+-- Migration: Create v_daily_health view for daily health broadcasts
 -- This view aggregates key metrics for the Dragonfly Engine daily health check
 CREATE OR REPLACE VIEW public.v_daily_health AS
 SELECT CURRENT_DATE AS run_date,

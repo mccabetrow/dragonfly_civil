@@ -28,6 +28,7 @@ from fastapi import (
     Query,
     UploadFile,
 )
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..core.security import AuthContext, get_current_user
@@ -180,6 +181,16 @@ async def process_upload_background(
 # ---------------------------------------------------------------------------
 
 
+@router.get(
+    "/health",
+    summary="Intake system health check",
+    description="Returns health status of the intake fortress subsystem.",
+)
+async def intake_health() -> dict[str, str]:
+    """Health check for the intake subsystem."""
+    return {"status": "ok", "subsystem": "intake_fortress"}
+
+
 @router.post(
     "/upload",
     response_model=BatchCreateResponse,
@@ -202,81 +213,98 @@ async def upload_csv(
     file: Annotated[UploadFile, File(description="CSV file to process")],
     source: str = Query("simplicity", description="Source system identifier"),
     auth: AuthContext = Depends(get_current_user),
-) -> BatchCreateResponse:
+) -> BatchCreateResponse | JSONResponse:
     """Upload a CSV file and start background processing."""
 
-    logger.info(f"Intake upload started by {auth.via}: {file.filename}")
+    batch_id = None  # Track for error logging
 
-    # Validate request
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No filename provided")
-
-    if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="File must be a CSV")
-
-    if source not in ("simplicity", "jbi", "manual", "csv_upload", "api"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid source: {source}. Must be one of: simplicity, jbi, manual, csv_upload, api",
-        )
-
-    # Save file to temp location
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            suffix=".csv",
-            prefix=f"intake_{source}_",
-            delete=False,
-        ) as tmp:
-            content = await file.read()
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
+        logger.info(f"Intake upload started by {auth.via}: {file.filename}")
 
-        logger.info(f"Saved upload to temp file: {tmp_path}")
+        # Validate request
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
 
-    except Exception as e:
-        logger.error(f"Failed to save uploaded file: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save uploaded file: {e}",
-        )
+        if not file.filename.lower().endswith(".csv"):
+            raise HTTPException(status_code=400, detail="File must be a CSV")
 
-    # Create batch record
-    try:
-        pool = await get_pool()
-        service = IntakeService(pool)
+        if source not in ("simplicity", "jbi", "manual", "csv_upload", "api"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid source: {source}. Must be one of: simplicity, jbi, manual, csv_upload, api",
+            )
 
-        batch_id = await service.create_batch(
-            filename=file.filename,
+        # Save file to temp location
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                suffix=".csv",
+                prefix=f"intake_{source}_",
+                delete=False,
+            ) as tmp:
+                content = await file.read()
+                tmp.write(content)
+                tmp_path = Path(tmp.name)
+
+            logger.info(f"Saved upload to temp file: {tmp_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to save uploaded file: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save uploaded file: {e}",
+            )
+
+        # Create batch record
+        try:
+            pool = await get_pool()
+            service = IntakeService(pool)
+
+            batch_id = await service.create_batch(
+                filename=file.filename,
+                source=source,
+                created_by=auth.via,
+            )
+
+            logger.info(f"Created batch {batch_id} for {file.filename}")
+
+        except Exception as e:
+            logger.error(f"Failed to create batch: {e}")
+            # Clean up temp file then let exception bubble up to outer handler
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+        # Start background processing
+        background_tasks.add_task(
+            process_upload_background,
+            file_path=tmp_path,
+            batch_id=batch_id,
             source=source,
             created_by=auth.via,
         )
 
-        logger.info(f"Created batch {batch_id} for {file.filename}")
-
-    except Exception as e:
-        logger.error(f"Failed to create batch: {e}")
-        # Clean up temp file
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create batch record: {e}",
+        return BatchCreateResponse(
+            batch_id=str(batch_id),
+            status="processing",
+            message=f"Processing started for {file.filename}. Check /intake/batch/{batch_id} for status.",
         )
 
-    # Start background processing
-    background_tasks.add_task(
-        process_upload_background,
-        file_path=tmp_path,
-        batch_id=batch_id,
-        source=source,
-        created_by=auth.via,
-    )
-
-    return BatchCreateResponse(
-        batch_id=str(batch_id),
-        status="processing",
-        message=f"Processing started for {file.filename}. Check /intake/batch/{batch_id} for status.",
-    )
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Catch any unexpected errors
+        logger.exception(
+            "Intake upload failed",
+            extra={
+                "batch_id": str(batch_id) if batch_id else None,
+                "upload_filename": file.filename,
+            },
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "intake_upload_failed", "message": str(e)},
+        )
 
 
 @router.get(

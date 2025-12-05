@@ -175,11 +175,18 @@ async def create_offer(request: CreateOfferRequest) -> OfferResponse:
             ) = row
 
             logger.info(
-                "Created offer %s on judgment %s: %s %s",
+                "Offer created: offer_id=%s judgment_id=%s type=%s amount=%.2f",
                 offer_id,
                 judgment_id,
                 offer_type,
-                offer_amount,
+                float(offer_amount),
+                extra={
+                    "offer_id": str(offer_id),
+                    "judgment_id": judgment_id,
+                    "offer_type": offer_type,
+                    "offer_amount": float(offer_amount),
+                    "action": "offer_created",
+                },
             )
 
             # Emit offer_made event (best-effort, after transaction commits)
@@ -493,14 +500,34 @@ async def update_offer_status(
             ) = updated_row
 
             logger.info(
-                "Updated offer %s status: %s -> %s",
+                "Offer status updated: offer_id=%s judgment_id=%s old_status=%s new_status=%s",
                 offer_id,
+                jid,
                 old_status,
                 request.status,
+                extra={
+                    "offer_id": str(offer_id),
+                    "judgment_id": jid,
+                    "old_status": old_status,
+                    "new_status": request.status,
+                    "action": "offer_status_updated",
+                },
             )
 
             # Emit offer_accepted event if status changed to accepted
             if request.status == "accepted" and old_status != "accepted":
+                logger.info(
+                    "Offer ACCEPTED: offer_id=%s judgment_id=%s amount=%.2f",
+                    oid,
+                    jid,
+                    float(amount),
+                    extra={
+                        "offer_id": str(oid),
+                        "judgment_id": jid,
+                        "offer_amount": float(amount),
+                        "action": "offer_accepted",
+                    },
+                )
                 try:
                     from ..services.event_service import emit_event_for_judgment
 
@@ -521,6 +548,17 @@ async def update_offer_status(
                         offer_id,
                         event_err,
                     )
+            elif request.status == "rejected" and old_status != "rejected":
+                logger.info(
+                    "Offer REJECTED: offer_id=%s judgment_id=%s",
+                    oid,
+                    jid,
+                    extra={
+                        "offer_id": str(oid),
+                        "judgment_id": jid,
+                        "action": "offer_rejected",
+                    },
+                )
 
             return OfferResponse(
                 id=str(oid),

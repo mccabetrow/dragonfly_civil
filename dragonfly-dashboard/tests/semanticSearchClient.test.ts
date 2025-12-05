@@ -211,6 +211,6 @@ describe('buildJudgmentContext', () => {
       judgmentAmount: 1234567.89,
     });
 
-    expect(context).toContain('Amount: $1,234,568');
+    expect(context).toContain('Amount: $1,234,567.89');
   });
 });

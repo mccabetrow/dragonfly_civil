@@ -147,6 +147,38 @@ async def foil_followup_job() -> None:
         # Don't re-raise - we don't want to crash the scheduler
 
 
+async def ceo_morning_briefing_job() -> None:
+    """
+    Daily job to send CEO morning briefing.
+    Runs at 8:30 AM Eastern, Monday-Friday.
+
+    Aggregates enforcement pipeline, offer stats, and system health
+    into a concise executive summary email.
+    """
+    logger.info("📧 Running CEO morning briefing job...")
+
+    try:
+        from .services.notification_service import send_ceo_briefing
+        from .services.reporting_service import generate_ceo_briefing
+
+        briefing = await generate_ceo_briefing()
+
+        result = await send_ceo_briefing(
+            subject=briefing["subject"],
+            html_body=briefing["html_body"],
+            plain_body=briefing["plain_body"],
+        )
+
+        if result.get("success"):
+            logger.info("📧 CEO morning briefing sent successfully")
+        else:
+            logger.warning(f"📧 CEO briefing failed: {result.get('error')}")
+
+    except Exception as e:
+        logger.exception(f"📧 CEO morning briefing job failed: {e}")
+        # Don't re-raise - we don't want to crash the scheduler
+
+
 async def pending_batch_processor_job() -> None:
     """
     Periodic job to process pending ingest batches.
@@ -203,6 +235,40 @@ async def pending_batch_processor_job() -> None:
 
     except Exception as e:
         logger.exception(f"📦 Pending batch processor job failed: {e}")
+        # Don't re-raise - we don't want to crash the scheduler
+
+
+async def intake_guardian_job() -> None:
+    """
+    Periodic job to detect and recover stuck intake batches.
+    Runs every 60 seconds to find batches stuck in 'processing' state.
+
+    This is a self-healing mechanism that:
+    - Marks stuck batches as 'failed'
+    - Logs the failure reason
+    - Sends Discord alerts
+
+    The guardian is fault-tolerant and will not crash the scheduler on errors.
+    """
+    logger.debug("🛡️ Running intake guardian check...")
+
+    try:
+        from .services.intake_guardian import get_intake_guardian
+
+        guardian = get_intake_guardian()
+        result = await guardian.check_stuck_batches()
+
+        if result.marked_failed > 0:
+            logger.warning(
+                f"🛡️ Intake Guardian: Marked {result.marked_failed} batch(es) as failed"
+            )
+        elif result.checked > 0:
+            logger.debug(
+                f"🛡️ Intake Guardian: Checked {result.checked} batch(es), all OK"
+            )
+
+    except Exception as e:
+        logger.exception(f"🛡️ Intake guardian job failed: {e}")
         # Don't re-raise - we don't want to crash the scheduler
 
 
@@ -315,12 +381,34 @@ def _register_jobs(scheduler: AsyncIOScheduler, settings: Any) -> None:
         replace_existing=True,
     )
 
+    # CEO Morning Briefing - 8:30 AM Eastern, Monday-Friday
+    scheduler.add_job(
+        ceo_morning_briefing_job,
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour=8,
+            minute=30,
+        ),
+        id="ceo_morning_briefing",
+        name="CEO Morning Briefing",
+        replace_existing=True,
+    )
+
     # Pending batch processor - every 5 minutes
     scheduler.add_job(
         pending_batch_processor_job,
         trigger=IntervalTrigger(minutes=5),
         id="pending_batch_processor",
         name="Pending Batch Processor",
+        replace_existing=True,
+    )
+
+    # Intake Guardian - every 60 seconds (self-healing for stuck batches)
+    scheduler.add_job(
+        intake_guardian_job,
+        trigger=IntervalTrigger(seconds=60),
+        id="intake_guardian",
+        name="Intake Guardian",
         replace_existing=True,
     )
 

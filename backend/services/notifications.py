@@ -1,7 +1,7 @@
 """
 Dragonfly Engine - Notifications Service
 
-Unified notification service for sending alerts via Discord and other channels.
+Unified notification service for sending alerts via Discord, Email, and SMS.
 Wraps the Discord service with higher-level business-event notifications.
 """
 
@@ -38,6 +38,8 @@ async def notify_batch_completed(
     """
     Send notification when a batch completes successfully.
 
+    Sends to both Discord and OPS_EMAIL if configured.
+
     Args:
         batch_id: The batch UUID
         source: Source system (e.g., 'simplicity')
@@ -59,7 +61,28 @@ async def notify_batch_completed(
     )
 
     logger.info(f"Sending batch completion notification for {batch_id}")
-    return await send_discord_message(message)
+
+    # Send to Discord
+    discord_sent = await send_discord_message(message)
+
+    # Also send email to Ops team
+    try:
+        from .notification_service import send_ops_alert
+
+        await send_ops_alert(
+            subject=f"Batch Complete: {source.title()} - {row_count_valid} rows",
+            body=(
+                f"Batch ID: {batch_id}\n"
+                f"Source: {source}\n"
+                f"Valid rows: {row_count_valid}\n"
+                f"Invalid rows: {row_count_invalid}\n"
+                f"Success rate: {success_rate:.1f}%"
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to send batch email notification: {e}")
+
+    return discord_sent
 
 
 async def notify_batch_failed(
@@ -69,6 +92,8 @@ async def notify_batch_failed(
 ) -> bool:
     """
     Send notification when a batch fails.
+
+    Sends to both Discord and OPS_EMAIL (with SMS for critical failures).
 
     Args:
         batch_id: The batch UUID
@@ -88,7 +113,27 @@ async def notify_batch_failed(
     )
 
     logger.error(f"Sending batch failure notification for {batch_id}: {error_preview}")
-    return await send_discord_message(message)
+
+    # Send to Discord
+    discord_sent = await send_discord_message(message)
+
+    # Also send email (and SMS) to Ops team for failures
+    try:
+        from .notification_service import send_ops_alert
+
+        await send_ops_alert(
+            subject=f"⚠️ BATCH FAILED: {source.title()}",
+            body=(
+                f"Batch ID: {batch_id}\n"
+                f"Source: {source}\n\n"
+                f"Error:\n{error_summary}"
+            ),
+            include_sms=True,  # SMS for failures
+        )
+    except Exception as e:
+        logger.warning(f"Failed to send batch failure email: {e}")
+
+    return discord_sent
 
 
 async def notify_pending_batches_processed(

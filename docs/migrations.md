@@ -2,6 +2,12 @@
 
 This document explains how to manage Supabase database migrations for Dragonfly Civil.
 
+## ⚠️ Golden Rule
+
+> **Never apply migrations directly in production via Supabase SQL Editor.**
+>
+> All schema changes MUST go through Git → CI → automated deployment.
+
 ## Quick Start
 
 ```powershell
@@ -11,9 +17,50 @@ This document explains how to manage Supabase database migrations for Dragonfly 
 # Apply all pending migrations to dev
 .\scripts\db_migrate.ps1 -Env dev
 
-# Apply all pending migrations to prod
-.\scripts\db_migrate.ps1 -Env prod
+# Apply all pending migrations to prod (via CI only - see below)
+# Manual prod migrations are blocked by policy
 ```
+
+## CI/CD Workflow
+
+Migrations are applied automatically via GitHub Actions:
+
+| Trigger                               | Target      | Approval                           |
+| ------------------------------------- | ----------- | ---------------------------------- |
+| Push to `main` with migration changes | DEV         | Automatic                          |
+| Manual workflow dispatch              | DEV or PROD | Environment protection rules apply |
+
+### To apply migrations to production:
+
+1. Push your migration to `main` (applies to DEV automatically)
+2. Verify DEV is healthy: `.\scripts\db_migrate.ps1 -Env dev -DryRun`
+3. Go to **Actions → Supabase Migrations → Run workflow**
+4. Select `prod` from the environment dropdown
+5. Click **Run workflow**
+
+### Required GitHub Secrets
+
+| Secret                 | Purpose                               |
+| ---------------------- | ------------------------------------- |
+| `SUPABASE_DB_URL_DEV`  | PostgreSQL connection string for DEV  |
+| `SUPABASE_DB_URL_PROD` | PostgreSQL connection string for PROD |
+| `DISCORD_WEBHOOK_URL`  | Failure alerts                        |
+
+To add these secrets:
+
+1. Go to **Settings → Secrets and variables → Actions** in your GitHub repo
+2. Click **New repository secret**
+3. Add each secret with the exact name and value from your Supabase Dashboard
+
+### Setting Up GitHub Environments (Optional)
+
+For additional protection on production, create GitHub environments:
+
+1. Go to **Settings → Environments**
+2. Create `dev` environment (no restrictions)
+3. Create `prod` environment with:
+   - Required reviewers (your approval before prod deploys)
+   - Wait timer (e.g., 5 minutes to allow rollback)
 
 ## Setting Up Your Connection String
 

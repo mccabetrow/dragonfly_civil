@@ -167,6 +167,116 @@ async def health_check_detail() -> HealthDetailResponse:
     )
 
 
+class OperationalHealthResponse(BaseModel):
+    """Operational health metrics for observability."""
+
+    status: str
+    timestamp: str
+    database_ok: bool
+    pending_jobs: int
+    failed_jobs_24h: int
+    last_event_at: str | None
+    events_24h: int
+
+
+@router.get(
+    "/ops",
+    response_model=OperationalHealthResponse,
+    summary="Operational health metrics",
+    description="Returns operational metrics: pending jobs, recent events, failures.",
+)
+async def health_ops() -> OperationalHealthResponse:
+    """
+    Operational health endpoint for production monitoring.
+
+    Reports:
+    - Database connectivity
+    - Number of pending jobs in the queue
+    - Failed jobs in the last 24 hours
+    - Last event timestamp
+    - Events in the last 24 hours
+
+    Use this endpoint for alerting and dashboards.
+    """
+    from ..db import get_pool
+
+    timestamp = datetime.utcnow().isoformat() + "Z"
+
+    try:
+        pool = await get_pool()
+        if pool is None:
+            return OperationalHealthResponse(
+                status="degraded",
+                timestamp=timestamp,
+                database_ok=False,
+                pending_jobs=0,
+                failed_jobs_24h=0,
+                last_event_at=None,
+                events_24h=0,
+            )
+
+        async with pool.cursor() as cur:
+            # Count pending jobs
+            await cur.execute(
+                "SELECT COUNT(*) FROM ops.job_queue WHERE status = 'pending'"
+            )
+            row = await cur.fetchone()
+            pending_jobs = row[0] if row else 0
+
+            # Count failed jobs in last 24h
+            await cur.execute(
+                """
+                SELECT COUNT(*) FROM ops.job_queue 
+                WHERE status = 'failed' 
+                AND updated_at > now() - interval '24 hours'
+            """
+            )
+            row = await cur.fetchone()
+            failed_jobs = row[0] if row else 0
+
+            # Get last event timestamp and 24h count
+            await cur.execute(
+                """
+                SELECT 
+                    MAX(created_at) as last_event,
+                    COUNT(*) FILTER (WHERE created_at > now() - interval '24 hours') as events_24h
+                FROM intelligence.events
+            """
+            )
+            row = await cur.fetchone()
+            last_event_at = row[0].isoformat() + "Z" if row and row[0] else None
+            events_24h = row[1] if row else 0
+
+        # Determine status
+        status = "ok"
+        if failed_jobs > 10:
+            status = "degraded"
+        elif pending_jobs > 100:
+            status = "warning"
+
+        return OperationalHealthResponse(
+            status=status,
+            timestamp=timestamp,
+            database_ok=True,
+            pending_jobs=pending_jobs,
+            failed_jobs_24h=failed_jobs,
+            last_event_at=last_event_at,
+            events_24h=events_24h,
+        )
+
+    except Exception as e:
+        logger.error(f"Ops health check failed: {e}")
+        return OperationalHealthResponse(
+            status="error",
+            timestamp=timestamp,
+            database_ok=False,
+            pending_jobs=0,
+            failed_jobs_24h=0,
+            last_event_at=None,
+            events_24h=0,
+        )
+
+
 @router.get(
     "/jobs",
     summary="List scheduled jobs",

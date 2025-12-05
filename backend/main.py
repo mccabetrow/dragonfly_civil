@@ -33,12 +33,14 @@ from .routers import (
     foil_router,
     health_router,
     ingest_router,
+    intake_router,
     search_router,
 )
 from .routers.events import router as events_router
 from .routers.ingest_v2 import router as ingest_v2_router
 from .routers.intelligence import router as intelligence_router
 from .routers.offers import router as offers_router
+from .routers.ops_guardian import router as ops_guardian_router
 from .routers.packets import router as packets_router
 from .scheduler import init_scheduler
 
@@ -180,6 +182,12 @@ def create_app() -> FastAPI:
     # v0.2.x events router (event stream / timeline)
     app.include_router(events_router, prefix="/api", tags=["events"])
 
+    # v0.3.x intake fortress router (hardened intake system)
+    app.include_router(intake_router, prefix="/api/v1", tags=["intake"])
+
+    # v0.3.x ops guardian router (self-healing intake monitor)
+    app.include_router(ops_guardian_router, prefix="/api/v1", tags=["ops"])
+
     # Initialize scheduler (uses on_event internally)
     init_scheduler(app)
 
@@ -192,6 +200,15 @@ def create_app() -> FastAPI:
             "version": __version__,
             "status": "running",
             "docs": "/docs",
+        }
+
+    # Root-level health check for Railway/load balancers
+    @app.get("/health", tags=["Health"])
+    async def health() -> dict[str, str]:
+        """Simple health check at root level for Railway."""
+        return {
+            "service": "Dragonfly Engine",
+            "status": "ok",
         }
 
     @app.get("/api", tags=["Root"])

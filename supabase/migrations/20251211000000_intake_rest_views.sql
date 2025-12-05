@@ -9,7 +9,7 @@
 --
 -- Views created:
 --   1. public.v_intake_monitor   → ops.v_intake_monitor
---   2. public.v_enrichment_health → ops.v_enrichment_health
+--   2. public.v_enrichment_health → ops.v_enrichment_health (or stub if missing)
 --
 -- Both views are granted SELECT to authenticated and service_role.
 -- ============================================================================
@@ -33,10 +33,29 @@ WHEN duplicate_object THEN NULL;
 END $$;
 -- ============================================================================
 -- 2. Enrichment Health Shim View
+-- Creates a shim if ops.v_enrichment_health exists, otherwise creates a stub
 -- ============================================================================
-CREATE OR REPLACE VIEW public.v_enrichment_health AS
-SELECT *
-FROM ops.v_enrichment_health;
+DO $$ BEGIN -- Check if ops.v_enrichment_health exists
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.views
+    WHERE table_schema = 'ops'
+        AND table_name = 'v_enrichment_health'
+) THEN -- Create shim view pointing to ops view
+EXECUTE 'CREATE OR REPLACE VIEW public.v_enrichment_health AS SELECT * FROM ops.v_enrichment_health';
+ELSE -- Create stub view with same columns but no data
+EXECUTE 'CREATE OR REPLACE VIEW public.v_enrichment_health AS
+            SELECT
+                0::bigint AS pending_jobs,
+                0::bigint AS processing_jobs,
+                0::bigint AS failed_jobs,
+                0::bigint AS completed_jobs,
+                NULL::timestamptz AS last_job_created_at,
+                NULL::timestamptz AS last_job_updated_at,
+                NULL::interval AS time_since_last_activity
+            WHERE false';
+END IF;
+END $$;
 COMMENT ON VIEW public.v_enrichment_health IS 'Public shim for ops.v_enrichment_health. Exposes enrichment queue health to Supabase REST.';
 -- Grant SELECT (idempotent via DO block)
 DO $$ BEGIN

@@ -18,10 +18,12 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
@@ -29,6 +31,8 @@ from uuid import UUID
 import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
+
+from .intake_mapping import get_mapping_for_source, normalize_row
 
 if TYPE_CHECKING:
     from psycopg_pool import AsyncConnectionPool
@@ -115,7 +119,7 @@ class IntakeResult:
 
     success: bool
     row_index: int
-    judgment_id: Optional[UUID] = None
+    judgment_id: Optional[int] = None
     error_code: Optional[str] = None
     error_details: Optional[str] = None
     processing_time_ms: int = 0
@@ -318,6 +322,14 @@ class IntakeService:
     ) -> None:
         """Finalize batch with computed stats."""
         async with self.pool.connection() as conn:
+            stats = {
+                "total": result.total_rows,
+                "valid": result.valid_rows,
+                "error": result.error_rows,
+                "duplicates": result.duplicate_rows,
+                "skipped": result.skipped_rows,
+                "duration_seconds": result.duration_seconds,
+            }
             await conn.execute(
                 """
                 UPDATE ops.ingest_batches SET
@@ -334,14 +346,7 @@ class IntakeService:
                     result.total_rows,
                     result.valid_rows,
                     result.error_rows,
-                    {
-                        "total": result.total_rows,
-                        "valid": result.valid_rows,
-                        "error": result.error_rows,
-                        "duplicates": result.duplicate_rows,
-                        "skipped": result.skipped_rows,
-                        "duration_seconds": result.duration_seconds,
-                    },
+                    json.dumps(stats),
                     str(batch_id),
                 ),
             )
@@ -359,15 +364,17 @@ class IntakeService:
             status = "skipped"
 
         async with self.pool.connection() as conn:
+            # NOTE: ops.intake_logs.judgment_id is UUID but public.judgments.id is bigint
+            # We skip logging judgment_id until schema is aligned
             await conn.execute(
                 """
                 INSERT INTO ops.intake_logs (
                     batch_id, row_index, status, judgment_id,
                     error_code, error_details, processing_time_ms
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, NULL, %s, %s, %s)
                 ON CONFLICT (batch_id, row_index) DO UPDATE SET
                     status = EXCLUDED.status,
-                    judgment_id = EXCLUDED.judgment_id,
+                    judgment_id = NULL,
                     error_code = EXCLUDED.error_code,
                     error_details = EXCLUDED.error_details,
                     processing_time_ms = EXCLUDED.processing_time_ms
@@ -376,7 +383,6 @@ class IntakeService:
                     str(batch_id),
                     result.row_index,
                     status,
-                    str(result.judgment_id) if result.judgment_id else None,
                     result.error_code,
                     result.error_details,
                     result.processing_time_ms,
@@ -390,6 +396,7 @@ class IntakeService:
         row_index: int,
         batch_id: UUID,
         source_batch: str,
+        source: str = "simplicity",
     ) -> IntakeResult:
         """
         Process a single row: validate, insert judgment, trigger downstream.
@@ -399,24 +406,32 @@ class IntakeService:
         start_time = time.perf_counter()
 
         try:
-            # Extract and validate required fields
-            case_number = clean_text(row.get("case_number"))
-            if not case_number:
+            # Use config-driven normalization
+            try:
+                mapping = get_mapping_for_source(source)
+                normalized = normalize_row(row, mapping)
+            except ValueError as ve:
+                # Log VALIDATION_ERROR and continue processing other rows
                 return IntakeResult(
                     success=False,
                     row_index=row_index,
                     error_code="VALIDATION_ERROR",
-                    error_details="Missing required field: case_number",
+                    error_details=str(ve),
                     processing_time_ms=int((time.perf_counter() - start_time) * 1000),
                 )
 
-            # Extract optional fields
-            plaintiff_name = clean_text(row.get("plaintiff_name"))
-            defendant_name = clean_text(row.get("defendant_name"))
-            judgment_amount = parse_amount(row.get("judgment_amount"))
-            judgment_date = parse_date(row.get("judgment_date"))
-            court = clean_text(row.get("court"))
-            county = clean_text(row.get("county"))
+            # Extract normalized fields
+            case_number = normalized["case_number"]
+            plaintiff_name = normalized.get("plaintiff_name")
+            defendant_name = normalized.get("defendant_name")
+            judgment_amount = normalized.get("judgment_amount")
+            judgment_date = normalized.get("judgment_date")
+            court = normalized.get("court")
+            county = normalized.get("county")
+
+            # Convert Decimal to float for DB (psycopg handles this, but be explicit)
+            if isinstance(judgment_amount, Decimal):
+                judgment_amount = float(judgment_amount)
 
             # Insert into public.judgments with UPSERT
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -458,8 +473,10 @@ class IntakeService:
                     ),
                 )
                 result_row = await cur.fetchone()
-                judgment_id = UUID(str(result_row["id"]))
-                was_inserted = result_row["inserted"]
+                if result_row is None:
+                    raise RuntimeError("INSERT RETURNING failed - no row returned")
+                judgment_id = int(result_row["id"])
+                was_inserted = bool(result_row["inserted"])
 
             # Trigger downstream services (non-blocking, errors don't fail the row)
             try:
@@ -588,6 +605,7 @@ class IntakeService:
                             row_index=row_index,
                             batch_id=batch_id,
                             source_batch=source_batch,
+                            source=source,
                         )
 
                         # Log the result

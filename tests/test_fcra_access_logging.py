@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 # Import test utilities
-from tests.conftest import get_test_client, skip_if_no_db
+from conftest import get_test_client, skip_if_no_db
 
 
 class TestAccessLogsTable:

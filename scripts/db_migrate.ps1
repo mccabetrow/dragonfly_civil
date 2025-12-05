@@ -4,24 +4,30 @@
 
 .DESCRIPTION
     Applies pending migrations to the remote Supabase database using an explicit
-    --db-url connection string. Handles "already exists" errors by automatically
-    marking those migrations as applied (self-healing).
+    --db-url connection string. NEVER uses --linked or supabase db push.
+    Handles "already exists" errors by automatically marking those migrations
+    as applied (self-healing).
 
-.PARAMETER Env
+    IMPORTANT: This script always uses explicit --db-url to avoid pooler DNS
+    issues on Windows. Never add --linked flags to this script.
+
+.PARAMETER SupabaseEnv
     Target environment: 'dev' or 'prod'. Defaults to 'dev'.
+    Alias: -Env
 
 .PARAMETER DryRun
     If specified, lists pending migrations without applying them.
 
 .EXAMPLE
-    .\scripts\db_migrate.ps1 -Env dev -DryRun
-    .\scripts\db_migrate.ps1 -Env dev
-    .\scripts\db_migrate.ps1 -Env prod
+    .\scripts\db_migrate.ps1 -SupabaseEnv dev -DryRun
+    .\scripts\db_migrate.ps1 -SupabaseEnv dev
+    .\scripts\db_migrate.ps1 -SupabaseEnv prod
 #>
 
 param(
+    [Alias('Env')]
     [ValidateSet('dev', 'prod')]
-    [string]$Env = 'dev',
+    [string]$SupabaseEnv = 'dev',
 
     [switch]$DryRun
 )
@@ -168,7 +174,7 @@ function Invoke-MigrationRepair {
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host " Dragonfly Civil - Database Migrations"       -ForegroundColor Cyan
-Write-Host " Environment: $($Env.ToUpper())"              -ForegroundColor Cyan
+Write-Host " Environment: $($SupabaseEnv.ToUpper())"      -ForegroundColor Cyan
 if ($DryRun) {
     Write-Host " Mode: DRY RUN (no changes)"              -ForegroundColor Yellow
 }
@@ -190,8 +196,9 @@ else {
     Write-Warn ".env file not found at $envFile"
 }
 
-# Step 3: Get the appropriate DB URL based on -Env
-$dbUrlVarName = if ($Env -eq 'prod') { 'SUPABASE_DB_URL_PROD' } else { 'SUPABASE_DB_URL_DEV' }
+# Step 3: Get the appropriate DB URL based on -SupabaseEnv
+# CRITICAL: Always use explicit --db-url, never --linked (avoids pooler DNS issues)
+$dbUrlVarName = if ($SupabaseEnv -eq 'prod') { 'SUPABASE_DB_URL_PROD' } else { 'SUPABASE_DB_URL_DEV' }
 $DbUrl = [Environment]::GetEnvironmentVariable($dbUrlVarName)
 
 if ([string]::IsNullOrWhiteSpace($DbUrl)) {
@@ -208,7 +215,28 @@ To fix this:
 "@
 }
 
-Write-Success "Database URL loaded from $dbUrlVarName"
+# Mask password in display
+$displayUrl = $DbUrl -replace ':[^:@]+@', ':****@'
+Write-Success "Using DB URL: $displayUrl"
+Write-Info "Variable: $dbUrlVarName"
+
+# Step 3b: Safety check for prod - require confirmation unless running in CI
+if ($SupabaseEnv -eq 'prod' -and -not $env:CI -and -not $env:GITHUB_ACTIONS) {
+    Write-Host ""
+    Write-Host "⚠️  WARNING: You are about to apply migrations to PRODUCTION" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Production migrations should normally be applied via CI/CD:" -ForegroundColor Yellow
+    Write-Host "  1. Push migration to main (applies to dev automatically)" -ForegroundColor Yellow
+    Write-Host "  2. Go to Actions → Supabase Migrations → Run workflow" -ForegroundColor Yellow
+    Write-Host "  3. Select 'prod' environment" -ForegroundColor Yellow
+    Write-Host ""
+
+    $confirmation = Read-Host "Type 'PROD' to continue, or press Enter to abort"
+    if ($confirmation -ne 'PROD') {
+        Write-Host "Aborted." -ForegroundColor Yellow
+        exit 0
+    }
+}
 
 # Step 4: List migrations and identify pending ones
 Write-Host ""
@@ -243,8 +271,9 @@ if ($DryRun) {
 }
 
 # Step 6: Apply migrations with retry/repair logic
+# CRITICAL: Use 'migration up', not 'db push' - db push can hang on pooler DNS issues
 Write-Host ""
-Write-Info "Applying migrations..."
+Write-Info "Applying migrations with 'supabase migration up --db-url'..."
 
 $maxRetries = 5
 $attempt = 0
@@ -300,7 +329,7 @@ Write-Host ""
 Write-Host "=============================================" -ForegroundColor Green
 Write-Host " Migration Complete"                          -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Green
-Write-Host "  Environment:   $($Env.ToUpper())"
+Write-Host "  Environment:   $($SupabaseEnv.ToUpper())"
 Write-Host "  Applied:       $($pendingIds.Count) migration(s)"
 Write-Host "  Auto-repaired: $repairCount"
 Write-Host ""
