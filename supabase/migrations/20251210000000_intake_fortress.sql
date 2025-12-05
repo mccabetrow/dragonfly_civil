@@ -70,6 +70,9 @@ COMMENT ON COLUMN ops.ingest_batches.worker_id IS 'ID of the worker process hand
 -- ===========================================================================
 -- 3. Intake Logs - Row-level processing audit trail
 -- ===========================================================================
+-- NOTE: judgment_id FK to public.judgments is intentionally omitted.
+-- The FK will be added by a later migration once the judgments table exists.
+-- This allows intake_fortress to bootstrap an empty PROD database.
 CREATE TABLE IF NOT EXISTS ops.intake_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     batch_id UUID NOT NULL REFERENCES ops.ingest_batches(id) ON DELETE CASCADE,
@@ -77,14 +80,14 @@ CREATE TABLE IF NOT EXISTS ops.intake_logs (
     status TEXT NOT NULL CHECK (
         status IN ('success', 'error', 'skipped', 'duplicate')
     ),
-    judgment_id UUID REFERENCES public.judgments(id) ON DELETE
-    SET NULL,
-        error_code TEXT,
-        error_details TEXT,
-        processing_time_ms INTEGER,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        -- Prevent duplicate log entries per batch/row
-        CONSTRAINT uq_intake_log_batch_row UNIQUE (batch_id, row_index)
+    judgment_id UUID,
+    -- FK added later once public.judgments exists
+    error_code TEXT,
+    error_details TEXT,
+    processing_time_ms INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Prevent duplicate log entries per batch/row
+    CONSTRAINT uq_intake_log_batch_row UNIQUE (batch_id, row_index)
 );
 COMMENT ON TABLE ops.intake_logs IS 'Row-level audit log for intake processing. Every row processed gets an entry.';
 COMMENT ON COLUMN ops.intake_logs.status IS 'Processing result: success, error, skipped (validation), duplicate (already exists)';
