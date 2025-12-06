@@ -10,6 +10,17 @@ interface ReleaseNote {
 
 const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.5.0',
+    date: 'Dec 6, 2025',
+    title: 'Securitization Engine',
+    highlights: [
+      'Pool management for grouping judgments into funds',
+      'NAV calculation and performance tracking',
+      'Gig economy garnishment detection (Uber, DoorDash, Lyft)',
+      'Proof.com integration for process server dispatch',
+    ],
+  },
+  {
     version: '1.4.0',
     date: 'Dec 1, 2025',
     title: 'First-time user experience',
