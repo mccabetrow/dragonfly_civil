@@ -129,6 +129,38 @@ class Settings(BaseSettings):
         default="INFO", description="Logging level"
     )
 
+    # =========================================================================
+    # CORS Configuration
+    # =========================================================================
+    # Comma-separated list of allowed origins for CORS.
+    # Railway env var: DRAGONFLY_CORS_ORIGINS
+    #
+    # Example for production:
+    #   DRAGONFLY_CORS_ORIGINS="https://dragonfly-console1.vercel.app,https://dragonfly-console1-git-main-mccabetrow.vercel.app,http://localhost:5173"
+    #
+    # Note: Wildcards like https://*.vercel.app do NOT work with CORS.
+    # You must list each specific origin or Vercel preview URL explicitly.
+    dragonfly_cors_origins: str | None = Field(
+        default=None,
+        description="Comma-separated CORS origins (Railway: DRAGONFLY_CORS_ORIGINS)",
+    )
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        """
+        Parse DRAGONFLY_CORS_ORIGINS into a list.
+        Falls back to localhost origins if unset.
+        """
+        if self.dragonfly_cors_origins:
+            # Parse comma-separated, strip whitespace, filter empties
+            origins = [
+                o.strip() for o in self.dragonfly_cors_origins.split(",") if o.strip()
+            ]
+            if origins:
+                return origins
+        # Default fallback for local dev
+        return ["http://localhost:3000", "http://localhost:5173"]
+
     # Server
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, description="Server port")

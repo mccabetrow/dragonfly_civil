@@ -130,17 +130,22 @@ def create_app() -> FastAPI:
     )
 
     # 4. CORS (must be near the bottom to handle preflight correctly)
+    #    Origins are ENV-driven via DRAGONFLY_CORS_ORIGINS for Railway/Vercel.
+    #    See backend/config.py for docs on setting this variable.
+    logger.info(f"CORS allowed origins: {settings.cors_allowed_origins}")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://localhost:5173",
-            "https://*.vercel.app",
-            "https://dragonfly-dashboard.vercel.app",
-        ],
-        allow_credentials=True,
+        allow_origins=settings.cors_allowed_origins,
+        allow_credentials=False,  # We use API key auth, not cookies
         allow_methods=["*"],
-        allow_headers=["*"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-DRAGONFLY-API-KEY",
+            "X-API-Key",
+            "Accept",
+        ],
+        expose_headers=["Content-Disposition"],
     )
 
     # ==========================================================================
