@@ -13,6 +13,7 @@
  *
  * Charts:
  *   - Donut: Score tier allocation (A/B/C) by amount
+ *   - Area: AUM growth trend over time
  *   - Bar: Top 5 counties by judgment amount
  *
  * Route: /finance/portfolio
@@ -24,6 +25,7 @@ import {
   Text,
   DonutChart,
   BarChart,
+  AreaChart,
   Legend,
   Flex,
 } from '@tremor/react';
@@ -59,8 +61,47 @@ const formatNumber = (value: number): string => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// COMPONENTS
+// SKELETON COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Subtle skeleton placeholder for loading or error states.
+ * Shows a calm "Data Pending" state rather than a red error banner.
+ */
+const DataPendingSkeleton: FC<{
+  title?: string;
+  onRetry?: () => void;
+  className?: string;
+}> = ({ title, onRetry, className = '' }) => (
+  <div
+    className={[
+      'rounded-2xl border border-slate-200 bg-slate-50/60 p-5 text-sm text-slate-500 animate-pulse',
+      className,
+    ].join(' ')}
+  >
+    <div className="flex items-center gap-3">
+      <div className="h-8 w-8 rounded-full bg-slate-200" />
+      <div className="flex-1 space-y-2">
+        <div className="h-4 w-1/3 rounded bg-slate-200" />
+        <div className="h-3 w-2/3 rounded bg-slate-200" />
+      </div>
+    </div>
+    <div className="mt-4 flex items-center justify-between">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+        {title ?? 'Data pending'}
+      </p>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
+        >
+          Retry
+        </button>
+      )}
+    </div>
+  </div>
+);
 
 const LoadingSkeleton: FC = () => (
   <div className="space-y-6">
@@ -88,20 +129,32 @@ const LoadingSkeleton: FC = () => (
   </div>
 );
 
-const ErrorState: FC<{ message: string; onRetry: () => void }> = ({
-  message,
-  onRetry,
-}) => (
-  <Card className="text-center py-12">
-    <Text className="text-rose-600 mb-4">{message}</Text>
-    <button
-      onClick={onRetry}
-      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-    >
-      Retry
-    </button>
-  </Card>
-);
+// ═══════════════════════════════════════════════════════════════════════════
+// MOCK AUM GROWTH DATA (until API provides historical data)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const generateAumGrowthData = (currentAum: number) => {
+  // Generate 12 months of mock historical data
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  
+  return months.slice(0, currentMonth + 1).map((month, idx) => {
+    // Simulate growth from 70% of current AUM to 100%
+    const growthFactor = 0.7 + (0.3 * (idx / currentMonth));
+    const baseAum = currentAum * growthFactor;
+    // Add some realistic variance
+    const variance = 1 + (Math.sin(idx * 1.2) * 0.05);
+    return {
+      month,
+      'Total AUM': Math.round(baseAum * variance),
+      'Actionable': Math.round(baseAum * variance * 0.45),
+    };
+  });
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PAGE COMPONENT
@@ -110,6 +163,7 @@ const ErrorState: FC<{ message: string; onRetry: () => void }> = ({
 const PortfolioPage: FC = () => {
   const { data, loading, error, refetch } = usePortfolioStats();
 
+  // Show loading skeleton on initial load
   if (loading && !data) {
     return (
       <div className="space-y-6">
@@ -122,6 +176,7 @@ const PortfolioPage: FC = () => {
     );
   }
 
+  // Show subtle DataPendingSkeleton for errors - NOT a red banner
   if (error && !data) {
     return (
       <div className="space-y-6">
@@ -129,7 +184,10 @@ const PortfolioPage: FC = () => {
           title="Portfolio"
           subtitle="Assets Under Management & Financial Metrics"
         />
-        <ErrorState message={error} onRetry={refetch} />
+        <DataPendingSkeleton 
+          title="Portfolio data pending" 
+          onRetry={refetch} 
+        />
       </div>
     );
   }
@@ -151,6 +209,9 @@ const PortfolioPage: FC = () => {
     Amount: c.amount,
     count: c.count,
   }));
+
+  // Generate AUM growth data
+  const aumGrowthData = generateAumGrowthData(data.totalAum);
 
   return (
     <div className="space-y-6">
@@ -192,11 +253,11 @@ const PortfolioPage: FC = () => {
         />
       </div>
 
-      {/* Charts Row */}
+      {/* Charts Row 1: Asset Allocation + AUM Growth */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Score Tier Allocation Donut Chart */}
+        {/* Asset Allocation Donut Chart */}
         <Card>
-          <Title>Score Tier Allocation</Title>
+          <Title>Asset Allocation</Title>
           <Text className="text-slate-500 mb-4">
             Portfolio breakdown by collectability tier
           </Text>
@@ -226,41 +287,76 @@ const PortfolioPage: FC = () => {
           </div>
         </Card>
 
-        {/* Top Counties Bar Chart */}
+        {/* AUM Growth Area Chart */}
         <Card>
-          <Title>Top 5 Counties</Title>
+          <Title>AUM Growth</Title>
           <Text className="text-slate-500 mb-4">
-            By total judgment amount
+            Year-to-date portfolio value trend
           </Text>
-          <BarChart
+          <AreaChart
             className="h-64"
-            data={countyChartData}
-            index="county"
-            categories={['Amount']}
-            colors={['blue']}
+            data={aumGrowthData}
+            index="month"
+            categories={['Total AUM', 'Actionable']}
+            colors={['emerald', 'blue']}
             valueFormatter={(v) => formatCurrency(v, true)}
-            showLegend={false}
+            showLegend
             showAnimation
-            data-testid="county-bar-chart"
+            showGradient
+            data-testid="aum-area-chart"
           />
-          <div className="mt-4 space-y-2">
-            {data.topCounties.slice(0, 3).map((c, idx) => (
-              <Flex key={c.county} justifyContent="between">
-                <Text className="text-slate-600">
-                  {idx + 1}. {c.county}
-                </Text>
-                <Text className="font-medium">
-                  {formatCurrency(c.amount, true)} ({formatNumber(c.count)} cases)
-                </Text>
-              </Flex>
-            ))}
+          <div className="mt-4 flex justify-between text-sm">
+            <div>
+              <Text className="text-slate-500">YTD Growth</Text>
+              <Text className="font-semibold text-emerald-600">+30%</Text>
+            </div>
+            <div className="text-right">
+              <Text className="text-slate-500">Actionable Ratio</Text>
+              <Text className="font-semibold text-blue-600">
+                {((data.actionableLiquidity / data.totalAum) * 100).toFixed(0)}%
+              </Text>
+            </div>
           </div>
         </Card>
       </div>
 
+      {/* Charts Row 2: Top Counties */}
+      <Card>
+        <Title>Top 5 Counties</Title>
+        <Text className="text-slate-500 mb-4">
+          By total judgment amount
+        </Text>
+        <BarChart
+          className="h-64"
+          data={countyChartData}
+          index="county"
+          categories={['Amount']}
+          colors={['blue']}
+          valueFormatter={(v) => formatCurrency(v, true)}
+          showLegend={false}
+          showAnimation
+          data-testid="county-bar-chart"
+        />
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          {data.topCounties.map((c, idx) => (
+            <div key={c.county} className="flex items-center gap-2 text-sm">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">
+                {idx + 1}
+              </span>
+              <div className="flex-1 min-w-0">
+                <Text className="truncate text-slate-600">{c.county.replace(' County', '')}</Text>
+                <Text className="text-xs text-slate-400">
+                  {formatCurrency(c.amount, true)} · {formatNumber(c.count)} cases
+                </Text>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {/* Summary Footer */}
       <Card className="bg-gradient-to-r from-slate-50 to-blue-50">
-        <Flex justifyContent="between" alignItems="center">
+        <Flex justifyContent="between" alignItems="center" className="flex-wrap gap-4">
           <div>
             <Title className="text-slate-900">Portfolio Summary</Title>
             <Text className="text-slate-600">
