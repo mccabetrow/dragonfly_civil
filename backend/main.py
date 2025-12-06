@@ -5,28 +5,30 @@ Main application entry point. Creates the FastAPI app, wires up routers,
 initializes database pool and scheduler on startup.
 
 Run with: uvicorn backend.main:app --reload
-
-Note: On Windows, psycopg async requires SelectorEventLoop. If you see
-"ProactorEventLoop" errors, run via WSL or deploy to Linux container.
 """
 
-import logging
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+# Must be first - fixes Windows asyncio compatibility with psycopg3
+from .asyncio_compat import ensure_selector_policy_on_windows
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+ensure_selector_policy_on_windows()
 
-from . import __version__
-from .config import configure_logging, get_settings
-from .core.errors import setup_error_handlers
-from .core.middleware import (
+import logging  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+from typing import AsyncGenerator  # noqa: E402
+
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+from . import __version__  # noqa: E402
+from .config import configure_logging, get_settings  # noqa: E402
+from .core.errors import setup_error_handlers  # noqa: E402
+from .core.middleware import (  # noqa: E402
     RateLimitMiddleware,
     RequestLoggingMiddleware,
     ResponseSanitizationMiddleware,
 )
-from .db import close_db_pool, init_db_pool
-from .routers import (
+from .db import close_db_pool, init_db_pool  # noqa: E402
+from .routers import (  # noqa: E402
     analytics_router,
     budget_router,
     enforcement_router,
@@ -36,13 +38,13 @@ from .routers import (
     intake_router,
     search_router,
 )
-from .routers.events import router as events_router
-from .routers.ingest_v2 import router as ingest_v2_router
-from .routers.intelligence import router as intelligence_router
-from .routers.offers import router as offers_router
-from .routers.ops_guardian import router as ops_guardian_router
-from .routers.packets import router as packets_router
-from .scheduler import init_scheduler
+from .routers.events import router as events_router  # noqa: E402
+from .routers.ingest_v2 import router as ingest_v2_router  # noqa: E402
+from .routers.intelligence import router as intelligence_router  # noqa: E402
+from .routers.offers import router as offers_router  # noqa: E402
+from .routers.ops_guardian import router as ops_guardian_router  # noqa: E402
+from .routers.packets import router as packets_router  # noqa: E402
+from .scheduler import init_scheduler  # noqa: E402
 
 # Configure logging before anything else
 configure_logging()
@@ -132,19 +134,28 @@ def create_app() -> FastAPI:
     # 4. CORS (must be near the bottom to handle preflight correctly)
     #    Origins are ENV-driven via DRAGONFLY_CORS_ORIGINS for Railway/Vercel.
     #    See backend/config.py for docs on setting this variable.
-    logger.info(f"CORS allowed origins: {settings.cors_allowed_origins}")
+    #
+    # IMPORTANT: allow_credentials=True is required for the Vercel frontend
+    # to include cookies/auth headers in cross-origin requests.
+    #
+    # For Vercel preview deployments (e.g., dragonfly-console1-abc123.vercel.app),
+    # we use allow_origin_regex to match the pattern dynamically.
+    cors_regex = settings.cors_origin_regex
+    logger.info(
+        f"[CORS] Startup origins: {settings.cors_allowed_origins} "
+        f"(from DRAGONFLY_CORS_ORIGINS={settings.dragonfly_cors_origins!r})"
+    )
+    if cors_regex:
+        logger.info(f"[CORS] Origin regex enabled: {cors_regex}")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
-        allow_credentials=False,  # We use API key auth, not cookies
+        allow_origin_regex=cors_regex,  # Matches Vercel preview deployments
+        allow_credentials=True,  # Required for Vercel console cross-origin requests
         allow_methods=["*"],
         allow_headers=[
-            "Authorization",
-            "Content-Type",
-            "X-DRAGONFLY-API-KEY",
-            "X-API-Key",
-            "Accept",
-        ],
+            "*"
+        ],  # Accept all headers including X-DRAGONFLY-API-KEY, X-API-Key
         expose_headers=["Content-Disposition"],
     )
 

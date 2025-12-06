@@ -194,6 +194,8 @@ export interface HealthCheckResult {
   ok: boolean;
   status: number;
   environment?: string;
+  /** Detailed error message when ok=false */
+  error?: string;
 }
 
 /**
@@ -288,20 +290,34 @@ export const apiClient = {
         ok: data?.status === 'ok',
         status: 200,
         environment: data?.environment,
+        error: undefined,
       };
     } catch (err) {
       console.error('[API HealthCheck]', err);
       
-      // Extract status from our custom errors
+      // Extract status and message from our custom errors
       let status = 0;
-      if (err instanceof AuthError || err instanceof NotFoundError || err instanceof ApiError) {
+      let errorMessage = 'Connection failed – check API base URL / Railway status.';
+
+      if (err instanceof AuthError) {
         status = err.status;
+        errorMessage = 'Invalid API key – check VITE_DRAGONFLY_API_KEY configuration.';
+      } else if (err instanceof NotFoundError) {
+        status = err.status;
+        errorMessage = 'Health endpoint not found – check API deployment.';
+      } else if (err instanceof ApiError) {
+        status = err.status;
+        errorMessage = `API error (${status}) – ${err.message}`;
+      } else if (err instanceof Error) {
+        // Network/CORS failure
+        errorMessage = err.message;
       }
 
       return {
         ok: false,
         status,
         environment: undefined,
+        error: errorMessage,
       };
     }
   },

@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional, Sequence
+# Must be early - fixes Windows asyncio compatibility with psycopg3
+from .asyncio_compat import ensure_selector_policy_on_windows
 
-import psycopg
-from loguru import logger
-from psycopg.rows import dict_row
+ensure_selector_policy_on_windows()
 
-from supabase import Client, create_client
+from contextlib import asynccontextmanager  # noqa: E402
+from typing import Any, AsyncGenerator, Optional, Sequence  # noqa: E402
 
-from .config import get_settings
+import psycopg  # noqa: E402
+from loguru import logger  # noqa: E402
+from psycopg.rows import dict_row  # noqa: E402
+
+from supabase import Client, create_client  # noqa: E402
+
+from .config import get_settings  # noqa: E402
 
 settings = get_settings()
 

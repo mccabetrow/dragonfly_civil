@@ -155,6 +155,7 @@ class TestProtectedEndpoints:
 
     PROTECTED_ENDPOINTS = [
         ("GET", "/api/v1/intake/batches"),
+        ("GET", "/api/v1/analytics/overview"),
         ("POST", "/api/v1/intake/upload"),
         ("POST", "/api/v1/ops/guardian/run"),
     ]
@@ -196,3 +197,182 @@ class TestProtectedEndpoints:
         assert (
             response.status_code != 401
         ), f"{method} {path} returned 401 even with valid API key"
+
+
+class TestCORSConfiguration:
+    """Tests for CORS configuration - critical for Vercel console.
+
+    These tests use PRODUCTION origins to ensure they reflect real-world behavior.
+    Previously tests used localhost:5173 which is always in fallback - that's why
+    tests would pass while production would fail.
+
+    IMPORTANT: We create a dedicated client fixture that clears the settings cache
+    and sets DRAGONFLY_CORS_ORIGINS BEFORE creating the app. This ensures the CORS
+    middleware gets the production origins we're testing.
+    """
+
+    # Production Vercel origins - these MUST work or console is broken
+    PROD_ORIGIN = "https://dragonfly-console1.vercel.app"
+    PROD_ORIGIN_GIT = "https://dragonfly-console1-git-main-mccabetrow.vercel.app"
+    LOCALHOST_ORIGIN = "http://localhost:5173"
+    # Vercel preview deployment (random hash)
+    PREVIEW_ORIGIN = "https://dragonfly-console1-hkyvsyq2h.vercel.app"
+
+    @pytest.fixture
+    def cors_client(self, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+        """Create a test client with production CORS origins configured.
+
+        This fixture clears the settings cache and sets env vars BEFORE
+        importing and creating the app, ensuring CORS is configured correctly.
+        """
+        # Set env vars BEFORE importing anything from backend
+        prod_origins = ",".join(
+            [
+                self.PROD_ORIGIN,
+                self.PROD_ORIGIN_GIT,
+                self.LOCALHOST_ORIGIN,
+            ]
+        )
+        monkeypatch.setenv("DRAGONFLY_CORS_ORIGINS", prod_origins)
+        monkeypatch.setenv("DRAGONFLY_API_KEY", "test-api-key-12345")
+        monkeypatch.setenv("ENVIRONMENT", "prod")  # Enable regex matching
+
+        # Clear the settings cache so our env vars are picked up
+        from backend.config import get_settings
+
+        get_settings.cache_clear()
+
+        # Now create the app - it will read fresh settings with our CORS origins
+        from backend.main import create_app
+
+        app = create_app()
+
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_cors_preflight_prod_origin(self, cors_client: TestClient) -> None:
+        """OPTIONS preflight with production Vercel origin returns 200."""
+        response = cors_client.options(
+            "/api/health",
+            headers={
+                "Origin": self.PROD_ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "X-DRAGONFLY-API-KEY",
+            },
+        )
+
+        assert response.status_code == 200, (
+            f"Preflight failed with {response.status_code}. "
+            f"Headers: {dict(response.headers)}"
+        )
+        assert response.headers.get("Access-Control-Allow-Origin") == self.PROD_ORIGIN
+
+    def test_cors_preflight_git_branch_origin(self, cors_client: TestClient) -> None:
+        """OPTIONS preflight with Vercel git preview origin returns 200."""
+        response = cors_client.options(
+            "/api/health",
+            headers={
+                "Origin": self.PROD_ORIGIN_GIT,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "X-DRAGONFLY-API-KEY",
+            },
+        )
+
+        assert (
+            response.status_code == 200
+        ), f"Preflight for git preview origin failed with {response.status_code}"
+        assert (
+            response.headers.get("Access-Control-Allow-Origin") == self.PROD_ORIGIN_GIT
+        )
+
+    def test_cors_preflight_vercel_preview_origin(
+        self, cors_client: TestClient
+    ) -> None:
+        """OPTIONS preflight with Vercel preview deployment origin returns 200.
+
+        This tests the allow_origin_regex pattern that matches:
+          https://dragonfly-console1-<hash>.vercel.app
+        """
+        response = cors_client.options(
+            "/api/health",
+            headers={
+                "Origin": self.PREVIEW_ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "X-DRAGONFLY-API-KEY",
+            },
+        )
+
+        assert response.status_code == 200, (
+            f"Preflight for Vercel preview origin failed with {response.status_code}. "
+            f"Headers: {dict(response.headers)}. "
+            f"Origin {self.PREVIEW_ORIGIN} should match regex pattern."
+        )
+        assert (
+            response.headers.get("Access-Control-Allow-Origin") == self.PREVIEW_ORIGIN
+        )
+
+    def test_cors_allows_credentials(self, cors_client: TestClient) -> None:
+        """CORS must allow credentials for cross-origin requests."""
+        response = cors_client.options(
+            "/api/health",
+            headers={
+                "Origin": self.PROD_ORIGIN,
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+        allow_credentials = response.headers.get("Access-Control-Allow-Credentials")
+        assert allow_credentials == "true", (
+            f"Expected Access-Control-Allow-Credentials: true, got: {allow_credentials}. "
+            f"This breaks cookie/auth header passing from Vercel console."
+        )
+
+    def test_cors_allows_api_key_header(self, cors_client: TestClient) -> None:
+        """CORS must allow X-DRAGONFLY-API-KEY header for authenticated requests."""
+        response = cors_client.options(
+            "/api/v1/intake/batches",
+            headers={
+                "Origin": self.PROD_ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "X-DRAGONFLY-API-KEY",
+            },
+        )
+
+        allow_headers = response.headers.get("Access-Control-Allow-Headers", "")
+        # Should either be "*" or include the specific header
+        assert allow_headers == "*" or "X-DRAGONFLY-API-KEY" in allow_headers, (
+            f"CORS must allow X-DRAGONFLY-API-KEY header, got: {allow_headers}. "
+            f"This breaks API authentication from Vercel console."
+        )
+
+    def test_cors_allows_all_methods(self, cors_client: TestClient) -> None:
+        """CORS must allow all HTTP methods for full API access."""
+        response = cors_client.options(
+            "/api/health",
+            headers={
+                "Origin": self.PROD_ORIGIN,
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+
+        allow_methods = response.headers.get("Access-Control-Allow-Methods", "")
+        # Must include POST for mutations
+        assert (
+            "POST" in allow_methods
+        ), f"CORS must allow POST method, got: {allow_methods}"
+
+    def test_cors_rejects_unknown_origin(self, cors_client: TestClient) -> None:
+        """CORS should not set Allow-Origin for untrusted origins."""
+        response = cors_client.options(
+            "/api/health",
+            headers={
+                "Origin": "https://evil.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+        # Starlette CORS returns 400 for disallowed origins
+        # OR returns 200 but without Allow-Origin header
+        allow_origin = response.headers.get("Access-Control-Allow-Origin")
+        assert (
+            allow_origin != "https://evil.com"
+        ), f"CORS allowed untrusted origin: {allow_origin}"

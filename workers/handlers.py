@@ -10,6 +10,19 @@ logger = logging.getLogger(__name__)
 _SUPABASE_CLIENT = None
 
 
+def is_demo_env() -> bool:
+    """
+    Returns True when running a demo / sandbox environment.
+
+    Tests monkeypatch this function to simulate demo behavior.
+    """
+    from backend.config import get_settings
+
+    settings = get_settings()
+    # Demo env is indicated by environment == "demo"
+    return settings.environment.lower() == "demo"
+
+
 def _get_supabase_client():
     global _SUPABASE_CLIENT
     if _SUPABASE_CLIENT is None:
@@ -59,7 +72,9 @@ def extract_template_code(job: Dict[str, Any]) -> Optional[str]:
 
 def update_case_status(case_number: str, status: str) -> None:
     client = _get_supabase_client()
-    client.table("judgments").update({"status": status}).eq("case_number", case_number).execute()
+    client.table("judgments").update({"status": status}).eq(
+        "case_number", case_number
+    ).execute()
 
 
 async def handle_enrich(job: Dict[str, Any]) -> bool:

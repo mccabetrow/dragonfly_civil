@@ -69,7 +69,7 @@ const SystemDiagnostic: FC = () => {
         ok: result.ok,
         status: result.status,
         environment: result.environment,
-        error: result.ok ? undefined : 'Health check failed',
+        error: result.ok ? undefined : (result.error ?? 'Health check failed'),
       });
     } catch (err) {
       setHealth({

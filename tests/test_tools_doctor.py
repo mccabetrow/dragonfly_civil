@@ -34,7 +34,11 @@ class FakeTable:
             return FakeResponse([{"case_id": FakeClient.CASE_UUID}])
         if self.name == "enrichment_runs" and self._operation == "select":
             return FakeResponse([])
-        if self.name == "enrichment_runs" and self._operation == "insert" and self._payload is not None:
+        if (
+            self.name == "enrichment_runs"
+            and self._operation == "insert"
+            and self._payload is not None
+        ):
             inserted = dict(self._payload)
             inserted.setdefault("id", 99)
             self.client.inserted_rows.append(inserted)
@@ -93,6 +97,7 @@ def test_doctor_reports_enrichment_runs_write_success(monkeypatch):
     monkeypatch.setattr(doctor, "create_supabase_client", lambda: fake_client)
     monkeypatch.setattr(doctor, "_generate_enrichment_run_id", lambda: 4242)
     monkeypatch.setattr(doctor, "_count_foil_responses", lambda: 0)
+    monkeypatch.setattr(doctor, "_ensure_collectability_view", lambda: None)
 
     runner = CliRunner()
     result = runner.invoke(doctor.main)

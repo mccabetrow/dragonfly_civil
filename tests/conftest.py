@@ -2,6 +2,10 @@
 tests/conftest.py
 
 Pytest configuration and shared fixtures for the Dragonfly Civil test suite.
+
+IMPORTANT: By default, all tests run against DEV Supabase (SUPABASE_MODE=dev).
+Tests that explicitly need PROD should set SUPABASE_MODE=prod themselves and
+are expected to be read-only / non-destructive.
 """
 
 from __future__ import annotations
@@ -12,6 +16,22 @@ from typing import Any, Callable
 
 import pytest
 
+# =============================================================================
+# GLOBAL TEST CONFIGURATION
+# =============================================================================
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """
+    Global pytest configuration.
+
+    Sets SUPABASE_MODE=dev by default to ensure tests never accidentally
+    hit production. This runs BEFORE any test collection.
+    """
+    if "SUPABASE_MODE" not in os.environ:
+        os.environ["SUPABASE_MODE"] = "dev"
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SKIP DECORATORS
 # ═══════════════════════════════════════════════════════════════════════════
@@ -20,9 +40,9 @@ import pytest
 def _has_db_connection() -> bool:
     """Check if database connection is available."""
     try:
-        from src.supabase_client import get_client
+        from src.supabase_client import create_supabase_client
 
-        client = get_client()
+        client = create_supabase_client()
         # Simple health check - just ensure we can get the client
         return client is not None
     except Exception:
@@ -54,9 +74,9 @@ def get_test_client():
     Get a Supabase client for testing.
     Returns the client or raises if not available.
     """
-    from src.supabase_client import get_client
+    from src.supabase_client import create_supabase_client
 
-    return get_client()
+    return create_supabase_client()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

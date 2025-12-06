@@ -1,6 +1,7 @@
 import React from 'react';
 import DemoLockCard from './DemoLockCard';
 import { DashboardError } from './DashboardError';
+import ApiErrorBanner from './ApiErrorBanner';
 import StatusMessage from './StatusMessage';
 import { DEFAULT_DEMO_LOCK_MESSAGE, type MetricsState } from '../hooks/metricsState';
 
@@ -37,6 +38,32 @@ function MetricsGate<TData>({
 
   if (state.status === 'error') {
     const message = state.errorMessage ?? 'We could not load this data.';
+
+    // Use ApiErrorBanner for auth and network errors (more contextual guidance)
+    if (state.isAuthError) {
+      return (
+        <ApiErrorBanner
+          isAuthError
+          message={message}
+          onRetry={onRetry}
+          className={className}
+        />
+      );
+    }
+
+    // Network/connection errors (not 404)
+    if (state.isError && !state.isNotFound) {
+      return (
+        <ApiErrorBanner
+          isNetworkError
+          message={message}
+          onRetry={onRetry}
+          className={className}
+        />
+      );
+    }
+
+    // Generic errors (404, validation, etc.) use DashboardError
     return (
       <DashboardError
         className={className}

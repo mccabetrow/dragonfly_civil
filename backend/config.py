@@ -161,6 +161,22 @@ class Settings(BaseSettings):
         # Default fallback for local dev
         return ["http://localhost:3000", "http://localhost:5173"]
 
+    @property
+    def cors_origin_regex(self) -> str | None:
+        """
+        Regex pattern for CORS origin matching.
+
+        Supports Vercel preview deployments like:
+          https://dragonfly-console1-<hash>.vercel.app
+          https://dragonfly-console1-git-<branch>-<user>.vercel.app
+
+        Returns None if DRAGONFLY_CORS_ORIGIN_REGEX is not set.
+        """
+        # Default pattern for Vercel preview deployments
+        # Matches: https://dragonfly-console1*.vercel.app
+        default_pattern = r"https://dragonfly-console1[\w-]*\.vercel\.app"
+        return default_pattern if self.environment in ("prod", "staging") else None
+
     # Server
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, description="Server port")

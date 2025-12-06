@@ -52,14 +52,24 @@ class DBHealthResponse(BaseModel):
     "",
     response_model=HealthResponse,
     summary="Basic health check",
-    description="Returns OK if the service is running.",
+    description="Returns OK if the service is running. No authentication required.",
 )
 async def health_check() -> HealthResponse:
     """
-    Basic health check endpoint.
+    Canonical health probe for the Dragonfly system.
 
-    Returns a simple status indicating the service is alive.
-    Used by load balancers and uptime monitors.
+    This endpoint is the primary health check for:
+    - Vercel console (SystemDiagnostic component)
+    - n8n workflow health monitors
+    - Railway load balancer
+    - Uptime monitoring services
+
+    Returns:
+        status: "ok" if service is running
+        timestamp: ISO 8601 UTC timestamp
+        environment: Current environment (dev/staging/prod)
+
+    No authentication required - this endpoint is public.
     """
     settings = get_settings()
     return HealthResponse(
