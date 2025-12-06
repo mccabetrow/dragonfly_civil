@@ -10,8 +10,6 @@ import {
   Users,
   Bell,
   Shield,
-  Database,
-  Zap,
   CheckCircle,
   XCircle,
   ExternalLink,
@@ -31,22 +29,6 @@ interface IntegrationCard {
 }
 
 const INTEGRATIONS: IntegrationCard[] = [
-  {
-    id: 'simplicity',
-    name: 'Simplicity CRM',
-    description: 'Syncs plaintiff data from your CRM. New cases appear automatically.',
-    icon: Database,
-    status: 'connected',
-    statusLabel: 'Connected',
-  },
-  {
-    id: 'n8n',
-    name: 'n8n Automations',
-    description: 'Sends Slack alerts and triggers workflows when things need attention.',
-    icon: Zap,
-    status: 'connected',
-    statusLabel: 'Active',
-  },
   {
     id: 'dialer',
     name: 'Outbound Dialer',
