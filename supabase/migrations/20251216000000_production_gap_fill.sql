@@ -83,6 +83,7 @@ COMMENT ON VIEW public.v_metrics_intake_daily IS 'Daily intake funnel rollups by
 -- 2. public.v_enforcement_pipeline_status
 -- Enforcement pipeline status for the dashboard
 -- =============================================================================
+DROP VIEW IF EXISTS public.v_enforcement_pipeline_status CASCADE;
 CREATE OR REPLACE VIEW public.v_enforcement_pipeline_status AS
 SELECT j.id AS judgment_id,
     j.case_number,
