@@ -119,6 +119,18 @@ class Settings(BaseSettings):
         default=None, description="OpenAI API key for embedding generation"
     )
 
+    # Proof.com (process server dispatch)
+    proof_api_key: str | None = Field(
+        default=None, description="Proof.com API key for process server dispatch"
+    )
+    proof_api_url: str | None = Field(
+        default=None,
+        description="Proof.com API URL (sandbox: https://api.sandbox.proof.com, prod: https://api.proof.com)",
+    )
+    proof_webhook_secret: str | None = Field(
+        default=None, description="Proof.com webhook signature verification secret"
+    )
+
     # Environment
     environment: Literal["dev", "staging", "prod"] = Field(
         default="dev", description="Deployment environment"

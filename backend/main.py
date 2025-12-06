@@ -51,6 +51,7 @@ from .routers.ops_guardian import router as ops_guardian_router  # noqa: E402
 from .routers.packets import router as packets_router  # noqa: E402
 from .routers.portfolio import router as portfolio_router  # noqa: E402
 from .routers.search import router as search_router  # noqa: E402
+from .routers.webhooks import router as webhooks_router  # noqa: E402
 from .scheduler import init_scheduler  # noqa: E402
 
 # Configure logging before anything else
@@ -251,6 +252,11 @@ def create_app() -> FastAPI:
         packets_router, prefix="/api", tags=["packets"]
     )  # internal: /v1/packets
     app.include_router(events_router, prefix="/api", tags=["events"])
+
+    # Webhooks - external service callbacks (Proof.com, etc.)
+    app.include_router(
+        webhooks_router, prefix="/api", tags=["webhooks"]
+    )  # internal: /v1/webhooks
 
     # Initialize scheduler (uses on_event internally)
     init_scheduler(app)
