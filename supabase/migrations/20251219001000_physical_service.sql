@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS enforcement.serve_jobs (
     -- Primary key
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     -- Foreign key to judgment being served
-    judgment_id UUID NOT NULL REFERENCES public.judgments(id) ON DELETE CASCADE,
+    judgment_id BIGINT NOT NULL REFERENCES public.judgments(id) ON DELETE CASCADE,
     -- Proof.com job reference
     provider_job_id VARCHAR(255) NOT NULL,
     provider VARCHAR(50) NOT NULL DEFAULT 'proof.com',
