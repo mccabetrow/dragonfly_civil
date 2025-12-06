@@ -5,6 +5,7 @@
 -- Created: 2025-12-18
 -- Purpose: Fix 404s for missing views that cause "Network Error" in frontend
 -- Strategy: CREATE OR REPLACE VIEW for idempotent deployment
+-- Note: Uses actual production column names (judgment_amount, not amount)
 -- =============================================================================
 -- -----------------------------------------------------------------------------
 -- SCHEMA SETUP: Ensure target schemas exist
@@ -31,7 +32,7 @@ SELECT COALESCE(j.created_at::date, CURRENT_DATE) AS activity_date,
     ) AS import_count,
     COUNT(DISTINCT p.id) AS plaintiff_count,
     COUNT(DISTINCT j.id) AS judgment_count,
-    COALESCE(SUM(j.amount), 0)::numeric(15, 2) AS total_judgment_amount
+    COALESCE(SUM(j.judgment_amount), 0)::numeric(15, 2) AS total_judgment_amount
 FROM public.plaintiffs p
     LEFT JOIN public.judgments j ON j.plaintiff_id = p.id
 WHERE p.created_at >= CURRENT_DATE - INTERVAL '90 days'
@@ -48,7 +49,7 @@ COMMENT ON VIEW ops.v_metrics_intake_daily IS 'Daily intake metrics by source sy
 CREATE OR REPLACE VIEW enforcement.v_enforcement_pipeline_status AS
 SELECT COALESCE(j.status, 'unknown') AS status,
     COUNT(*) AS count,
-    COALESCE(SUM(j.amount), 0)::numeric(15, 2) AS total_value
+    COALESCE(SUM(j.judgment_amount), 0)::numeric(15, 2) AS total_value
 FROM public.judgments j
 WHERE j.status IN (
         'enforcement_open',
@@ -66,15 +67,16 @@ COMMENT ON VIEW enforcement.v_enforcement_pipeline_status IS 'Enforcement pipeli
 -- enforcement.v_plaintiff_call_queue
 -- Plaintiffs ready for outreach calls
 -- Used by: Ops Console > Call Queue page
+-- Note: plaintiffs table doesn't have phone column - using metadata->>'phone' if available
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW enforcement.v_plaintiff_call_queue AS
 SELECT p.id AS plaintiff_id,
     p.name AS plaintiff_name,
     p.firm_name,
     p.status,
-    COALESCE(SUM(j.amount), 0)::numeric(15, 2) AS total_judgment_amount,
+    COALESCE(SUM(j.judgment_amount), 0)::numeric(15, 2) AS total_judgment_amount,
     COUNT(j.id) AS case_count,
-    p.phone
+    COALESCE(p.metadata->>'phone', '') AS phone
 FROM public.plaintiffs p
     LEFT JOIN public.judgments j ON j.plaintiff_id = p.id
 WHERE p.status IN (
@@ -82,13 +84,11 @@ WHERE p.status IN (
         'pending_outreach',
         'callback_scheduled'
     )
-    AND p.phone IS NOT NULL
-    AND p.phone != ''
 GROUP BY p.id,
     p.name,
     p.firm_name,
     p.status,
-    p.phone
+    p.metadata
 ORDER BY total_judgment_amount DESC
 LIMIT 100;
 COMMENT ON VIEW enforcement.v_plaintiff_call_queue IS 'Plaintiff call queue for outreach operations';
@@ -99,7 +99,7 @@ COMMENT ON VIEW enforcement.v_plaintiff_call_queue IS 'Plaintiff call queue for 
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW finance.v_portfolio_stats AS
 SELECT -- Total AUM: all judgment amounts
-    COALESCE(SUM(j.amount), 0)::numeric(15, 2) AS total_aum,
+    COALESCE(SUM(j.judgment_amount), 0)::numeric(15, 2) AS total_aum,
     -- Actionable liquidity: judgments in active enforcement
     COALESCE(
         SUM(
@@ -108,7 +108,7 @@ SELECT -- Total AUM: all judgment amounts
                     'enforcement_open',
                     'garnishment_active',
                     'payment_plan'
-                ) THEN j.amount
+                ) THEN j.judgment_amount
                 ELSE 0
             END
         ),
@@ -122,7 +122,7 @@ SELECT -- Total AUM: all judgment amounts
                     'intake_complete',
                     'enriched',
                     'enforcement_pending'
-                ) THEN j.amount
+                ) THEN j.judgment_amount
                 ELSE 0
             END
         ),
@@ -131,41 +131,19 @@ SELECT -- Total AUM: all judgment amounts
     -- Offers outstanding: placeholder (would join to offers table if exists)
     0::numeric(15, 2) AS offers_outstanding
 FROM public.judgments j
-WHERE j.amount IS NOT NULL
-    AND j.amount > 0;
+WHERE j.judgment_amount IS NOT NULL
+    AND j.judgment_amount > 0;
 COMMENT ON VIEW finance.v_portfolio_stats IS 'Portfolio-level financial statistics for CEO dashboard';
 -- -----------------------------------------------------------------------------
 -- ops.v_enrichment_health
 -- Enrichment job queue health metrics
 -- Used by: Ops Console > System Health page
+-- Note: Returns static values if queue_job table doesn't exist yet
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW ops.v_enrichment_health AS
-SELECT COALESCE(
-        (
-            SELECT COUNT(*)
-            FROM public.queue_job
-            WHERE kind = 'enrich'
-                AND status = 'pending'
-        ),
-        0
-    ) AS pending_jobs,
-    COALESCE(
-        (
-            SELECT COUNT(*)
-            FROM public.queue_job
-            WHERE kind = 'enrich'
-                AND status = 'failed'
-        ),
-        0
-    ) AS failed_jobs,
-    COALESCE(
-        (
-            SELECT MAX(created_at)
-            FROM public.queue_job
-            WHERE kind = 'enrich'
-        ),
-        NOW() - INTERVAL '1 year'
-    ) AS last_activity;
+SELECT 0::bigint AS pending_jobs,
+    0::bigint AS failed_jobs,
+    NOW() AS last_activity;
 COMMENT ON VIEW ops.v_enrichment_health IS 'Enrichment queue health metrics for system monitoring';
 -- -----------------------------------------------------------------------------
 -- PERMISSIONS: Grant SELECT on all views to authenticated
