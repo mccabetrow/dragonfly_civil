@@ -90,6 +90,25 @@ Invoke-Step "pytest suite" {
     & $pythonExe -m pytest @PytestArgs
 }
 
-Write-Host "`n[OK] Dev preflight complete. All checks are green." -ForegroundColor Green
-Write-Host "Environment: $SupabaseEnv"
-Write-Host "Steps: db_push (checks) → check_schema_consistency → config_check → security_audit → doctor_all → pytest"
+# ─────────────────────────────────────────────────────────────────────────────
+# PASS/FAIL Summary
+# ─────────────────────────────────────────────────────────────────────────────
+$stepCount = 6
+Write-Host ""
+Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "  PREFLIGHT RESULT: PASS" -ForegroundColor Green
+Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Environment:  $SupabaseEnv" -ForegroundColor White
+Write-Host "  Steps Run:    $stepCount / $stepCount" -ForegroundColor White
+Write-Host ""
+Write-Host "  ✓ db_push (checks)" -ForegroundColor Green
+Write-Host "  ✓ check_schema_consistency" -ForegroundColor Green
+Write-Host "  ✓ config_check" -ForegroundColor Green
+Write-Host "  ✓ security_audit" -ForegroundColor Green
+Write-Host "  ✓ doctor_all" -ForegroundColor Green
+Write-Host "  ✓ pytest" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Ready for development. All systems operational." -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+exit 0
