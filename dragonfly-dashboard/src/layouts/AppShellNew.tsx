@@ -15,8 +15,10 @@ import {
   Headphones,
   TrendingUp,
   Terminal,
+  PieChart,
 } from 'lucide-react';
 import ReleaseNotesModal, { useReleaseNotesModal } from '../components/ReleaseNotesModal';
+import SystemDiagnostic from '../components/SystemDiagnostic';
 import { cn } from '../lib/design-tokens';
 import { Button, IconButton } from '../components/ui/Button';
 import { useRefreshBus } from '../context/RefreshContext';
@@ -38,6 +40,12 @@ const MAIN_NAVIGATION: NavigationItem[] = [
     path: '/ceo/overview',
     icon: TrendingUp,
     description: 'Executive portfolio summary',
+  },
+  {
+    label: 'Portfolio',
+    path: '/finance/portfolio',
+    icon: PieChart,
+    description: 'AUM & financial metrics',
   },
   {
     label: 'Overview',
@@ -200,6 +208,11 @@ const AppShellNew: FC = () => {
               <NavItem key={item.path} item={item} />
             ))}
           </nav>
+
+          {/* System diagnostic badge */}
+          <div className="mx-3 mb-3">
+            <SystemDiagnostic />
+          </div>
 
           {/* Help card */}
           <div className="mx-3 mb-4 rounded-xl border border-slate-700/60 bg-gradient-to-br from-slate-800/80 to-slate-800/40 p-4">

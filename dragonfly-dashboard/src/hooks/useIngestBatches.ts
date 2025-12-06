@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useOnRefresh } from '../context/RefreshContext';
+import { apiClient, AuthError, NotFoundError } from '../lib/apiClient';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -54,49 +55,24 @@ export interface IngestApiError {
   status: number;
   message: string;
   isAuthError: boolean;
+  isNotFound?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// API HELPERS
+// HELPER: Convert apiClient errors to IngestApiError
 // ═══════════════════════════════════════════════════════════════════════════
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-const API_KEY = import.meta.env.VITE_DRAGONFLY_API_KEY || '';
-
-function getHeaders(): HeadersInit {
-  return {
-    'X-API-KEY': API_KEY,
-  };
-}
-
-function getJsonHeaders(): HeadersInit {
-  return {
-    'X-API-KEY': API_KEY,
-    'Content-Type': 'application/json',
-  };
-}
-
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const isAuthError = response.status === 401 || response.status === 403;
-    let message = `HTTP ${response.status}`;
-
-    try {
-      const body = await response.json();
-      message = body.detail || body.message || message;
-    } catch {
-      // Ignore JSON parse errors
-    }
-
-    const error: IngestApiError = {
-      status: response.status,
-      message,
-      isAuthError,
-    };
-    throw error;
+function toIngestError(err: unknown): IngestApiError {
+  if (err instanceof AuthError) {
+    return { status: 401, message: err.message, isAuthError: true, isNotFound: false };
   }
-
-  return response.json() as Promise<T>;
+  if (err instanceof NotFoundError) {
+    return { status: 404, message: err.message, isAuthError: false, isNotFound: true };
+  }
+  if (err instanceof Error) {
+    return { status: 500, message: err.message, isAuthError: false, isNotFound: false };
+  }
+  return { status: 500, message: 'Unknown error', isAuthError: false, isNotFound: false };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -104,48 +80,26 @@ async function handleResponse<T>(response: Response): Promise<T> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function uploadSimplicityCSV(file: File): Promise<UploadResult> {
-  const formData = new FormData();
-  formData.append('file', file);
-
-  const response = await fetch(`${API_BASE}/api/v1/ingest/simplicity/upload`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: formData,
-  });
-
-  return handleResponse<UploadResult>(response);
+  return apiClient.upload<UploadResult>('/api/v1/ingest/simplicity/upload', file);
 }
 
 export async function fetchBatches(limit = 50): Promise<IngestBatch[]> {
-  const response = await fetch(`${API_BASE}/api/v1/ingest/batches?limit=${limit}`, {
-    headers: getHeaders(),
-  });
-
-  const data = await handleResponse<{ batches: IngestBatch[]; count: number }>(response);
+  const data = await apiClient.get<{ batches: IngestBatch[]; count: number }>(
+    `/api/v1/ingest/batches?limit=${limit}`
+  );
   return data.batches;
 }
 
 export async function fetchBatchDetail(batchId: string): Promise<IngestBatch> {
-  const response = await fetch(`${API_BASE}/api/v1/ingest/batch/${batchId}`, {
-    headers: getHeaders(),
-  });
-
-  return handleResponse<IngestBatch>(response);
+  return apiClient.get<IngestBatch>(`/api/v1/ingest/batch/${batchId}`);
 }
 
 export async function fetchBatchErrors(
   batchId: string,
   limit = 100
 ): Promise<BatchErrorRow[]> {
-  const response = await fetch(
-    `${API_BASE}/api/v1/ingest/batch/${batchId}/errors?limit=${limit}`,
-    {
-      headers: getHeaders(),
-    }
-  );
-
-  const data = await handleResponse<{ batch_id: string; errors: BatchErrorRow[]; count: number }>(
-    response
+  const data = await apiClient.get<{ batch_id: string; errors: BatchErrorRow[]; count: number }>(
+    `/api/v1/ingest/batch/${batchId}/errors?limit=${limit}`
   );
   return data.errors;
 }
@@ -153,12 +107,7 @@ export async function fetchBatchErrors(
 export async function processBatch(
   batchId: string
 ): Promise<{ status: string; rows_inserted: number; rows_updated: number }> {
-  const response = await fetch(`${API_BASE}/api/v1/ingest/batch/${batchId}/process`, {
-    method: 'POST',
-    headers: getJsonHeaders(),
-  });
-
-  return handleResponse(response);
+  return apiClient.post(`/api/v1/ingest/batch/${batchId}/process`, {});
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -185,7 +134,7 @@ export function useIngestBatches(): UseIngestBatchesResult {
       const data = await fetchBatches();
       setBatches(data);
     } catch (err) {
-      setError(err as IngestApiError);
+      setError(toIngestError(err));
     } finally {
       setLoading(false);
     }
@@ -238,7 +187,7 @@ export function useBatchDetail(batchId: string | null): UseBatchDetailResult {
       setBatch(batchData);
       setErrors(errorsData);
     } catch (err) {
-      setError(err as IngestApiError);
+      setError(toIngestError(err));
     } finally {
       setLoading(false);
     }

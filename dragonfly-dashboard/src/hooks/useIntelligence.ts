@@ -2,10 +2,11 @@
  * useIntelligence
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Hook for fetching intelligence graph data via the backend API.
+ * Hook for fetching intelligence graph data via apiClient.
  * Returns entities and relationships for a given judgment.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { apiClient, AuthError, NotFoundError } from '../lib/apiClient';
 import { IS_DEMO_MODE } from '../lib/supabaseClient';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -39,16 +40,32 @@ export interface IntelligenceResult {
   data: IntelligenceData | null;
   loading: boolean;
   error: string | null;
+  isAuthError: boolean;
+  isNotFound: boolean;
   refetch: () => void;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONFIG
+// API RESPONSE
 // ═══════════════════════════════════════════════════════════════════════════
 
-function getApiBaseUrl(): string {
-  const envUrl = import.meta.env.VITE_API_BASE_URL;
-  return envUrl || '';
+interface ApiIntelligenceResponse {
+  judgment_id: number;
+  entities: Array<{
+    id: string;
+    type: string;
+    raw_name: string;
+    normalized_name: string;
+    metadata?: Record<string, unknown>;
+  }>;
+  relationships: Array<{
+    id: string;
+    source_entity_id: string;
+    target_entity_id: string;
+    relation: string;
+    confidence: number;
+    source_judgment_id: number | null;
+  }>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -59,11 +76,15 @@ export function useIntelligence(judgmentId: number | null): IntelligenceResult {
   const [data, setData] = useState<IntelligenceData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthError, setIsAuthError] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!judgmentId) {
       setData(null);
       setError(null);
+      setIsAuthError(false);
+      setIsNotFound(false);
       return;
     }
 
@@ -114,50 +135,50 @@ export function useIntelligence(judgmentId: number | null): IntelligenceResult {
         ],
       });
       setLoading(false);
+      setIsAuthError(false);
+      setIsNotFound(false);
       return;
     }
 
     setLoading(true);
     setError(null);
+    setIsAuthError(false);
+    setIsNotFound(false);
 
     try {
-      const baseUrl = getApiBaseUrl();
-      const response = await fetch(`${baseUrl}/api/v1/intelligence/judgment/${judgmentId}`);
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          setError('No intelligence data found for this judgment');
-        } else {
-          const errorData = await response.json().catch(() => ({}));
-          setError(errorData.detail || `API error: ${response.status}`);
-        }
-        setData(null);
-        return;
-      }
-
-      const json = await response.json();
+      const json = await apiClient.get<ApiIntelligenceResponse>(
+        `/api/v1/intelligence/judgment/${judgmentId}`
+      );
 
       // Transform snake_case to camelCase
       setData({
         judgmentId: json.judgment_id,
-        entities: (json.entities || []).map((e: Record<string, unknown>) => ({
+        entities: (json.entities || []).map((e) => ({
           id: e.id,
-          type: e.type,
+          type: e.type as IntelligenceEntity['type'],
           rawName: e.raw_name,
           normalizedName: e.normalized_name,
           metadata: e.metadata || {},
         })),
-        relationships: (json.relationships || []).map((r: Record<string, unknown>) => ({
+        relationships: (json.relationships || []).map((r) => ({
           id: r.id,
           sourceEntityId: r.source_entity_id,
           targetEntityId: r.target_entity_id,
-          relation: r.relation,
+          relation: r.relation as IntelligenceRelationship['relation'],
           confidence: r.confidence,
           sourceJudgmentId: r.source_judgment_id,
         })),
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch intelligence data');
+      if (err instanceof AuthError) {
+        setError('Authentication failed – check your API key');
+        setIsAuthError(true);
+      } else if (err instanceof NotFoundError) {
+        setError('No intelligence data found for this judgment');
+        setIsNotFound(true);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to fetch intelligence data');
+      }
       setData(null);
     } finally {
       setLoading(false);
@@ -172,6 +193,8 @@ export function useIntelligence(judgmentId: number | null): IntelligenceResult {
     data,
     loading,
     error,
+    isAuthError,
+    isNotFound,
     refetch: fetchData,
   };
 }

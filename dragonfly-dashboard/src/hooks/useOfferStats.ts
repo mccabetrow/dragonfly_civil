@@ -2,10 +2,11 @@
  * useOfferStats
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Hook for fetching offer statistics via the backend API.
+ * Hook for fetching offer statistics via apiClient.
  * Returns aggregate funnel metrics for offers.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { apiClient, AuthError, NotFoundError } from '../lib/apiClient';
 import { IS_DEMO_MODE } from '../lib/supabaseClient';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -29,16 +30,21 @@ export interface OfferStatsResult {
   data: OfferStatsData | null;
   loading: boolean;
   error: string | null;
+  isAuthError: boolean;
+  isNotFound: boolean;
   refetch: () => void;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONFIG
+// API RESPONSE
 // ═══════════════════════════════════════════════════════════════════════════
 
-function getApiBaseUrl(): string {
-  const envUrl = import.meta.env.VITE_API_BASE_URL;
-  return envUrl || '';
+interface ApiOfferStats {
+  total_offers: number;
+  accepted: number;
+  rejected: number;
+  negotiation: number;
+  conversion_rate: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -49,6 +55,8 @@ export function useOfferStats(filters?: OfferStatsFilters): OfferStatsResult {
   const [data, setData] = useState<OfferStatsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthError, setIsAuthError] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (IS_DEMO_MODE) {
@@ -66,31 +74,18 @@ export function useOfferStats(filters?: OfferStatsFilters): OfferStatsResult {
 
     setLoading(true);
     setError(null);
+    setIsAuthError(false);
+    setIsNotFound(false);
 
     try {
-      const baseUrl = getApiBaseUrl();
       const params = new URLSearchParams();
-
-      if (filters?.fromDate) {
-        params.set('from_date', filters.fromDate);
-      }
-      if (filters?.toDate) {
-        params.set('to_date', filters.toDate);
-      }
+      if (filters?.fromDate) params.set('from_date', filters.fromDate);
+      if (filters?.toDate) params.set('to_date', filters.toDate);
 
       const queryString = params.toString();
-      const url = `${baseUrl}/api/v1/offers/stats${queryString ? `?${queryString}` : ''}`;
+      const url = `/api/v1/offers/stats${queryString ? `?${queryString}` : ''}`;
 
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || `API error: ${response.status}`);
-        setData(null);
-        return;
-      }
-
-      const json = await response.json();
+      const json = await apiClient.get<ApiOfferStats>(url);
 
       setData({
         totalOffers: json.total_offers,
@@ -100,7 +95,17 @@ export function useOfferStats(filters?: OfferStatsFilters): OfferStatsResult {
         conversionRate: json.conversion_rate,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch offer stats');
+      if (err instanceof AuthError) {
+        setIsAuthError(true);
+        setError('Invalid API key – check environment variables.');
+        console.error('[useOfferStats] Auth error:', err);
+      } else if (err instanceof NotFoundError) {
+        setIsNotFound(true);
+        setData(null);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to fetch offer stats');
+        console.error('[useOfferStats] Error:', err);
+      }
       setData(null);
     } finally {
       setLoading(false);
@@ -115,6 +120,8 @@ export function useOfferStats(filters?: OfferStatsFilters): OfferStatsResult {
     data,
     loading,
     error,
+    isAuthError,
+    isNotFound,
     refetch: fetchData,
   };
 }

@@ -2,11 +2,12 @@
  * useEnforcementRadar
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Supabase hook for the enforcement.v_radar view.
- * Returns prioritized buy/contingency candidates with collectability scores.
+ * Fetches prioritized buy/contingency candidates via apiClient.
+ * Returns RadarRow[] with collectability scores.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { IS_DEMO_MODE, demoSafeSelect, supabaseClient } from '../lib/supabaseClient';
+import { apiClient, AuthError, NotFoundError } from '../lib/apiClient';
+import { IS_DEMO_MODE } from '../lib/supabaseClient';
 import {
   buildDemoLockedState,
   buildErrorMetricsState,
@@ -44,6 +45,20 @@ export interface RadarFilters {
   minAmount?: number;
 }
 
+interface ApiRadarRow {
+  id: string;
+  case_number: string;
+  plaintiff_name: string;
+  defendant_name: string;
+  judgment_amount: number;
+  collectability_score: number | null;
+  offer_strategy: string;
+  court: string | null;
+  county: string | null;
+  judgment_date: string | null;
+  created_at: string;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // HOOK
 // ═══════════════════════════════════════════════════════════════════════════
@@ -64,38 +79,24 @@ export function useEnforcementRadar(
     setSnapshot((previous) => buildLoadingMetricsState(previous));
 
     try {
-      let query = supabaseClient
-        .from('v_radar')
-        .select(
-          'id, case_number, plaintiff_name, defendant_name, judgment_amount, collectability_score, offer_strategy, court, county, judgment_date, created_at'
-        )
-        .order('collectability_score', { ascending: false, nullsFirst: false })
-        .order('judgment_amount', { ascending: false });
-
-      // Apply filters
+      // Build query params for filtering
+      const params = new URLSearchParams();
       if (filters?.strategy && filters.strategy !== 'ALL') {
-        query = query.eq('offer_strategy', filters.strategy);
+        params.set('strategy', filters.strategy);
       }
       if (filters?.minScore !== undefined && filters.minScore > 0) {
-        query = query.gte('collectability_score', filters.minScore);
+        params.set('min_score', String(filters.minScore));
       }
       if (filters?.minAmount !== undefined && filters.minAmount > 0) {
-        query = query.gte('judgment_amount', filters.minAmount);
+        params.set('min_amount', String(filters.minAmount));
       }
 
-      const result = await demoSafeSelect<Array<Record<string, unknown>> | null>(query);
+      const queryString = params.toString();
+      const path = `/api/v1/enforcement/radar${queryString ? `?${queryString}` : ''}`;
 
-      if (result.kind === 'demo_locked') {
-        setSnapshot(buildDemoLockedState<RadarRow[]>());
-        return;
-      }
+      const rows = await apiClient.get<ApiRadarRow[]>(path);
 
-      if (result.kind === 'error') {
-        throw result.error;
-      }
-
-      const rows = (result.data ?? []) as Array<Record<string, unknown>>;
-      const normalized: RadarRow[] = rows.map((row) => ({
+      const normalized: RadarRow[] = (rows ?? []).map((row) => ({
         id: String(row.id ?? ''),
         caseNumber: String(row.case_number ?? ''),
         plaintiffName: String(row.plaintiff_name ?? ''),
@@ -111,17 +112,30 @@ export function useEnforcementRadar(
 
       setSnapshot(buildReadyMetricsState(normalized));
     } catch (err) {
-      const error =
-        err instanceof Error
-          ? err
-          : typeof err === 'string'
-          ? err
-          : new Error('Unable to load enforcement radar.');
-      setSnapshot(
-        buildErrorMetricsState<RadarRow[]>(error, {
-          message: 'Unable to load enforcement radar. The v_radar view may not exist yet.',
-        })
-      );
+      console.error('[useEnforcementRadar]', err);
+
+      if (err instanceof AuthError) {
+        setSnapshot(
+          buildErrorMetricsState<RadarRow[]>(err, {
+            message: 'Invalid API key – check Vercel VITE_DRAGONFLY_API_KEY vs Railway DRAGONFLY_API_KEY.',
+            isAuthError: true,
+          })
+        );
+      } else if (err instanceof NotFoundError) {
+        setSnapshot(
+          buildErrorMetricsState<RadarRow[]>(err, {
+            message: 'Metrics/view not configured yet.',
+            isNotFound: true,
+          })
+        );
+      } else {
+        const error = err instanceof Error ? err : new Error('Unable to load enforcement radar.');
+        setSnapshot(
+          buildErrorMetricsState<RadarRow[]>(error, {
+            message: 'Unable to load enforcement radar. Please try again.',
+          })
+        );
+      }
     }
   }, [filters?.strategy, filters?.minScore, filters?.minAmount]);
 

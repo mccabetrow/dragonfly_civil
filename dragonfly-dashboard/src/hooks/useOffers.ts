@@ -3,8 +3,10 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Hook for creating offers and fetching offer history for a judgment.
+ * Uses unified apiClient for all API calls.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { apiClient, AuthError, NotFoundError, ApiError } from '../lib/apiClient';
 import { IS_DEMO_MODE } from '../lib/supabaseClient';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -36,17 +38,24 @@ export interface OffersResult {
   offers: Offer[];
   loading: boolean;
   error: string | null;
+  isAuthError: boolean;
+  isNotFound: boolean;
   createOffer: (payload: CreateOfferPayload) => Promise<CreateOfferResult>;
   refetch: () => void;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONFIG
+// API RESPONSE TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-function getApiBaseUrl(): string {
-  const envUrl = import.meta.env.VITE_API_BASE_URL;
-  return envUrl || '';
+interface ApiOffer {
+  id: string;
+  judgment_id: number;
+  offer_amount: number;
+  offer_type: 'purchase' | 'contingency';
+  status: Offer['status'];
+  operator_notes?: string;
+  created_at: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -57,11 +66,15 @@ export function useOffers(judgmentId: number | null): OffersResult {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthError, setIsAuthError] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
 
   const fetchOffers = useCallback(async () => {
     if (!judgmentId) {
       setOffers([]);
       setError(null);
+      setIsAuthError(false);
+      setIsNotFound(false);
       return;
     }
 
@@ -84,39 +97,42 @@ export function useOffers(judgmentId: number | null): OffersResult {
 
     setLoading(true);
     setError(null);
+    setIsAuthError(false);
+    setIsNotFound(false);
 
     try {
-      const baseUrl = getApiBaseUrl();
-      const response = await fetch(`${baseUrl}/api/v1/offers?judgment_id=${judgmentId}`);
+      const data = await apiClient.get<ApiOffer[] | { offers: ApiOffer[] }>(
+        `/api/v1/offers?judgment_id=${judgmentId}`
+      );
 
-      if (!response.ok) {
-        // If 404, that's fine - no offers yet
-        if (response.status === 404) {
-          setOffers([]);
-          return;
-        }
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || `API error: ${response.status}`);
-        setOffers([]);
-        return;
-      }
-
-      const json = await response.json();
-      const offersList = Array.isArray(json) ? json : json.offers || [];
-
+      const offersList = Array.isArray(data) ? data : data.offers || [];
       setOffers(
-        offersList.map((o: Record<string, unknown>) => ({
-          id: o.id as string,
-          judgmentId: o.judgment_id as number,
-          offerAmount: o.offer_amount as number,
-          offerType: o.offer_type as 'purchase' | 'contingency',
-          status: o.status as Offer['status'],
-          operatorNotes: (o.operator_notes as string) || '',
-          createdAt: o.created_at as string,
+        offersList.map((o) => ({
+          id: o.id,
+          judgmentId: o.judgment_id,
+          offerAmount: o.offer_amount,
+          offerType: o.offer_type,
+          status: o.status,
+          operatorNotes: o.operator_notes || '',
+          createdAt: o.created_at,
         }))
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch offers');
+      if (err instanceof AuthError) {
+        setIsAuthError(true);
+        setError('Invalid API key – check console environment variables.');
+        console.error('[useOffers] Auth error:', err);
+      } else if (err instanceof NotFoundError) {
+        // 404 means no offers yet - that's fine
+        setIsNotFound(true);
+        setOffers([]);
+      } else if (err instanceof ApiError) {
+        setError(`API error: ${err.status}`);
+        console.error('[useOffers] API error:', err);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to fetch offers');
+        console.error('[useOffers] Error:', err);
+      }
       setOffers([]);
     } finally {
       setLoading(false);
@@ -140,21 +156,8 @@ export function useOffers(judgmentId: number | null): OffersResult {
       }
 
       try {
-        const baseUrl = getApiBaseUrl();
-        const response = await fetch(`${baseUrl}/api/v1/offers`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
+        const json = await apiClient.post<ApiOffer>('/api/v1/offers', payload);
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          return { ok: false, error: errorData.detail || `API error: ${response.status}` };
-        }
-
-        const json = await response.json();
         const offer: Offer = {
           id: json.id,
           judgmentId: json.judgment_id,
@@ -170,6 +173,9 @@ export function useOffers(judgmentId: number | null): OffersResult {
 
         return { ok: true, offer };
       } catch (err) {
+        if (err instanceof AuthError) {
+          return { ok: false, error: 'Invalid API key – check environment variables.' };
+        }
         return {
           ok: false,
           error: err instanceof Error ? err.message : 'Failed to create offer',
@@ -187,6 +193,8 @@ export function useOffers(judgmentId: number | null): OffersResult {
     offers,
     loading,
     error,
+    isAuthError,
+    isNotFound,
     createOffer,
     refetch: fetchOffers,
   };

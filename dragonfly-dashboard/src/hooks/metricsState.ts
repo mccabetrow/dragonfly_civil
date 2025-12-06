@@ -6,6 +6,12 @@ export interface MetricsSnapshot<TData> {
   error: Error | string | null;
   errorMessage: string | null;
   lockMessage?: string | null;
+  /** True if error was AuthError (401/403) */
+  isAuthError: boolean;
+  /** True if error was NotFoundError (404) */
+  isNotFound: boolean;
+  /** True if error was a general API or network error */
+  isError: boolean;
 }
 
 export type MetricsState<TData> = MetricsSnapshot<TData>;
@@ -25,6 +31,9 @@ export function buildInitialMetricsState<TData>(): MetricsState<TData> {
     error: null,
     errorMessage: null,
     lockMessage: null,
+    isAuthError: false,
+    isNotFound: false,
+    isError: false,
   } satisfies MetricsState<TData>;
 }
 
@@ -35,6 +44,9 @@ export function buildLoadingMetricsState<TData>(previous?: MetricsState<TData>):
     error: null,
     errorMessage: null,
     lockMessage: null,
+    isAuthError: false,
+    isNotFound: false,
+    isError: false,
   } satisfies MetricsState<TData>;
 }
 
@@ -45,6 +57,9 @@ export function buildDemoLockedState<TData>(lockMessage: string = DEFAULT_DEMO_L
     error: null,
     errorMessage: lockMessage,
     lockMessage,
+    isAuthError: false,
+    isNotFound: false,
+    isError: false,
   } satisfies MetricsState<TData>;
 }
 
@@ -55,20 +70,37 @@ export function buildReadyMetricsState<TData>(data: TData): MetricsState<TData> 
     error: null,
     errorMessage: null,
     lockMessage: null,
+    isAuthError: false,
+    isNotFound: false,
+    isError: false,
   } satisfies MetricsState<TData>;
+}
+
+export interface ErrorStateOptions {
+  message?: string | null;
+  isAuthError?: boolean;
+  isNotFound?: boolean;
 }
 
 export function buildErrorMetricsState<TData>(
   error: Error | string,
-  options?: { message?: string | null },
+  options?: ErrorStateOptions,
 ): MetricsState<TData> {
   const errorMessage = options?.message ?? deriveErrorMessage(error) ?? 'Unable to load metrics.';
+  const isAuthError = options?.isAuthError ?? false;
+  const isNotFound = options?.isNotFound ?? false;
+  // isError is true for general errors (not auth or not found)
+  const isError = !isAuthError && !isNotFound;
+  
   return {
     status: 'error',
     data: null,
     error,
     errorMessage,
     lockMessage: null,
+    isAuthError,
+    isNotFound,
+    isError,
   } satisfies MetricsState<TData>;
 }
 

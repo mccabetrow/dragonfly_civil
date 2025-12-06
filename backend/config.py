@@ -3,6 +3,49 @@ Dragonfly Engine - Configuration
 
 Pydantic Settings for environment-based configuration.
 Loads from .env file and environment variables.
+
+================================================================================
+SINGLE SOURCE OF TRUTH – PRODUCTION ENVIRONMENT VARIABLE REFERENCE
+================================================================================
+
+REQUIRED for application startup:
+  SUPABASE_URL             – Supabase project REST URL (https://xxx.supabase.co)
+  SUPABASE_SERVICE_ROLE_KEY– Service role JWT (server-side only, 100+ chars)
+  SUPABASE_DB_URL          – Postgres connection string (pooler recommended)
+
+REQUIRED for Railway production behavior:
+  ENVIRONMENT=prod         – Enables rate limiting, stricter logging
+  SUPABASE_MODE=prod       – Used by Python scripts/tools for DSN resolution
+  PORT                     – Injected by Railway; default fallback is 8888
+
+REQUIRED for API key authentication (X-API-Key header):
+  DRAGONFLY_API_KEY        – Read from os.environ ONLY (not file secrets)
+                             If missing in prod, logs warning but does not crash
+
+OPTIONAL – Notification integrations:
+  DISCORD_WEBHOOK_URL      – Discord alerts for intake failures, escalations
+  SENDGRID_API_KEY         – Email notifications (CEO briefing, alerts)
+  SENDGRID_FROM_EMAIL      – Default sender for SendGrid
+  TWILIO_ACCOUNT_SID       – SMS notifications
+  TWILIO_AUTH_TOKEN        – Twilio auth
+  TWILIO_FROM_NUMBER       – E.164 format sender number
+
+OPTIONAL – Recipients:
+  CEO_EMAIL                – Executive briefings
+  OPS_EMAIL                – Operational alerts
+  OPS_PHONE                – SMS alerts (E.164 format)
+
+OPTIONAL – Advanced:
+  OPENAI_API_KEY           – Embedding generation for semantic search
+  SUPABASE_JWT_SECRET      – JWT token validation (if using Supabase Auth JWTs)
+  LOG_LEVEL                – DEBUG/INFO/WARNING/ERROR (default: INFO)
+
+DEPLOYMENT NOTES:
+  - Railway injects env vars at runtime; never use file-based /secrets/ paths.
+  - Never commit secrets; Railway encrypts env vars at rest.
+  - For local dev, copy .env.example to .env and fill in values.
+  - Run `python -m tools.doctor --env prod` after any config change.
+================================================================================
 """
 
 import logging
@@ -17,15 +60,7 @@ class Settings(BaseSettings):
     """
     Application settings loaded from environment variables.
 
-    Required env vars:
-        SUPABASE_URL: Supabase project URL
-        SUPABASE_SERVICE_ROLE_KEY: Service role key for admin operations
-        SUPABASE_DB_URL: Direct Postgres connection string (pooler or direct)
-
-    Optional:
-        DISCORD_WEBHOOK_URL: Discord webhook for notifications
-        ENVIRONMENT: dev/staging/prod
-        LOG_LEVEL: DEBUG/INFO/WARNING/ERROR
+    See module docstring for the complete production env var reference.
     """
 
     model_config = SettingsConfigDict(

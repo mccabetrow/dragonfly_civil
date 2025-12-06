@@ -3,9 +3,10 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Custom hooks for fetching entity and judgment timelines from the
- * Intelligence API.
+ * Intelligence API. Uses unified apiClient for all API calls.
  */
 import { useState, useEffect, useCallback } from 'react';
+import { apiClient, AuthError, NotFoundError } from '../lib/apiClient';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -28,6 +29,8 @@ interface UseTimelineResult {
   events: TimelineEvent[];
   isLoading: boolean;
   error: string | null;
+  isAuthError: boolean;
+  isNotFound: boolean;
   refetch: () => void;
 }
 
@@ -37,10 +40,6 @@ interface UseTimelineResult {
 
 /**
  * Fetch timeline events for an entity by entity ID.
- *
- * @param entityId - UUID of the entity
- * @param limit - Maximum number of events to return (default: 100)
- * @returns Timeline events, loading state, and error
  */
 export function useEntityTimeline(
   entityId: string | undefined,
@@ -49,6 +48,8 @@ export function useEntityTimeline(
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthError, setIsAuthError] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refetch = useCallback(() => {
@@ -60,6 +61,8 @@ export function useEntityTimeline(
       setEvents([]);
       setIsLoading(false);
       setError(null);
+      setIsAuthError(false);
+      setIsNotFound(false);
       return;
     }
 
@@ -68,24 +71,28 @@ export function useEntityTimeline(
     const fetchTimeline = async () => {
       setIsLoading(true);
       setError(null);
+      setIsAuthError(false);
+      setIsNotFound(false);
 
       try {
-        const url = `/api/v1/intelligence/entity/${entityId}/timeline?limit=${limit}`;
-        const response = await fetch(url);
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch timeline: ${response.statusText}`);
-        }
-
-        const data: TimelineResponse = await response.json();
-
+        const data = await apiClient.get<TimelineResponse>(
+          `/api/v1/intelligence/entity/${entityId}/timeline?limit=${limit}`
+        );
         if (!cancelled) {
           setEvents(data.events);
         }
       } catch (err) {
         console.error('Entity timeline fetch error:', err);
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load timeline');
+          if (err instanceof AuthError) {
+            setIsAuthError(true);
+            setError('Invalid API key – check environment variables.');
+          } else if (err instanceof NotFoundError) {
+            setIsNotFound(true);
+            setEvents([]);
+          } else {
+            setError(err instanceof Error ? err.message : 'Failed to load timeline');
+          }
         }
       } finally {
         if (!cancelled) {
@@ -101,16 +108,11 @@ export function useEntityTimeline(
     };
   }, [entityId, limit, refreshKey]);
 
-  return { events, isLoading, error, refetch };
+  return { events, isLoading, error, isAuthError, isNotFound, refetch };
 }
 
 /**
  * Fetch timeline events for a judgment by judgment ID.
- * This endpoint looks up the defendant entity for the judgment first.
- *
- * @param judgmentId - Numeric ID of the judgment
- * @param limit - Maximum number of events to return (default: 100)
- * @returns Timeline events, loading state, and error
  */
 export function useJudgmentTimeline(
   judgmentId: number | undefined,
@@ -119,6 +121,8 @@ export function useJudgmentTimeline(
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthError, setIsAuthError] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refetch = useCallback(() => {
@@ -130,6 +134,8 @@ export function useJudgmentTimeline(
       setEvents([]);
       setIsLoading(false);
       setError(null);
+      setIsAuthError(false);
+      setIsNotFound(false);
       return;
     }
 
@@ -138,24 +144,28 @@ export function useJudgmentTimeline(
     const fetchTimeline = async () => {
       setIsLoading(true);
       setError(null);
+      setIsAuthError(false);
+      setIsNotFound(false);
 
       try {
-        const url = `/api/v1/intelligence/judgment/${judgmentId}/timeline?limit=${limit}`;
-        const response = await fetch(url);
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch timeline: ${response.statusText}`);
-        }
-
-        const data: TimelineResponse = await response.json();
-
+        const data = await apiClient.get<TimelineResponse>(
+          `/api/v1/intelligence/judgment/${judgmentId}/timeline?limit=${limit}`
+        );
         if (!cancelled) {
           setEvents(data.events);
         }
       } catch (err) {
         console.error('Judgment timeline fetch error:', err);
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load timeline');
+          if (err instanceof AuthError) {
+            setIsAuthError(true);
+            setError('Invalid API key – check environment variables.');
+          } else if (err instanceof NotFoundError) {
+            setIsNotFound(true);
+            setEvents([]);
+          } else {
+            setError(err instanceof Error ? err.message : 'Failed to load timeline');
+          }
         }
       } finally {
         if (!cancelled) {
@@ -171,17 +181,12 @@ export function useJudgmentTimeline(
     };
   }, [judgmentId, limit, refreshKey]);
 
-  return { events, isLoading, error, refetch };
+  return { events, isLoading, error, isAuthError, isNotFound, refetch };
 }
 
 /**
  * Unified hook that picks the right timeline based on provided IDs.
  * Prefers entityId over judgmentId if both are provided.
- *
- * @param entityId - UUID of the entity (takes precedence)
- * @param judgmentId - Numeric ID of the judgment
- * @param limit - Maximum number of events to return (default: 100)
- * @returns Timeline events, loading state, and error
  */
 export function useTimeline(
   entityId?: string,
@@ -191,6 +196,8 @@ export function useTimeline(
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthError, setIsAuthError] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refetch = useCallback(() => {
@@ -198,11 +205,12 @@ export function useTimeline(
   }, []);
 
   useEffect(() => {
-    // No IDs provided
     if (!entityId && !judgmentId) {
       setEvents([]);
       setIsLoading(false);
       setError(null);
+      setIsAuthError(false);
+      setIsNotFound(false);
       return;
     }
 
@@ -211,28 +219,30 @@ export function useTimeline(
     const fetchTimeline = async () => {
       setIsLoading(true);
       setError(null);
+      setIsAuthError(false);
+      setIsNotFound(false);
 
       try {
-        // Prefer entityId over judgmentId
         const url = entityId
           ? `/api/v1/intelligence/entity/${entityId}/timeline?limit=${limit}`
           : `/api/v1/intelligence/judgment/${judgmentId}/timeline?limit=${limit}`;
 
-        const response = await fetch(url);
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch timeline: ${response.statusText}`);
-        }
-
-        const data: TimelineResponse = await response.json();
-
+        const data = await apiClient.get<TimelineResponse>(url);
         if (!cancelled) {
           setEvents(data.events);
         }
       } catch (err) {
         console.error('Timeline fetch error:', err);
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load timeline');
+          if (err instanceof AuthError) {
+            setIsAuthError(true);
+            setError('Invalid API key – check environment variables.');
+          } else if (err instanceof NotFoundError) {
+            setIsNotFound(true);
+            setEvents([]);
+          } else {
+            setError(err instanceof Error ? err.message : 'Failed to load timeline');
+          }
         }
       } finally {
         if (!cancelled) {
@@ -248,5 +258,5 @@ export function useTimeline(
     };
   }, [entityId, judgmentId, limit, refreshKey]);
 
-  return { events, isLoading, error, refetch };
+  return { events, isLoading, error, isAuthError, isNotFound, refetch };
 }

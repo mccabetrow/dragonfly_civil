@@ -2,7 +2,41 @@
 
 > **Service:** `dragonfly-engine` (FastAPI backend)  
 > **Host:** Railway (HTTP on PORT)  
-> **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}`
+> **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}`  
+> **Quick Checklist:** [RAILWAY_DEPLOY_CHECKLIST.md](./RAILWAY_DEPLOY_CHECKLIST.md)
+
+---
+
+## 0. Before You Begin
+
+### Prerequisites
+
+1. **Railway CLI installed** (optional but recommended):
+
+   ```bash
+   npm install -g @railway/cli
+   railway login
+   ```
+
+2. **Local tests pass**:
+
+   ```powershell
+   python -m pytest -q
+   python -m tools.doctor --env prod
+   ```
+
+3. **Migrations applied** (if schema changed):
+   ```powershell
+   ./scripts/db_push.ps1 -SupabaseEnv prod
+   ```
+
+### Files That Must Exist
+
+| File               | Purpose        | Content                                                             |
+| ------------------ | -------------- | ------------------------------------------------------------------- |
+| `runtime.txt`      | Python version | `python-3.12.3`                                                     |
+| `Procfile`         | Start command  | `web: uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}` |
+| `requirements.txt` | Dependencies   | Must include `psycopg-pool`                                         |
 
 ---
 

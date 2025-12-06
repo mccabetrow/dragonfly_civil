@@ -1,11 +1,12 @@
 /**
  * useIntakeBatches - Hook for the Ops Command Center intake monitoring
  *
- * Fetches batch data from ops.v_intake_monitor view via Supabase.
+ * Fetches batch data from /api/v1/intake/batches via apiClient.
  * Designed for the Intake Station pane.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { supabaseClient, demoSafeSelect, IS_DEMO_MODE } from '../lib/supabaseClient';
+import { apiClient, AuthError, NotFoundError } from '../lib/apiClient';
+import { IS_DEMO_MODE } from '../lib/supabaseClient';
 import { useOnRefresh } from '../context/RefreshContext';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -41,6 +42,9 @@ export interface IntakeBatchError {
 export interface IntakeBatchesState {
   status: 'idle' | 'loading' | 'ready' | 'error' | 'demo_locked';
   error: string | null;
+  isAuthError: boolean;
+  isNotFound: boolean;
+  isError: boolean;
 }
 
 export interface UseIntakeBatchesResult {
@@ -100,46 +104,66 @@ const DEMO_BATCHES: IntakeBatch[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function useIntakeBatches(limit = 20): UseIntakeBatchesResult {
-  const [state, setState] = useState<IntakeBatchesState>({ status: 'idle', error: null });
+  const [state, setState] = useState<IntakeBatchesState>({
+    status: 'idle',
+    error: null,
+    isAuthError: false,
+    isNotFound: false,
+    isError: false,
+  });
   const [batches, setBatches] = useState<IntakeBatch[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const fetchBatches = useCallback(async () => {
     if (IS_DEMO_MODE) {
-      setState({ status: 'demo_locked', error: null });
+      setState({ status: 'demo_locked', error: null, isAuthError: false, isNotFound: false, isError: false });
       setBatches(DEMO_BATCHES);
       setLastUpdated(new Date());
       return;
     }
 
-    setState({ status: 'loading', error: null });
+    setState({ status: 'loading', error: null, isAuthError: false, isNotFound: false, isError: false });
 
     try {
-      const query = supabaseClient
-        .from('v_intake_monitor')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit);
-
-      const result = await demoSafeSelect<Record<string, unknown>[]>(query);
-
-      if (result.kind === 'demo_locked') {
-        setState({ status: 'demo_locked', error: null });
-        setBatches(DEMO_BATCHES);
-        return;
+      interface ApiBatchResponse {
+        batches: Array<Record<string, unknown>>;
       }
 
-      if (result.kind === 'error') {
-        throw result.error;
-      }
-
-      const parsed = (result.data ?? []).map(parseIntakeBatch);
+      const response = await apiClient.get<ApiBatchResponse>(`/api/v1/intake/batches?limit=${limit}`);
+      const parsed = (response.batches ?? []).map(parseIntakeBatch);
+      
       setBatches(parsed);
-      setState({ status: 'ready', error: null });
+      setState({ status: 'ready', error: null, isAuthError: false, isNotFound: false, isError: false });
       setLastUpdated(new Date());
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setState({ status: 'error', error: message });
+      console.error('[useIntakeBatches]', err);
+
+      if (err instanceof AuthError) {
+        setState({
+          status: 'error',
+          error: 'Invalid API key – check Vercel VITE_DRAGONFLY_API_KEY vs Railway DRAGONFLY_API_KEY.',
+          isAuthError: true,
+          isNotFound: false,
+          isError: false,
+        });
+      } else if (err instanceof NotFoundError) {
+        setState({
+          status: 'error',
+          error: 'Intake batches endpoint not configured yet.',
+          isAuthError: false,
+          isNotFound: true,
+          isError: false,
+        });
+      } else {
+        const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+        setState({
+          status: 'error',
+          error: message,
+          isAuthError: false,
+          isNotFound: false,
+          isError: true,
+        });
+      }
       // In error state, show demo data as fallback
       setBatches(DEMO_BATCHES);
     }

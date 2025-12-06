@@ -1,6 +1,13 @@
+/**
+ * useCasesDashboard
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Fetches the cases/judgment pipeline via apiClient.
+ * Returns CasesDashboardRow[] for the Cases table.
+ */
 import { useCallback, useEffect, useState } from 'react';
-import type { PostgrestError } from '@supabase/supabase-js';
-import { IS_DEMO_MODE, demoSafeSelect, supabaseClient } from '../lib/supabaseClient';
+import { apiClient, AuthError, NotFoundError } from '../lib/apiClient';
+import { IS_DEMO_MODE } from '../lib/supabaseClient';
 import {
   buildDemoLockedState,
   buildErrorMetricsState,
@@ -28,7 +35,7 @@ export interface CasesDashboardRow {
   lastEnrichmentStatusLabel: string;
 }
 
-interface JudgmentPipelineRow {
+interface ApiJudgmentPipelineRow {
   judgment_id: string | null;
   case_number: string | null;
   plaintiff_name: string | null;
@@ -42,7 +49,7 @@ interface JudgmentPipelineRow {
   last_enrichment_status: string | null;
 }
 
-interface CasesDashboardPayload {
+export interface CasesDashboardPayload {
   rows: CasesDashboardRow[];
   totalCount: number;
 }
@@ -61,27 +68,9 @@ export function useCasesDashboard(): MetricsHookResult<CasesDashboardPayload> {
     setSnapshot((previous) => buildLoadingMetricsState(previous));
 
     try {
-      const result = await demoSafeSelect<JudgmentPipelineRow[] | null>(
-        supabaseClient
-          .from('v_judgment_pipeline')
-          .select(
-            'judgment_id, case_number, plaintiff_name, defendant_name, judgment_amount, enforcement_stage, enforcement_stage_updated_at, collectability_tier, collectability_age_days, last_enriched_at, last_enrichment_status',
-          )
-          .order('enforcement_stage_updated_at', { ascending: false, nullsFirst: false }),
-      );
+      const pipelineRows = await apiClient.get<ApiJudgmentPipelineRow[]>('/api/v1/cases/pipeline');
 
-      if (result.kind === 'demo_locked') {
-        setSnapshot(buildDemoLockedState<CasesDashboardPayload>());
-        return;
-      }
-
-      if (result.kind === 'error') {
-        throw result.error;
-      }
-
-      const pipelineRows = (result.data ?? []) as JudgmentPipelineRow[];
-
-      const mappedRows: CasesDashboardRow[] = pipelineRows.map((row) => {
+      const mappedRows: CasesDashboardRow[] = (pipelineRows ?? []).map((row) => {
         const stage = normalizeStage(row.enforcement_stage);
         const tier = row.collectability_tier ?? null;
         const enrichmentStatus = normalizeStage(row.last_enrichment_status);
@@ -106,9 +95,30 @@ export function useCasesDashboard(): MetricsHookResult<CasesDashboardPayload> {
 
       setSnapshot(buildReadyMetricsState<CasesDashboardPayload>({ rows: mappedRows, totalCount: mappedRows.length }));
     } catch (err) {
-      const derived = deriveCasesErrorMessage(err);
-      const error = err instanceof Error ? err : asError(err);
-      setSnapshot(buildErrorMetricsState<CasesDashboardPayload>(error, { message: derived ?? undefined }));
+      console.error('[useCasesDashboard]', err);
+
+      if (err instanceof AuthError) {
+        setSnapshot(
+          buildErrorMetricsState<CasesDashboardPayload>(err, {
+            message: 'Invalid API key – check Vercel VITE_DRAGONFLY_API_KEY vs Railway DRAGONFLY_API_KEY.',
+            isAuthError: true,
+          })
+        );
+      } else if (err instanceof NotFoundError) {
+        setSnapshot(
+          buildErrorMetricsState<CasesDashboardPayload>(err, {
+            message: 'Metrics/view not configured yet.',
+            isNotFound: true,
+          })
+        );
+      } else {
+        const error = err instanceof Error ? err : new Error('We hit a snag while loading cases.');
+        setSnapshot(
+          buildErrorMetricsState<CasesDashboardPayload>(error, {
+            message: 'Unable to load cases. Please try again.',
+          })
+        );
+      }
     }
   }, []);
 
@@ -225,44 +235,4 @@ function normalizeStage(stage: string | null | undefined): string | null {
 
 function titleCase(value: string): string {
   return value.replace(/\b([a-z])/g, (match) => match.toUpperCase());
-}
-
-function asError(value: unknown): Error {
-  if (value instanceof Error) {
-    return value;
-  }
-  if (value && typeof value === 'object' && 'message' in value && typeof (value as { message: unknown }).message === 'string') {
-    return new Error((value as { message: string }).message);
-  }
-  if (typeof value === 'string') {
-    return new Error(value);
-  }
-  return new Error('We hit a snag while loading cases.');
-}
-
-function deriveCasesErrorMessage(err: unknown): string | null {
-  if (!err) {
-    return null;
-  }
-  if (isSchemaCacheMiss(err)) {
-    return 'Case pipeline view is not available yet. Make sure database migrations are applied and the schema cache is reloaded.';
-  }
-  return null;
-}
-
-function isSchemaCacheMiss(err: unknown): boolean {
-  if (!err || typeof err !== 'object') {
-    return false;
-  }
-  const maybe = err as Partial<PostgrestError> & { status?: number };
-  const message = (maybe.message ?? '').toLowerCase();
-  const details = (maybe.details ?? '').toLowerCase();
-  const hint = (maybe.hint ?? '').toLowerCase();
-  if (maybe.code === '42P01' || maybe.code === 'PGRST116') {
-    return true;
-  }
-  if (maybe.status === 404) {
-    return true;
-  }
-  return message.includes('schema cache') || details.includes('schema cache') || hint.includes('schema cache');
 }

@@ -5,6 +5,7 @@
  * Client wrapper for the /api/v1/search/semantic endpoint.
  * Used for finding similar judgments based on natural language queries.
  */
+import { apiClient, AuthError, NotFoundError } from './apiClient';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -26,31 +27,9 @@ export interface SemanticSearchResponse {
   count: number;
 }
 
-export interface SemanticSearchError {
-  detail: string;
-}
-
 export type SemanticSearchResult =
   | { ok: true; data: SemanticSearchResponse }
-  | { ok: false; error: string };
-
-// ═══════════════════════════════════════════════════════════════════════════
-// CONFIG
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Get the API base URL from environment or default to relative path.
- * In production, Vercel rewrites /api/* to the backend.
- * In development, we may need to proxy.
- */
-function getApiBaseUrl(): string {
-  // Check for explicit API URL in environment
-  const envUrl = import.meta.env.VITE_API_BASE_URL;
-  if (envUrl) return envUrl;
-
-  // Default: relative path (works with Vercel rewrites or same-origin)
-  return '';
-}
+  | { ok: false; error: string; isAuthError?: boolean };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // API FUNCTIONS
@@ -67,36 +46,21 @@ export async function searchSimilarJudgments(
   query: string,
   limit: number = 5
 ): Promise<SemanticSearchResult> {
-  const baseUrl = getApiBaseUrl();
-  const url = `${baseUrl}/api/v1/search/semantic`;
-
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query: query.trim(),
-        limit: Math.min(Math.max(limit, 1), 50),
-      }),
+    const data = await apiClient.post<SemanticSearchResponse>('/api/v1/search/semantic', {
+      query: query.trim(),
+      limit: Math.min(Math.max(limit, 1), 50),
     });
-
-    if (!response.ok) {
-      // Try to parse error message from response
-      try {
-        const errorData = (await response.json()) as SemanticSearchError;
-        return { ok: false, error: errorData.detail || `HTTP ${response.status}` };
-      } catch {
-        return { ok: false, error: `HTTP ${response.status}: ${response.statusText}` };
-      }
-    }
-
-    const data = (await response.json()) as SemanticSearchResponse;
     return { ok: true, data };
   } catch (err) {
+    if (err instanceof AuthError) {
+      return { ok: false, error: 'Authentication failed – check your API key', isAuthError: true };
+    }
+    if (err instanceof NotFoundError) {
+      return { ok: false, error: 'Search endpoint not available' };
+    }
     const message = err instanceof Error ? err.message : 'Unknown error';
-    return { ok: false, error: `Network error: ${message}` };
+    return { ok: false, error: message };
   }
 }
 

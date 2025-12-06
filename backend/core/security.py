@@ -90,14 +90,16 @@ def _decode_jwt(token: str) -> dict | None:
 
 async def get_current_user(
     authorization: str | None = Header(default=None),
+    x_dragonfly_api_key: str | None = Header(default=None, alias="X-DRAGONFLY-API-KEY"),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> AuthContext:
     """
     FastAPI dependency for authenticating requests.
 
     Authentication methods (in order of priority):
-    1. X-API-Key header: For service-to-service calls
-    2. Authorization: Bearer <token>: For user JWT tokens
+    1. X-DRAGONFLY-API-KEY header: Primary API key header (frontend/services)
+    2. X-API-Key header: Legacy header (n8n workflows, backward compatibility)
+    3. Authorization: Bearer <token>: For user JWT tokens
 
     Raises:
         HTTPException 401: If authentication fails
@@ -105,10 +107,11 @@ async def get_current_user(
     Returns:
         AuthContext with authenticated user info
     """
-    # Method 1: API Key authentication
-    if x_api_key:
+    # Method 1: API Key authentication (prefer X-DRAGONFLY-API-KEY, fallback to X-API-Key)
+    api_key = x_dragonfly_api_key or x_api_key
+    if api_key:
         configured_key = _get_api_key()
-        if configured_key and secrets.compare_digest(x_api_key, configured_key):
+        if configured_key and secrets.compare_digest(api_key, configured_key):
             logger.debug("Authenticated via API key")
             return AuthContext(subject=None, via="api_key")
         else:
@@ -165,6 +168,7 @@ def require_auth() -> AuthContext:
 # Optional: Allow anonymous access for certain endpoints
 async def get_optional_user(
     authorization: str | None = Header(default=None),
+    x_dragonfly_api_key: str | None = Header(default=None, alias="X-DRAGONFLY-API-KEY"),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> AuthContext:
     """
@@ -173,6 +177,6 @@ async def get_optional_user(
     Useful for endpoints that have different behavior for authenticated users.
     """
     try:
-        return await get_current_user(authorization, x_api_key)
+        return await get_current_user(authorization, x_dragonfly_api_key, x_api_key)
     except HTTPException:
         return AuthContext(subject=None, via="anonymous")
