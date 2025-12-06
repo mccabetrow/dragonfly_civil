@@ -40,6 +40,7 @@ from .routers.analytics import router as analytics_router  # noqa: E402
 from .routers.budget import router as budget_router  # noqa: E402
 from .routers.enforcement import router as enforcement_router  # noqa: E402
 from .routers.events import router as events_router  # noqa: E402
+from .routers.finance import router as finance_router  # noqa: E402
 from .routers.foil import router as foil_router  # noqa: E402
 from .routers.health import router as health_router  # noqa: E402
 from .routers.ingest import router as ingest_router  # noqa: E402
@@ -252,6 +253,11 @@ def create_app() -> FastAPI:
         packets_router, prefix="/api", tags=["packets"]
     )  # internal: /v1/packets
     app.include_router(events_router, prefix="/api", tags=["events"])
+
+    # Finance - Securitization engine (pools, NAV, performance)
+    app.include_router(
+        finance_router, prefix="/api", tags=["finance"]
+    )  # internal: /v1/finance
 
     # Webhooks - external service callbacks (Proof.com, etc.)
     app.include_router(
