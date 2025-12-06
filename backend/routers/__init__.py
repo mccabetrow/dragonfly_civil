@@ -9,6 +9,7 @@ from .foil import router as foil_router
 from .health import router as health_router
 from .ingest import router as ingest_router
 from .intake import router as intake_router
+from .portfolio import router as portfolio_router
 from .search import router as search_router
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "health_router",
     "ingest_router",
     "intake_router",
+    "portfolio_router",
     "search_router",
 ]

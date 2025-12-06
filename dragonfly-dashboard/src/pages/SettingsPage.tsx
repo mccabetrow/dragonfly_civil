@@ -11,13 +11,13 @@ const SettingsPage: React.FC = () => {
         </p>
         <dl className="mt-4 grid gap-3 text-sm text-slate-500 md:grid-cols-2">
           <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-            <dt className="font-semibold text-slate-600">Integrations</dt>
-            <dd className="mt-1 text-xs text-slate-500">Simplicity CRM, n8n automations, outbound dialer.
+            <dt className="font-semibold text-slate-600">Access controls</dt>
+            <dd className="mt-1 text-xs text-slate-500">Role-based permissions tied to Supabase auth.
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-            <dt className="font-semibold text-slate-600">Access controls</dt>
-            <dd className="mt-1 text-xs text-slate-500">Role-based permissions tied to Supabase auth.
+            <dt className="font-semibold text-slate-600">Notifications</dt>
+            <dd className="mt-1 text-xs text-slate-500">Email and in-app alerts for task deadlines.
             </dd>
           </div>
         </dl>

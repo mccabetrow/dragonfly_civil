@@ -1,21 +1,47 @@
 """
 Dragonfly Engine - Enforcement Router
 
-Provides endpoints for enforcement workflow management.
+Provides endpoints for enforcement workflow management including the Radar.
 """
 
 import logging
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..core.security import AuthContext, get_current_user
+from ..db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/enforcement", tags=["Enforcement"])
+
+
+# =============================================================================
+# Radar Models
+# =============================================================================
+
+
+class RadarRow(BaseModel):
+    """Single row in the Enforcement Radar."""
+
+    id: str = Field(..., description="Judgment ID")
+    case_number: str = Field(..., description="Court case number")
+    plaintiff_name: str = Field(..., description="Plaintiff name")
+    defendant_name: str = Field(..., description="Defendant name")
+    judgment_amount: float = Field(..., description="Judgment amount in dollars")
+    collectability_score: Optional[int] = Field(
+        None, description="Collectability score 0-100"
+    )
+    offer_strategy: str = Field(
+        ..., description="BUY_CANDIDATE, CONTINGENCY, ENRICHMENT_PENDING, LOW_PRIORITY"
+    )
+    court: Optional[str] = Field(None, description="Court name")
+    county: Optional[str] = Field(None, description="County")
+    judgment_date: Optional[str] = Field(None, description="Judgment date ISO string")
+    created_at: str = Field(..., description="Record creation timestamp")
 
 
 # =============================================================================
@@ -247,3 +273,120 @@ async def stop_enforcement(
         message=f"TODO: Implement enforcement stop. Reason: {reason or 'Not specified'}",
         timestamp=datetime.utcnow().isoformat() + "Z",
     )
+
+
+# =============================================================================
+# Radar Endpoint
+# =============================================================================
+
+
+def _compute_offer_strategy(score: int | None, amount: float) -> str:
+    """
+    Compute offer strategy based on collectability score and judgment amount.
+
+    Logic:
+      - score is None → ENRICHMENT_PENDING
+      - score >= 70 AND amount >= 10000 → BUY_CANDIDATE
+      - score >= 40 OR amount >= 5000 → CONTINGENCY
+      - else → LOW_PRIORITY
+    """
+    if score is None:
+        return "ENRICHMENT_PENDING"
+    if score >= 70 and amount >= 10000:
+        return "BUY_CANDIDATE"
+    if score >= 40 or amount >= 5000:
+        return "CONTINGENCY"
+    return "LOW_PRIORITY"
+
+
+@router.get(
+    "/radar",
+    response_model=list[RadarRow],
+    summary="Get Enforcement Radar",
+    description="Returns prioritized list of judgments for enforcement action.",
+)
+async def get_enforcement_radar(
+    strategy: Optional[str] = Query(
+        None, description="Filter by offer strategy (BUY_CANDIDATE, CONTINGENCY, etc.)"
+    ),
+    min_score: Optional[int] = Query(
+        None, ge=0, le=100, description="Minimum collectability score"
+    ),
+    min_amount: Optional[float] = Query(
+        None, ge=0, description="Minimum judgment amount"
+    ),
+    auth: AuthContext = Depends(get_current_user),
+) -> list[RadarRow]:
+    """
+    Get the Enforcement Radar – prioritized list of judgments for CEO review.
+
+    Returns judgments sorted by collectability score and amount, with computed
+    offer strategies (BUY_CANDIDATE, CONTINGENCY, ENRICHMENT_PENDING, LOW_PRIORITY).
+    """
+    logger.info(
+        f"Enforcement radar requested by {auth.via}: "
+        f"strategy={strategy}, min_score={min_score}, min_amount={min_amount}"
+    )
+
+    try:
+        client = get_supabase_client()
+
+        # Query judgments table with relevant fields
+        query = client.table("judgments").select(
+            "id, case_number, plaintiff_name, defendant_name, judgment_amount, "
+            "collectability_score, court, county, judgment_date, created_at"
+        )
+
+        # Apply score filter if provided
+        if min_score is not None:
+            query = query.gte("collectability_score", min_score)
+
+        # Apply amount filter if provided
+        if min_amount is not None:
+            query = query.gte("judgment_amount", min_amount)
+
+        # Order by collectability score descending, then amount
+        query = query.order("collectability_score", desc=True, nullsfirst=False)
+        query = query.order("judgment_amount", desc=True)
+
+        # Limit to top 500 for performance
+        query = query.limit(500)
+
+        result = query.execute()
+        rows: list[dict] = result.data or []  # type: ignore[assignment]
+
+        radar_rows: list[RadarRow] = []
+        for row in rows:
+            raw_score = row.get("collectability_score")
+            score: int | None = int(raw_score) if raw_score is not None else None
+            amount = float(row.get("judgment_amount") or 0)
+            computed_strategy = _compute_offer_strategy(score, amount)
+
+            # Apply strategy filter after computation
+            if strategy and strategy != "ALL" and computed_strategy != strategy:
+                continue
+
+            radar_rows.append(
+                RadarRow(
+                    id=str(row.get("id", "")),
+                    case_number=str(row.get("case_number") or ""),
+                    plaintiff_name=str(row.get("plaintiff_name") or ""),
+                    defendant_name=str(row.get("defendant_name") or ""),
+                    judgment_amount=amount,
+                    collectability_score=score,
+                    offer_strategy=computed_strategy,
+                    court=row.get("court"),
+                    county=row.get("county"),
+                    judgment_date=row.get("judgment_date"),
+                    created_at=str(
+                        row.get("created_at") or datetime.utcnow().isoformat()
+                    ),
+                )
+            )
+
+        logger.info(f"Radar returning {len(radar_rows)} rows")
+        return radar_rows
+
+    except Exception as e:
+        logger.error(f"Enforcement radar query failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to query radar: {e}")

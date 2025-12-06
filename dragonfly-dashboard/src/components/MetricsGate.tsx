@@ -1,7 +1,5 @@
 import React from 'react';
 import DemoLockCard from './DemoLockCard';
-import { DashboardError } from './DashboardError';
-import ApiErrorBanner from './ApiErrorBanner';
 import StatusMessage from './StatusMessage';
 import { DEFAULT_DEMO_LOCK_MESSAGE, type MetricsState } from '../hooks/metricsState';
 
@@ -15,6 +13,51 @@ interface MetricsGateProps<TData> {
   className?: string;
   showReadyWhileLoading?: boolean;
   refreshingMessage?: string;
+}
+
+/**
+ * Subtle skeleton placeholder for unavailable data.
+ * Shows a calm "Data Pending" state rather than a red error banner.
+ */
+function DataPendingSkeleton({
+  title,
+  onRetry,
+  className = '',
+}: {
+  title?: string;
+  onRetry?: () => void | Promise<void>;
+  className?: string;
+}) {
+  return (
+    <div
+      className={[
+        'rounded-2xl border border-slate-200 bg-slate-50/60 p-5 text-sm text-slate-500 animate-pulse',
+        className,
+      ].join(' ')}
+    >
+      <div className="flex items-center gap-3">
+        <div className="h-8 w-8 rounded-full bg-slate-200" />
+        <div className="flex-1 space-y-2">
+          <div className="h-4 w-1/3 rounded bg-slate-200" />
+          <div className="h-3 w-2/3 rounded bg-slate-200" />
+        </div>
+      </div>
+      <div className="mt-4 flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          {title ?? 'Data pending'}
+        </p>
+        {onRetry && (
+          <button
+            type="button"
+            onClick={() => onRetry()}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function MetricsGate<TData>({
@@ -36,41 +79,13 @@ function MetricsGate<TData>({
     );
   }
 
+  // Show subtle skeleton for all error states (404, 500, network, auth)
+  // instead of massive red banners
   if (state.status === 'error') {
-    const message = state.errorMessage ?? 'We could not load this data.';
-
-    // Use ApiErrorBanner for auth and network errors (more contextual guidance)
-    if (state.isAuthError) {
-      return (
-        <ApiErrorBanner
-          isAuthError
-          message={message}
-          onRetry={onRetry}
-          className={className}
-        />
-      );
-    }
-
-    // Network/connection errors (not 404)
-    if (state.isError && !state.isNotFound) {
-      return (
-        <ApiErrorBanner
-          isNetworkError
-          message={message}
-          onRetry={onRetry}
-          className={className}
-        />
-      );
-    }
-
-    // Generic errors (404, validation, etc.) use DashboardError
     return (
-      <DashboardError
-        className={className}
-        title={errorTitle}
-        message={message}
-        onRetry={onRetry}
-      />
+      <div className={className}>
+        <DataPendingSkeleton title={errorTitle} onRetry={onRetry} />
+      </div>
     );
   }
 

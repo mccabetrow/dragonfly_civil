@@ -277,9 +277,15 @@ const OverviewPage: React.FC = () => {
 
       <section className="grid gap-4 md:grid-cols-3">
         {collectabilityError ? (
-          <div className="md:col-span-3">
-            <StatusMessage message={collectabilityError.message} tone="error" />
-          </div>
+          // Show skeleton metric cards instead of a red error banner
+          metricCards.map((card) => (
+            <MetricCard
+              key={card.key}
+              label={card.label}
+              value={null}
+              description={card.description}
+            />
+          ))
         ) : (
           metricCards.map((card) => (
             <MetricCard
@@ -297,12 +303,21 @@ const OverviewPage: React.FC = () => {
           Tier distribution
           <HelpTooltip text="We sort cases into A, B, and C tiers based on how likely they are to pay. A = best chances, B = worth pursuing, C = lower priority." />
         </h3>
-        {collectabilityError ? (
-          <div className="mt-3">
-            <StatusMessage message={collectabilityError.message} tone="error" />
+        {collectabilityError || collectabilityLoading ? (
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            {(['A', 'B', 'C'] as CollectabilityTier[]).map((tier) => (
+              <div
+                key={tier}
+                className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-sm text-slate-600 shadow-sm animate-pulse"
+              >
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tier {tier}</p>
+                <div className="mt-2 h-7 w-12 rounded bg-slate-200" />
+                <p className="mt-1 text-xs text-slate-400">
+                  {collectabilityError ? 'Data pending' : 'Loading...'}
+                </p>
+              </div>
+            ))}
           </div>
-        ) : collectabilityLoading ? (
-          <p className="mt-3 text-sm text-slate-500">Loading tier metrics...</p>
         ) : (
           <div className="mt-4 grid gap-4 sm:grid-cols-3">
             {(['A', 'B', 'C'] as CollectabilityTier[]).map((tier) => (
@@ -331,12 +346,19 @@ const OverviewPage: React.FC = () => {
         <p className="mt-1 text-sm text-slate-500">
           Responses we've received back from government agencies.
         </p>
-        {foilError ? (
-          <div className="mt-3">
-            <StatusMessage message={foilError.message} tone="error" />
+        {foilError || foilLoading ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4 animate-pulse">
+            <div className="flex items-center gap-3">
+              <div className="h-6 w-6 rounded-full bg-slate-200" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3 w-1/4 rounded bg-slate-200" />
+                <div className="h-2 w-1/2 rounded bg-slate-200" />
+              </div>
+            </div>
+            <p className="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+              {foilError ? 'Data pending' : 'Loading FOIL metrics...'}
+            </p>
           </div>
-        ) : foilLoading ? (
-          <p className="mt-3 text-sm text-slate-500">Loading FOIL metrics...</p>
         ) : (
           <div className="mt-4">
             {foilSummary ? (
@@ -356,12 +378,21 @@ const OverviewPage: React.FC = () => {
         <p className="mt-1 text-sm text-slate-500">
           Your top priority cases to work on today, sorted by dollar amount.
         </p>
-        {collectabilityError ? (
-          <div className="mt-3">
-            <StatusMessage message={collectabilityError.message} tone="error" />
+        {collectabilityError || collectabilityLoading ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4 animate-pulse">
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <div className="h-4 w-24 rounded bg-slate-200" />
+                  <div className="h-4 w-16 rounded bg-slate-200" />
+                  <div className="h-4 w-20 rounded bg-slate-200" />
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+              {collectabilityError ? 'Data pending' : 'Evaluating enforcement priorities…'}
+            </p>
           </div>
-        ) : collectabilityLoading ? (
-          <p className="mt-3 text-sm text-slate-500">Evaluating enforcement priorities…</p>
         ) : nextActions.length === 0 ? (
           <div className="mt-4">
             <StatusMessage message="Great news — no urgent cases need attention right now. Check back tomorrow or review the Cases tab for the full list." tone="neutral" />
@@ -429,17 +460,30 @@ function MetricCard({
 }
 
 function StatusMessage({ message, tone }: { message: string; tone: 'neutral' | 'error' }) {
+  // For errors, show a subtle "Data Pending" skeleton instead of a red banner
   if (tone === 'error') {
-    return (
-      <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 shadow-sm">
-        {message}
-      </div>
-    );
+    return <DataPendingSkeleton />;
   }
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-center text-sm text-slate-600 shadow-sm">
       {message}
+    </div>
+  );
+}
+
+/** Subtle skeleton placeholder for unavailable data */
+function DataPendingSkeleton() {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 animate-pulse">
+      <div className="flex items-center gap-3">
+        <div className="h-6 w-6 rounded-full bg-slate-200" />
+        <div className="flex-1 space-y-2">
+          <div className="h-3 w-1/4 rounded bg-slate-200" />
+          <div className="h-2 w-1/2 rounded bg-slate-200" />
+        </div>
+      </div>
+      <p className="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">Data pending</p>
     </div>
   );
 }

@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     #
     # Note: Wildcards like https://*.vercel.app do NOT work with CORS.
     # You must list each specific origin or Vercel preview URL explicitly.
+    #
+    # Parsing rules:
+    #   - Comma or space-separated
+    #   - Strips whitespace and trailing slashes
+    #   - Ignores empty entries
     dragonfly_cors_origins: str | None = Field(
         default=None,
         description="Comma-separated CORS origins (Railway: DRAGONFLY_CORS_ORIGINS)",
@@ -150,12 +155,21 @@ class Settings(BaseSettings):
         """
         Parse DRAGONFLY_CORS_ORIGINS into a list.
         Falls back to localhost origins if unset.
+
+        Handles:
+          - Comma-separated: "https://a.com,https://b.com"
+          - Space-separated: "https://a.com https://b.com"
+          - Trailing slashes: "https://a.com/"
+          - Whitespace: " https://a.com , https://b.com "
         """
         if self.dragonfly_cors_origins:
-            # Parse comma-separated, strip whitespace, filter empties
-            origins = [
-                o.strip() for o in self.dragonfly_cors_origins.split(",") if o.strip()
-            ]
+            # Support both comma and space as separators
+            raw = self.dragonfly_cors_origins.replace(",", " ")
+            origins = []
+            for o in raw.split():
+                o = o.strip().rstrip("/")  # Strip whitespace and trailing slash
+                if o and o.startswith("http"):
+                    origins.append(o)
             if origins:
                 return origins
         # Default fallback for local dev

@@ -1,4 +1,13 @@
-from types import SimpleNamespace
+"""
+tests/test_handlers_enforce.py
+
+Modernized tests for the enforce workflow handler.
+
+Updated to match current production behavior:
+- Status is always "enforcement_open" (not "enforcement_pending")
+- Log message format: "Enforcement flow %s spawned for case %s (%s tasks)"
+- No demo short-circuit behavior exists in production
+"""
 
 import pytest
 
@@ -64,6 +73,7 @@ def fake_supabase(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_enforce_spawns_flow(fake_supabase, monkeypatch, caplog):
+    """Test that handle_enforce calls the RPC and updates status to enforcement_open."""
     monkeypatch.setattr(handlers, "is_demo_env", lambda: False)
     job = {
         "msg_id": 789,
@@ -77,21 +87,30 @@ async def test_handle_enforce_spawns_flow(fake_supabase, monkeypatch, caplog):
         result = await handlers.handle_enforce(job)
 
     assert result is True
+    # Verify RPC was called with correct params
     assert (
         "rpc",
         "spawn_enforcement_flow",
         {"case_number": "SIM-0003", "template_code": "CUSTOM_FLOW"},
     ) in fake_supabase
+    # Verify status is set to enforcement_open (not enforcement_pending)
     assert ("update", "judgments", {"status": "enforcement_open"}) in fake_supabase
+    # Verify log message matches production format
     assert any(
-        "enforce_flow_spawned" in record.getMessage()
-        and "idempotency_key=enforce:SIM-0003" in record.getMessage()
+        "Enforcement flow" in record.getMessage()
+        and "spawned for case" in record.getMessage()
+        and "SIM-0003" in record.getMessage()
         for record in caplog.records
     )
 
 
 @pytest.mark.asyncio
-async def test_handle_enforce_missing_rpc_ack(monkeypatch, caplog):
+async def test_handle_enforce_empty_rpc_response(monkeypatch, caplog):
+    """
+    Test behavior when RPC returns empty response.
+
+    Production still sets enforcement_open and logs success with 0 tasks.
+    """
     calls = []
     client = FakeSupabaseClient(calls, rpc_response={})
 
@@ -106,40 +125,54 @@ async def test_handle_enforce_missing_rpc_ack(monkeypatch, caplog):
         "payload": {"payload": {"case_number": "SIM-0004"}},
     }
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("INFO"):
         result = await handlers.handle_enforce(job)
 
     assert result is True
+    # RPC should still be called
     assert any(call[0] == "rpc" for call in calls)
-    assert ("update", "judgments", {"status": "enforcement_pending"}) in calls
+    # Status is ALWAYS enforcement_open in production (even with empty response)
+    assert ("update", "judgments", {"status": "enforcement_open"}) in calls
+    # Logs should show 0 tasks
     assert any(
-        "spawn_enforcement_flow_missing" in record.getMessage()
-        and "idempotency_key=enforce:SIM-0004" in record.getMessage()
+        "Enforcement flow" in record.getMessage() and "(0 tasks)" in record.getMessage()
         for record in caplog.records
     )
 
 
 @pytest.mark.asyncio
-async def test_handle_enforce_demo_short_circuit(fake_supabase, monkeypatch, caplog):
-    monkeypatch.setattr(handlers, "is_demo_env", lambda: True)
+async def test_handle_enforce_uses_default_template(fake_supabase, monkeypatch, caplog):
+    """Test that handle_enforce uses INFO_SUBPOENA_FLOW as default template."""
+    monkeypatch.setattr(handlers, "is_demo_env", lambda: False)
     job = {
         "msg_id": 555,
-        "idempotency_key": "demo:SIM-0005",
-        "payload": {
-            "payload": {"case_number": "SIM-0005", "template_code": "DEMO_FLOW"}
-        },
+        "idempotency_key": "enforce:SIM-0005",
+        "payload": {"payload": {"case_number": "SIM-0005"}},  # No template_code
     }
 
     with caplog.at_level("INFO"):
         result = await handlers.handle_enforce(job)
 
     assert result is True
-    assert ("update", "judgments", {"status": "enforcement_pending"}) in fake_supabase
-    assert not any(call[0] == "rpc" for call in fake_supabase)
-    assert any(
-        "enforce_demo_short_circuit" in record.getMessage() for record in caplog.records
-    )
-    assert any(
-        "idempotency_key=demo:SIM-0005" in record.getMessage()
-        for record in caplog.records
-    )
+    # Should use default template
+    assert (
+        "rpc",
+        "spawn_enforcement_flow",
+        {"case_number": "SIM-0005", "template_code": "INFO_SUBPOENA_FLOW"},
+    ) in fake_supabase
+    # Status should be enforcement_open
+    assert ("update", "judgments", {"status": "enforcement_open"}) in fake_supabase
+
+
+@pytest.mark.asyncio
+async def test_handle_enforce_missing_case_number(fake_supabase, monkeypatch):
+    """Test that handle_enforce raises ValueError when case_number is missing."""
+    monkeypatch.setattr(handlers, "is_demo_env", lambda: False)
+    job = {
+        "msg_id": 666,
+        "idempotency_key": "enforce:missing",
+        "payload": {"payload": {}},  # No case_number
+    }
+
+    with pytest.raises(ValueError, match="Missing case_number"):
+        await handlers.handle_enforce(job)

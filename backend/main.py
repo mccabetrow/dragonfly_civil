@@ -36,6 +36,7 @@ from .routers import (  # noqa: E402
     health_router,
     ingest_router,
     intake_router,
+    portfolio_router,
     search_router,
 )
 from .routers.events import router as events_router  # noqa: E402
@@ -182,6 +183,9 @@ def create_app() -> FastAPI:
     app.include_router(analytics_router, prefix="/api")
     app.include_router(budget_router, prefix="/api")
     app.include_router(enforcement_router, prefix="/api")
+
+    # v0.2.x portfolio router (CEO portfolio stats)
+    app.include_router(portfolio_router, prefix="/api", tags=["portfolio"])
 
     # v0.2.x search router (semantic search)
     app.include_router(search_router, prefix="/api/v1", tags=["search"])
