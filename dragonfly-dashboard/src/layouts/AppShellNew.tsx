@@ -234,10 +234,10 @@ const AppShellNew: FC = () => {
             <button
               type="button"
               onClick={releaseNotes.open}
-              className="flex items-center gap-2 text-xs text-slate-500 transition hover:text-slate-300"
+              className="flex items-center gap-2 text-xs text-emerald-400 transition hover:text-emerald-300"
             >
               <Sparkles className="h-3.5 w-3.5" />
-              <span>v1.4.0 — What's new?</span>
+              <span>v1.1.0 — Operational</span>
             </button>
           </div>
         </div>
