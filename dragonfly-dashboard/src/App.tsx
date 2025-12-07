@@ -5,6 +5,7 @@ import { ToastProvider } from './components/ui/Toast';
 import { RefreshProvider } from './context/RefreshContext';
 import CommandPalette from './components/ui/CommandPalette';
 // Dashboard pages - using new enterprise-grade layouts
+import PortfolioDashboardPage from './pages/PortfolioDashboardPage';
 import ExecutiveDashboardPageNew from './pages/ExecutiveDashboardPageNew';
 import OpsPage from './pages/OpsPage';
 import OpsIntakePage from './pages/OpsIntakePage';
@@ -29,7 +30,8 @@ const App: React.FC = () => {
           <CommandPalette />
           <Routes>
             <Route element={<AppShellNew />}>
-              <Route path="/" element={<Navigate to="/overview" replace />} />
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<PortfolioDashboardPage />} />
               <Route path="/ceo/overview" element={<CeoOverviewPage />} />
               <Route path="/finance/portfolio" element={<PortfolioPage />} />
               <Route path="/overview" element={<ExecutiveDashboardPageNew />} />
@@ -43,7 +45,7 @@ const App: React.FC = () => {
               <Route path="/settings" element={<SettingsPageNew />} />
               <Route path="/settings/ingestion" element={<DataIngestionPage />} />
               <Route path="/help" element={<HelpPageNew />} />
-              <Route path="*" element={<Navigate to="/overview" replace />} />
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
           </Routes>
         </BrowserRouter>

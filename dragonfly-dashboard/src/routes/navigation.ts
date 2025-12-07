@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import OverviewPage from '../pages/OverviewPage';
+import PortfolioDashboardPage from '../pages/PortfolioDashboardPage';
 import ExecutiveDashboardPageNew from '../pages/ExecutiveDashboardPageNew';
 import CollectabilityPage from '../pages/CollectabilityPage';
 import PipelineDashboard from '../pages/PipelineDashboard';
@@ -21,26 +22,26 @@ export interface NavigationRoute {
 
 /**
  * Navigation routes ordered for daily ops workflow:
- * 1. Ops Console - Mom's home base (call queue + daily progress)
- * 2. Scoreboard - Dad's executive view
- * 3. Pipeline - Funnel health check
- * 4. Cases - Search and detail views
- * 5. Enforcement - Active matters
- * Remaining routes are secondary (settings, help, legacy pages)
+ * 1. Dashboard - CEO/investor portfolio overview (primary landing)
+ * 2. Judgments - Cases list and details
+ * 3. Enforcement - Active matters
+ * 4. Settings - Configuration
  */
 export const NAVIGATION_ROUTES: NavigationRoute[] = [
-  // Primary workflow routes
-  { label: 'Ops Console', path: '/ops-console', component: OpsConsolePage, primary: true },
-  { label: 'Mom Console', path: '/mom-console', component: MomEnforcementConsolePage, primary: true },
-  { label: 'Scoreboard', path: '/exec-dashboard', component: ExecutiveDashboardPageNew, primary: true },
-  { label: 'Pipeline', path: '/pipeline', component: PipelineDashboard, primary: true },
-  { label: 'Cases', path: '/cases', component: CasesPage, primary: true },
+  // Primary navigation (CEO-focused)
+  { label: 'Dashboard', path: '/dashboard', component: PortfolioDashboardPage, primary: true },
+  { label: 'Judgments', path: '/cases', component: CasesPage, primary: true },
   { label: 'Enforcement', path: '/enforcement', component: EnforcementPage, primary: true },
-  // Secondary / legacy routes
+  { label: 'Settings', path: '/settings', component: SettingsPageNew, primary: true },
+  // Ops workflow routes (secondary)
+  { label: 'Ops Console', path: '/ops-console', component: OpsConsolePage },
+  { label: 'Mom Console', path: '/mom-console', component: MomEnforcementConsolePage },
+  { label: 'Scoreboard', path: '/exec-dashboard', component: ExecutiveDashboardPageNew },
+  { label: 'Pipeline', path: '/pipeline', component: PipelineDashboard },
+  // Legacy / utility routes
   { label: 'Overview', path: '/overview', component: OverviewPage },
   { label: 'Collectability', path: '/collectability', component: CollectabilityPage },
   { label: 'Call Queue', path: '/call-queue', component: CallQueuePage },
-  { label: 'Settings', path: '/settings', component: SettingsPageNew },
   { label: 'Help', path: '/help', component: HelpPage },
 ];
 
