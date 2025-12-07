@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import os
+import secrets
+import time
 from pathlib import Path
+from uuid import UUID, uuid4
 
 import click
 import httpx
 import psycopg
-import secrets
-import time
-from uuid import UUID, uuid4
 
 from src.supabase_client import create_supabase_client
 
@@ -71,7 +71,9 @@ def main() -> None:
             client.table("enrichment_runs").delete().eq("id", inserted_id).execute()
             click.echo("enrichment_runs write OK")
         else:
-            click.echo("[doctor] Skipping enrichment_runs write test; no cases available to reference.")
+            click.echo(
+                "[doctor] Skipping enrichment_runs write test; no cases available to reference."
+            )
     except Exception as exc:  # pragma: no cover - diagnostics for missing table/view
         message = str(exc)
         click.echo(f"enrichment_runs check FAILED: {exc}")
@@ -90,7 +92,9 @@ def main() -> None:
     # Ensure PostgREST schema cache is aware of new views before verifying reachability.
     for attempt in range(2):
         try:
-            snapshot_res = client.table("v_collectability_snapshot").select("case_id").limit(1).execute()
+            snapshot_res = (
+                client.table("v_collectability_snapshot").select("case_id").limit(1).execute()
+            )
             click.echo(f"collectability snapshot check OK, rows={_row_count(snapshot_res)}")
             break
         except Exception as exc:
@@ -215,7 +219,9 @@ def _trigger_postgrest_reload(client) -> None:
 
     db_url = _resolve_db_url()
     if not db_url:
-        raise RuntimeError("Unable to reload PostgREST schema cache; SUPABASE_DB_URL not configured.")
+        raise RuntimeError(
+            "Unable to reload PostgREST schema cache; SUPABASE_DB_URL not configured."
+        )
 
     with psycopg.connect(db_url, autocommit=True) as conn:
         with conn.cursor() as cur:
@@ -246,7 +252,9 @@ def _count_foil_responses() -> int:
 def _ensure_foil_responses_schema() -> None:
     db_url = _resolve_db_url()
     if not db_url:
-        raise RuntimeError("SUPABASE_DB_URL or project credentials not configured; cannot ensure foil_responses schema.")
+        raise RuntimeError(
+            "SUPABASE_DB_URL or project credentials not configured; cannot ensure foil_responses schema."
+        )
 
     migration_dir = Path(__file__).resolve().parents[1] / "supabase" / "migrations"
     migration_files = [
@@ -273,9 +281,16 @@ def _ensure_foil_responses_schema() -> None:
 def _ensure_collectability_view() -> None:
     db_url = _resolve_db_url()
     if not db_url:
-        raise RuntimeError("SUPABASE_DB_URL or project credentials not configured; cannot ensure view existence.")
+        raise RuntimeError(
+            "SUPABASE_DB_URL or project credentials not configured; cannot ensure view existence."
+        )
 
-    migration_path = Path(__file__).resolve().parents[1] / "supabase" / "migrations" / "0058_collectability_public_view.sql"
+    migration_path = (
+        Path(__file__).resolve().parents[1]
+        / "supabase"
+        / "migrations"
+        / "0058_collectability_public_view.sql"
+    )
     up_sql_text = migration_path.read_text(encoding="utf-8")
     up_sql_section = up_sql_text.split("-- migrate:down", 1)[0]
     if "-- migrate:up" in up_sql_section:

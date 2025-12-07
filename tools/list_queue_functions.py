@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import psycopg
 
 try:  # Prefer python-dotenv when available, keep optional.
-    from dotenv import load_dotenv  # type: ignore
+    from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     load_dotenv = None
 
@@ -53,6 +53,7 @@ def _format_row(row: Sequence[object]) -> str:
     schema, name, argnames, argtypes = row
     argnames = list(argnames or [])
     argtypes = list(argtypes or [])
+
     def _stringify(items: Iterable[object]) -> str:
         return ",".join(str(item) for item in items)
 

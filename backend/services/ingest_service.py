@@ -257,9 +257,7 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
                         judgment_amount=row.get("judgment_amount"),
                         case_number=row.get("case_number"),
                         judgment_date=(
-                            str(row.get("entry_date"))
-                            if row.get("entry_date")
-                            else None
+                            str(row.get("entry_date")) if row.get("entry_date") else None
                         ),
                     )
 
@@ -335,9 +333,7 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
                             from .graph_service import process_judgment_for_graph
 
                             await process_judgment_for_graph(int(judgment_id))
-                            logger.debug(
-                                "Queued graph build for judgment %s", judgment_id
-                            )
+                            logger.debug("Queued graph build for judgment %s", judgment_id)
 
                             # Emit new_judgment event (best-effort, after graph is built)
                             # The graph build creates the entity we need for event tracking
@@ -346,9 +342,7 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
 
                                 # Extract county from source_file if available
                                 source_parts = str(row["source_file"]).split("|")
-                                county = (
-                                    source_parts[0] if len(source_parts) > 1 else None
-                                )
+                                county = source_parts[0] if len(source_parts) > 1 else None
 
                                 await emit_event_for_judgment(
                                     judgment_id=int(judgment_id),
@@ -377,9 +371,7 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
                             )
                     else:
                         # Conflict - already exists
-                        logger.debug(
-                            f"Skipped duplicate case_number: {row['case_number']}"
-                        )
+                        logger.debug(f"Skipped duplicate case_number: {row['case_number']}")
 
                 except Exception as e:
                     logger.warning(f"Failed to insert row {row['case_number']}: {e}")
@@ -389,7 +381,7 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
     if judgments_to_enrich:
         try:
             # Local import to avoid circular dependencies
-            from .enrichment_service import queue_enrichment  # type: ignore
+            from .enrichment_service import queue_enrichment
 
             for judgment_id, amount in judgments_to_enrich:
                 try:
@@ -407,9 +399,7 @@ async def ingest_simplicity_csv(path: str) -> dict[str, int]:
                         enrich_err,
                     )
         except ImportError:
-            logger.warning(
-                "enrichment_service not available, skipping enrichment queueing"
-            )
+            logger.warning("enrichment_service not available, skipping enrichment queueing")
 
     logger.info(
         f"Ingest complete: {total_rows} rows processed, "

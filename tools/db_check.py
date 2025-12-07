@@ -7,7 +7,7 @@ import os
 import psycopg
 
 try:  # Prefer python-dotenv when available.
-    from dotenv import load_dotenv  # type: ignore
+    from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     load_dotenv = None
 
@@ -56,7 +56,10 @@ def _build_db_url() -> tuple[str | None, str | None]:
 
 def _classify_error(message: str) -> str:
     lowered = message.lower()
-    if any(token in lowered for token in ("timeout", "could not translate host name", "connection refused")):
+    if any(
+        token in lowered
+        for token in ("timeout", "could not translate host name", "connection refused")
+    ):
         return f"[db_check] Network or pooler issue: {message}"
     if any(token in lowered for token in ("password", "authentication")):
         return (
