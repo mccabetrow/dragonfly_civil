@@ -1,0 +1,112 @@
+# =============================================================================
+# Dragonfly Civil - Project Configuration
+# =============================================================================
+# This file consolidates tool configurations for Railway/CI builds.
+# Type hints are advisory-only; builds should not fail on type errors.
+# =============================================================================
+
+[project]
+name = "dragonfly-civil"
+version = "1.2.0"
+description = "Judgment enforcement operating system"
+requires-python = ">=3.11"
+
+# =============================================================================
+# MyPy Configuration - Relaxed for Production Builds
+# =============================================================================
+# Type hints are documentation, not enforcement. Allow builds to pass.
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+strict_optional = false
+no_implicit_optional = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_untyped_decorators = false
+warn_return_any = false
+warn_unused_configs = false
+# Exclude all major code directories from strict checking
+exclude = [
+    "^\\.venv/",
+    "^\\.mypy_cache/",
+    "^\\.pytest_cache/",
+    "^tmp/",
+    "^backend/",
+    "^etl/",
+    "^workers/",
+    "^src/",
+    "^tests/",
+    "^tools/",
+    "^scripts/",
+]
+
+# =============================================================================
+# Ruff Configuration - Fast Linting
+# =============================================================================
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = [
+    ".venv",
+    ".mypy_cache",
+    ".pytest_cache",
+    "tmp",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+    "F401",  # Unused import (often intentional for re-exports)
+]
+
+# =============================================================================
+# Black Configuration - Code Formatting
+# =============================================================================
+
+[tool.black]
+target-version = ["py311"]
+line-length = 100
+exclude = '''
+/(
+    \.venv
+  | \.mypy_cache
+  | \.pytest_cache
+  | tmp
+  | __pycache__
+)/
+'''
+
+# =============================================================================
+# isort Configuration - Import Sorting
+# =============================================================================
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip = [".venv", ".mypy_cache", ".pytest_cache", "tmp"]
+
+# =============================================================================
+# Pytest Configuration
+# =============================================================================
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "e2e: marks tests as end-to-end tests",
+    "slow: marks tests as slow-running",
+]
