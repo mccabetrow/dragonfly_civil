@@ -331,3 +331,227 @@ def get_proof_client() -> ProofClient:
     if _proof_client is None:
         _proof_client = ProofClient()
     return _proof_client
+
+
+# =============================================================================
+# High-Level Dispatch Function with Compliance Guard
+# =============================================================================
+
+
+async def dispatch_service_of_process(
+    judgment_id: int,
+    document_url: str,
+    case_details: dict[str, Any] | None = None,
+    *,
+    priority: str = "standard",
+    skip_compliance: bool = False,
+) -> dict[str, Any]:
+    """
+    Dispatch physical service for a judgment with compliance validation.
+
+    This is the main entry point for initiating process service. It:
+    1. Validates the judgment against spend guards (ROI, confidence)
+    2. Creates a serve job via Proof.com if compliant
+    3. Records the serve job in enforcement.serve_jobs
+    4. Falls back to manual review task if compliance fails
+
+    Args:
+        judgment_id: The judgment ID to serve
+        document_url: URL to the document to be served
+        case_details: Optional dict with case info (will be fetched if not provided)
+        priority: Service priority ("rush", "standard", "economy")
+        skip_compliance: If True, bypass compliance checks (use with caution)
+
+    Returns:
+        Dictionary with:
+            - success: bool
+            - serve_job_id: UUID of the enforcement.serve_jobs record
+            - proof_job_id: Proof.com job ID (if dispatched)
+            - manual_review_task_id: Task ID (if compliance failed)
+            - compliance_bypass: str reason if bypassed
+
+    Raises:
+        ProofServiceError: If Proof.com API call fails
+    """
+    from backend.db import get_pool
+
+    result: dict[str, Any] = {
+        "success": False,
+        "judgment_id": judgment_id,
+        "serve_job_id": None,
+        "proof_job_id": None,
+        "manual_review_task_id": None,
+        "compliance_bypass": None,
+    }
+
+    # Step 1: Compliance validation
+    if not skip_compliance:
+        try:
+            from .compliance_service import (
+                ComplianceError,
+                create_manual_review_task,
+                validate_service_dispatch,
+            )
+
+            compliance_result = await validate_service_dispatch(judgment_id)
+            logger.info(
+                f"Compliance passed for judgment {judgment_id}: "
+                f"gig_bypass={compliance_result.gig_bypass_applied}"
+            )
+
+            if compliance_result.gig_bypass_applied:
+                result["compliance_bypass"] = "gig_detected"
+
+        except ComplianceError as ce:
+            logger.warning(
+                f"Compliance failed for judgment {judgment_id}: {ce} (rule={ce.rule})"
+            )
+
+            # Create manual review task instead of dispatching
+            try:
+                task_id = await create_manual_review_task(judgment_id, ce)
+                result["manual_review_task_id"] = task_id
+                result["compliance_error"] = str(ce)
+                result["compliance_rule"] = ce.rule
+                logger.info(
+                    f"Created manual review task {task_id} for judgment {judgment_id}"
+                )
+            except Exception as task_err:
+                logger.error(
+                    f"Failed to create manual review task for judgment {judgment_id}: {task_err}"
+                )
+                result["compliance_error"] = str(ce)
+
+            return result
+
+    else:
+        result["compliance_bypass"] = "skip_compliance_flag"
+        logger.warning(
+            f"Compliance skipped for judgment {judgment_id} (skip_compliance=True)"
+        )
+
+    # Step 2: Fetch case details if not provided
+    if case_details is None:
+        conn = await get_pool()
+        if conn is None:
+            raise ProofServiceError("Database connection not available")
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT
+                    j.case_number,
+                    j.defendant_name,
+                    j.defendant_address,
+                    j.defendant_city,
+                    j.defendant_state,
+                    j.defendant_zip,
+                    j.judgment_amount,
+                    j.plaintiff_name,
+                    j.court
+                FROM public.judgments j
+                WHERE j.id = %s
+                """,
+                (judgment_id,),
+            )
+            row = await cur.fetchone()
+
+            if row is None:
+                raise ProofServiceError(f"Judgment {judgment_id} not found")
+
+            case_details = {
+                "judgment_id": judgment_id,
+                "case_number": row[0],
+                "defendant_name": row[1],
+                "defendant_address": row[2],
+                "defendant_city": row[3],
+                "defendant_state": row[4],
+                "defendant_zip": row[5],
+                "judgment_amount": float(row[6]) if row[6] else 0.0,
+                "plaintiff_name": row[7],
+                "court": row[8],
+            }
+    else:
+        case_details["judgment_id"] = judgment_id
+
+    # Step 3: Dispatch to Proof.com
+    client = get_proof_client()
+
+    if not client.is_configured:
+        logger.warning("Proof.com not configured - creating placeholder serve job")
+        # Create a placeholder record without actually calling Proof.com
+        proof_result = {
+            "job_id": None,
+            "status": "pending_configuration",
+            "estimated_cost": 0.0,
+        }
+    else:
+        proof_result = await client.create_serve_job(
+            case_details=case_details,
+            document_url=document_url,
+            priority=priority,
+        )
+
+    # Step 4: Record in enforcement.serve_jobs
+    conn = await get_pool()
+    if conn is not None:
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO enforcement.serve_jobs (
+                        judgment_id,
+                        provider_job_id,
+                        provider,
+                        status,
+                        priority,
+                        estimated_cost,
+                        metadata,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        'proof.com',
+                        %s,
+                        %s,
+                        %s,
+                        %s::jsonb,
+                        NOW(),
+                        NOW()
+                    )
+                    RETURNING id
+                    """,
+                    (
+                        judgment_id,
+                        proof_result.get("job_id") or "pending",
+                        proof_result.get("status", "created"),
+                        priority,
+                        proof_result.get("estimated_cost", 0.0),
+                        {
+                            "document_url": document_url,
+                            "compliance_bypass": result.get("compliance_bypass"),
+                        },
+                    ),
+                )
+                row = await cur.fetchone()
+                if row:
+                    result["serve_job_id"] = str(row[0])
+
+        except Exception as db_err:
+            logger.error(
+                f"Failed to record serve job for judgment {judgment_id}: {db_err}"
+            )
+
+    result["success"] = True
+    result["proof_job_id"] = proof_result.get("job_id")
+    result["status"] = proof_result.get("status")
+    result["estimated_cost"] = proof_result.get("estimated_cost")
+
+    logger.info(
+        f"Dispatched service for judgment {judgment_id}: "
+        f"proof_job={result['proof_job_id']}, serve_job={result['serve_job_id']}"
+    )
+
+    return result
