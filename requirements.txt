@@ -32,3 +32,6 @@ docxtpl>=0.16.0
 # Notification Services
 sendgrid>=6.11.0
 twilio>=9.0.0
+
+# Cryptography (for secure token handling)
+cryptography>=41.0.0

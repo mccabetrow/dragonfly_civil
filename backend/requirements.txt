@@ -29,3 +29,6 @@ supabase>=2.0.0,<3.0.0
 
 # Type hints for older Python
 typing-extensions>=4.9.0,<5.0.0
+
+# Cryptography (for secure token handling)
+cryptography>=41.0.0,<43.0.0
