@@ -14,13 +14,13 @@ These guards protect against wasted spend on cases unlikely to yield
 returns that justify the cost of physical service (~$100-150/attempt).
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from backend.core.logging import get_logger
 from backend.db import get_pool
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # =============================================================================
@@ -296,9 +296,7 @@ async def create_manual_review_task(
                 if row:
                     plaintiff_id = str(row[0])
         except Exception as e:
-            logger.warning(
-                f"Could not look up plaintiff for judgment {judgment_id}: {e}"
-            )
+            logger.warning(f"Could not look up plaintiff for judgment {judgment_id}: {e}")
 
     # Build metadata
     metadata = {
@@ -348,7 +346,5 @@ async def create_manual_review_task(
             return task_id
 
     except Exception as e:
-        logger.error(
-            f"Failed to create manual review task for judgment {judgment_id}: {e}"
-        )
+        logger.error(f"Failed to create manual review task for judgment {judgment_id}: {e}")
         raise RuntimeError(f"Failed to create manual review task: {e}") from e

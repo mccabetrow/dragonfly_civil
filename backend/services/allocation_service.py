@@ -14,13 +14,13 @@ Depends on:
 - finance_service for pool management
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from backend.core.logging import get_logger
 from backend.db import get_pool
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # =============================================================================
@@ -230,9 +230,7 @@ async def auto_tranche_judgment(judgment_id: int) -> Optional[AllocationResult]:
     score = await get_score_for_judgment(judgment_id)
 
     if score is None:
-        logger.info(
-            f"Judgment {judgment_id} has no collectability score - skipping allocation"
-        )
+        logger.info(f"Judgment {judgment_id} has no collectability score - skipping allocation")
         return None
 
     # Step 2: Determine target pool
@@ -240,9 +238,7 @@ async def auto_tranche_judgment(judgment_id: int) -> Optional[AllocationResult]:
 
     # Step 3: Check current assignment
     current_pool_name = await get_current_pool_for_judgment(judgment_id)
-    was_reassigned = (
-        current_pool_name is not None and current_pool_name != target_pool_name
-    )
+    was_reassigned = current_pool_name is not None and current_pool_name != target_pool_name
 
     # Step 4: Ensure pool exists
     pool_id = await ensure_pool_exists(target_pool_name)
@@ -264,9 +260,7 @@ async def auto_tranche_judgment(judgment_id: int) -> Optional[AllocationResult]:
             )
 
     except Exception as e:
-        logger.error(
-            f"Failed to assign judgment {judgment_id} to pool {target_pool_name}: {e}"
-        )
+        logger.error(f"Failed to assign judgment {judgment_id} to pool {target_pool_name}: {e}")
         raise AllocationError(f"Failed to assign judgment to pool: {e}") from e
 
     result = AllocationResult(
@@ -330,9 +324,7 @@ async def emit_tranched_event(
                 ),
             )
 
-        logger.debug(
-            f"Emitted judgment_tranched event for judgment {judgment_id} -> {pool_name}"
-        )
+        logger.debug(f"Emitted judgment_tranched event for judgment {judgment_id} -> {pool_name}")
 
     except Exception as e:
         # Best-effort: log and continue

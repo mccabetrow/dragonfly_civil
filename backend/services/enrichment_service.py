@@ -4,24 +4,36 @@ Dragonfly Engine - Enrichment Service
 Background job queue processing for TLOxp, idiCORE enrichment,
 and PDF packet generation. Implements stateless, idempotent workers
 with FOR UPDATE SKIP LOCKED pattern for safe concurrency.
+
+Observability:
+- Structured JSON logging with run_id correlation
+- Every operation logs start/success/failure with judgment_id
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psycopg
 from psycopg.rows import dict_row
 
 from ..config import get_settings
+from ..core.logging import (
+    LogContext,
+    Timer,
+    get_logger,
+    log_worker_failure,
+    log_worker_start,
+    log_worker_success,
+)
+from ..core.models import EnrichmentData, ScoreBreakdownModel
 from ..db import get_pool
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 settings = get_settings()
 
@@ -799,12 +811,11 @@ async def worker_loop(poll_interval_seconds: int = 5) -> None:
 
 async def main() -> None:
     """Main entrypoint for running the enrichment worker."""
+    from ..core.logging import configure_logging
     from ..db import init_db_pool
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
+    # Configure structured JSON logging for production
+    configure_logging()
 
     logger.info("Initializing enrichment worker...")
     await init_db_pool()

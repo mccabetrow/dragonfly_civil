@@ -7,19 +7,18 @@ Handles database initialization and runs the job processing loop.
 """
 
 import asyncio
-import logging
 import sys
 
 # Windows compatibility for psycopg async
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
+from backend.core.logging import configure_logging, get_logger
 
-logger = logging.getLogger(__name__)
+# Configure structured JSON logging for production
+configure_logging(service_name="dragonfly-worker")
+
+logger = get_logger(__name__)
 
 
 async def start_worker() -> None:

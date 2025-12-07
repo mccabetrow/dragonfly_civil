@@ -77,9 +77,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = Field(
         ..., min_length=100, description="Supabase service role JWT key"
     )
-    supabase_db_url: str = Field(
-        ..., description="Postgres connection string (pooler or direct)"
-    )
+    supabase_db_url: str = Field(..., description="Postgres connection string (pooler or direct)")
 
     # Discord notifications
     discord_webhook_url: HttpUrl | None = Field(
@@ -95,21 +93,15 @@ class Settings(BaseSettings):
     )
 
     # SMS notifications (Twilio)
-    twilio_account_sid: str | None = Field(
-        default=None, description="Twilio Account SID"
-    )
+    twilio_account_sid: str | None = Field(default=None, description="Twilio Account SID")
     twilio_auth_token: str | None = Field(default=None, description="Twilio Auth Token")
     twilio_from_number: str | None = Field(
         default=None, description="Twilio sender phone number (E.164 format)"
     )
 
     # Notification recipients
-    ceo_email: str | None = Field(
-        default=None, description="CEO email for executive briefings"
-    )
-    ops_email: str | None = Field(
-        default=None, description="Ops team email for operational alerts"
-    )
+    ceo_email: str | None = Field(default=None, description="CEO email for executive briefings")
+    ops_email: str | None = Field(default=None, description="Ops team email for operational alerts")
     ops_phone: str | None = Field(
         default=None, description="Ops team phone for SMS alerts (E.164 format)"
     )
@@ -243,20 +235,22 @@ def get_settings() -> Settings:
 def configure_logging(settings: Settings | None = None) -> None:
     """
     Configure application logging based on settings.
+
+    In production, uses structured JSON logging for observability.
+    In development, uses colored console output.
     """
     if settings is None:
         settings = get_settings()
 
-    log_format = (
-        "%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s"
-        if settings.is_development
-        else "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-    )
+    # Use structured logging from core module
+    from .core.logging import configure_structured_logging
 
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level),
-        format=log_format,
-        datefmt="%Y-%m-%d %H:%M:%S",
+    # Production: JSON for log aggregation (Datadog, CloudWatch, etc.)
+    # Development: Colored console for readability
+    configure_structured_logging(
+        level=settings.log_level,
+        json_output=settings.is_production,
+        service_name="dragonfly",
     )
 
     # Quiet noisy loggers
