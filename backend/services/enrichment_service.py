@@ -121,9 +121,7 @@ def compute_score_breakdown(
 
     # Banking component (0-10)
     banking_score = 0
-    if enrichment_data.get("has_bank_account_recent") or enrichment_data.get(
-        "has_bank_account"
-    ):
+    if enrichment_data.get("has_bank_account_recent") or enrichment_data.get("has_bank_account"):
         banking_score = 10
 
     # Recency component (0-20)
@@ -196,9 +194,7 @@ async def persist_score_breakdown(
         raise RuntimeError("Database connection not available")
 
     jid = (
-        int(judgment_id)
-        if isinstance(judgment_id, str) and judgment_id.isdigit()
-        else judgment_id
+        int(judgment_id) if isinstance(judgment_id, str) and judgment_id.isdigit() else judgment_id
     )
 
     async with conn.cursor() as cur:
@@ -273,9 +269,7 @@ class IDICoreClient:
 
         Returns enrichment data dict.
         """
-        logger.info(
-            f"[idiCORE] Searching for judgment_id={judgment_id}, amount={amount}"
-        )
+        logger.info(f"[idiCORE] Searching for judgment_id={judgment_id}, amount={amount}")
         # TODO: Replace with real idiCORE API call
         await asyncio.sleep(0.1)  # Simulate API latency
         return {
@@ -345,16 +339,14 @@ async def queue_enrichment(judgment_id: str, amount: float) -> Optional[UUID]:
             await cur.execute(
                 """
                 SELECT EXISTS (
-                    SELECT 1 FROM information_schema.tables 
+                    SELECT 1 FROM information_schema.tables
                     WHERE table_schema = 'ops' AND table_name = 'job_queue'
                 )
             """
             )
             row = await cur.fetchone()
             if not row or not row[0]:
-                logger.debug(
-                    "ops.job_queue table does not exist, skipping enrichment queue"
-                )
+                logger.debug("ops.job_queue table does not exist, skipping enrichment queue")
                 return None
 
         async with conn.transaction():
@@ -487,9 +479,7 @@ async def process_one_job() -> bool:
 
             if attempts >= 3:
                 await _mark_job_failed(conn, job_id, error_msg)
-                logger.warning(
-                    f"Job {job_id} permanently failed after {attempts} attempts"
-                )
+                logger.warning(f"Job {job_id} permanently failed after {attempts} attempts")
             else:
                 await _mark_job_pending(conn, job_id, error_msg)
                 logger.info(f"Job {job_id} will be retried (attempt {attempts}/3)")
@@ -619,6 +609,47 @@ async def _apply_enrichment(judgment_id: str, result: dict[str, Any]) -> None:
             alloc_err,
         )
 
+    # Hook 2: Gig detection (best-effort, never fail enrichment)
+    try:
+        from .gig_service import process_judgment_for_gig_garnishment
+
+        jid_int = (
+            int(judgment_id)
+            if isinstance(judgment_id, str) and judgment_id.isdigit()
+            else int(judgment_id)
+        )
+        gig_results = await process_judgment_for_gig_garnishment(jid_int)
+
+        if gig_results:
+            # Log each gig detection clearly
+            for gig_hit in gig_results:
+                platform = gig_hit.get("platform", "Unknown")
+                if gig_hit.get("error"):
+                    logger.warning(
+                        "Gig Detection: FAILED (%s) - %s",
+                        platform,
+                        gig_hit.get("error"),
+                    )
+                else:
+                    logger.info(
+                        "Gig Detected: TRUE (%s) - Judgment %s",
+                        platform,
+                        judgment_id,
+                    )
+        else:
+            logger.debug(
+                "Gig Detection: FALSE - Judgment %s (no gig activity detected)",
+                judgment_id,
+            )
+
+    except Exception as gig_err:
+        # Never fail enrichment due to gig detection issues
+        logger.warning(
+            "Gig detection skipped for judgment %s: %s",
+            judgment_id,
+            gig_err,
+        )
+
     # Emit events for significant findings (best-effort, never fail enrichment)
     try:
         from .event_service import emit_event_for_judgment
@@ -706,9 +737,7 @@ async def _mark_job_completed(conn: psycopg.AsyncConnection, job_id: UUID) -> No
         )
 
 
-async def _mark_job_failed(
-    conn: psycopg.AsyncConnection, job_id: UUID, error_msg: str
-) -> None:
+async def _mark_job_failed(conn: psycopg.AsyncConnection, job_id: UUID, error_msg: str) -> None:
     """Mark a job as permanently failed."""
     async with conn.cursor() as cur:
         await cur.execute(
@@ -723,9 +752,7 @@ async def _mark_job_failed(
         )
 
 
-async def _mark_job_pending(
-    conn: psycopg.AsyncConnection, job_id: UUID, error_msg: str
-) -> None:
+async def _mark_job_pending(conn: psycopg.AsyncConnection, job_id: UUID, error_msg: str) -> None:
     """Mark a job as pending for retry."""
     async with conn.cursor() as cur:
         await cur.execute(
@@ -749,9 +776,7 @@ async def worker_loop(poll_interval_seconds: int = 5) -> None:
     Args:
         poll_interval_seconds: Seconds to wait when no jobs are available
     """
-    logger.info(
-        f"Starting enrichment worker loop (poll_interval={poll_interval_seconds}s)"
-    )
+    logger.info(f"Starting enrichment worker loop (poll_interval={poll_interval_seconds}s)")
 
     while True:
         try:

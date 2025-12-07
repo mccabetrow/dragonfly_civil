@@ -113,9 +113,7 @@ async def daily_health_broadcast_job() -> None:
         if result.get("status") == "success":
             logger.info("🩺 Daily health broadcast completed successfully")
         else:
-            logger.warning(
-                f"🩺 Daily health broadcast had issues: {result.get('error')}"
-            )
+            logger.warning(f"🩺 Daily health broadcast had issues: {result.get('error')}")
 
     except Exception as e:
         logger.exception(f"🩺 Daily health broadcast job failed: {e}")
@@ -132,10 +130,7 @@ async def foil_followup_job() -> None:
     logger.info("📋 Running FOIL follow-up job...")
 
     try:
-        from .services.foil_service import (
-            broadcast_foil_followup_result,
-            process_foil_followups,
-        )
+        from .services.foil_service import broadcast_foil_followup_result, process_foil_followups
 
         processed = await process_foil_followups()
         await broadcast_foil_followup_result(processed)
@@ -192,10 +187,7 @@ async def pending_batch_processor_job() -> None:
     logger.info("📦 Running pending batch processor...")
 
     try:
-        from .services.ingest_service_v2 import (
-            get_pending_batches,
-            process_simplicity_batch,
-        )
+        from .services.ingest_service_v2 import get_pending_batches, process_simplicity_batch
         from .services.notifications import notify_pending_batches_processed
 
         pending = await get_pending_batches()
@@ -229,8 +221,7 @@ async def pending_batch_processor_job() -> None:
             )
 
         logger.info(
-            f"📦 Batch processor complete: {success_count} succeeded, "
-            f"{failure_count} failed"
+            f"📦 Batch processor complete: {success_count} succeeded, " f"{failure_count} failed"
         )
 
     except Exception as e:
@@ -259,16 +250,47 @@ async def intake_guardian_job() -> None:
         result = await guardian.check_stuck_batches()
 
         if result.marked_failed > 0:
-            logger.warning(
-                f"🛡️ Intake Guardian: Marked {result.marked_failed} batch(es) as failed"
-            )
+            logger.warning(f"🛡️ Intake Guardian: Marked {result.marked_failed} batch(es) as failed")
         elif result.checked > 0:
-            logger.debug(
-                f"🛡️ Intake Guardian: Checked {result.checked} batch(es), all OK"
-            )
+            logger.debug(f"🛡️ Intake Guardian: Checked {result.checked} batch(es), all OK")
 
     except Exception as e:
         logger.exception(f"🛡️ Intake guardian job failed: {e}")
+        # Don't re-raise - we don't want to crash the scheduler
+
+
+async def daily_recap_job() -> None:
+    """
+    Daily "Sleep Well" recap job.
+    Runs at 5 PM Eastern to summarize the day's activity.
+
+    Sends a rich notification with:
+    - New Judgments
+    - Gig Hits
+    - Served Papers
+    - Total Portfolio Value
+    """
+    logger.info("🌙 Running daily recap job...")
+
+    try:
+        from .services.notification_service import send_daily_recap
+
+        result = await send_daily_recap()
+
+        if result.get("success"):
+            stats = result.get("stats", {})
+            logger.info(
+                "🌙 Daily recap sent: new=%d, gig=%d, served=%d, value=$%.2f",
+                stats.get("new_judgments", 0),
+                stats.get("gig_hits", 0),
+                stats.get("served_papers", 0),
+                stats.get("portfolio_value", 0.0),
+            )
+        else:
+            logger.warning(f"🌙 Daily recap delivery issues: {result}")
+
+    except Exception as e:
+        logger.exception(f"🌙 Daily recap job failed: {e}")
         # Don't re-raise - we don't want to crash the scheduler
 
 
@@ -369,6 +391,15 @@ def _register_jobs(scheduler: AsyncIOScheduler, settings: Any) -> None:
         trigger=CronTrigger(hour=17, minute=0),
         id="daily_health_broadcast",
         name="Daily Health Broadcast",
+        replace_existing=True,
+    )
+
+    # Daily recap ("Sleep Well") - 5 PM Eastern every day
+    scheduler.add_job(
+        daily_recap_job,
+        trigger=CronTrigger(hour=17, minute=0),
+        id="daily_recap",
+        name="Daily Recap (Sleep Well)",
         replace_existing=True,
     )
 

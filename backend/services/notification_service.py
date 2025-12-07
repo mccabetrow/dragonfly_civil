@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
+from sendgrid.helpers.mail import Content, Email, HtmlContent, Mail, To
 from twilio.rest import Client as TwilioClient
 
 from ..config import get_settings
@@ -103,8 +103,7 @@ async def send_email(
         response = client.send(message)
 
         logger.info(
-            f"Email sent: to={to_email}, subject='{subject}', "
-            f"status={response.status_code}"
+            f"Email sent: to={to_email}, subject='{subject}', " f"status={response.status_code}"
         )
 
         return {
@@ -242,3 +241,191 @@ async def send_ceo_briefing(
         body=plain_body,
         html_body=html_body,
     )
+
+
+# =============================================================================
+# Daily Recap ("Sleep Well" Notification)
+# =============================================================================
+
+
+async def _gather_daily_stats() -> dict[str, Any]:
+    """
+    Gather daily statistics for the recap notification.
+
+    Returns:
+        Dict with new_judgments, gig_hits, served_papers, portfolio_value
+    """
+    from datetime import date
+
+    from ..db import get_pool
+
+    today = date.today()
+    stats: dict[str, Any] = {
+        "new_judgments": 0,
+        "gig_hits": 0,
+        "served_papers": 0,
+        "portfolio_value": 0.0,
+    }
+
+    pool = await get_pool()
+    if pool is None:
+        logger.warning("Database unavailable - using zero stats")
+        return stats
+
+    try:
+        async with pool.cursor() as cur:
+            # New judgments created today
+            await cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM public.judgments
+                WHERE DATE(created_at) = %s
+                """,
+                (today,),
+            )
+            row = await cur.fetchone()
+            stats["new_judgments"] = row[0] if row else 0
+
+            # Gig detections logged today
+            try:
+                await cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM intelligence.gig_detections
+                    WHERE DATE(detected_at) = %s
+                    """,
+                    (today,),
+                )
+                row = await cur.fetchone()
+                stats["gig_hits"] = row[0] if row else 0
+            except Exception:
+                # Table may not exist
+                stats["gig_hits"] = 0
+
+            # Service of process dispatches today (served papers)
+            try:
+                await cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM enforcement.service_actions
+                    WHERE DATE(created_at) = %s
+                      AND status = 'dispatched'
+                    """,
+                    (today,),
+                )
+                row = await cur.fetchone()
+                stats["served_papers"] = row[0] if row else 0
+            except Exception:
+                # Table may not exist
+                stats["served_papers"] = 0
+
+            # Total portfolio value (sum of active judgment amounts)
+            await cur.execute(
+                """
+                SELECT COALESCE(SUM(amount), 0)
+                FROM public.judgments
+                WHERE status NOT IN ('closed', 'dismissed', 'satisfied')
+                """
+            )
+            row = await cur.fetchone()
+            stats["portfolio_value"] = float(row[0]) if row else 0.0
+
+    except Exception as e:
+        logger.error(f"Failed to gather daily stats: {e}")
+
+    return stats
+
+
+async def send_daily_recap() -> dict[str, Any]:
+    """
+    Send the "Sleep Well" daily recap notification.
+
+    Tallys:
+    - New Judgments
+    - Gig Hits
+    - Served Papers
+    - Total Portfolio Value
+
+    Sends to Discord/Slack and optionally Email.
+
+    Returns:
+        Result dict with 'success' and delivery details
+    """
+    from datetime import datetime
+
+    from .discord_service import send_discord_message
+
+    stats = await _gather_daily_stats()
+
+    # Format the recap message
+    today_str = datetime.now().strftime("%A, %B %d, %Y")
+
+    discord_message = (
+        f"🌙 **Dragonfly Daily Recap** - {today_str}\n\n"
+        f"📋 **New Judgments:** {stats['new_judgments']:,}\n"
+        f"🚗 **Gig Hits:** {stats['gig_hits']:,}\n"
+        f"📬 **Papers Served:** {stats['served_papers']:,}\n"
+        f"💰 **Portfolio Value:** ${stats['portfolio_value']:,.2f}\n\n"
+        f"✅ All systems operational. Sleep well! 🛏️"
+    )
+
+    results: dict[str, Any] = {"stats": stats}
+
+    # Send Discord notification
+    try:
+        discord_success = await send_discord_message(discord_message)
+        results["discord"] = {"success": discord_success}
+        if discord_success:
+            logger.info("Daily recap sent to Discord")
+    except Exception as e:
+        logger.error(f"Failed to send daily recap to Discord: {e}")
+        results["discord"] = {"success": False, "error": str(e)}
+
+    # Also send to CEO via email (optional)
+    settings = get_settings()
+    if settings.ceo_email:
+        try:
+            html_body = f"""
+            <h2>🌙 Dragonfly Daily Recap</h2>
+            <p><strong>{today_str}</strong></p>
+            <table style="font-size: 16px; border-collapse: collapse;">
+                <tr><td style="padding: 8px;">📋 New Judgments</td><td style="padding: 8px;"><strong>{stats['new_judgments']:,}</strong></td></tr>
+                <tr><td style="padding: 8px;">🚗 Gig Hits</td><td style="padding: 8px;"><strong>{stats['gig_hits']:,}</strong></td></tr>
+                <tr><td style="padding: 8px;">📬 Papers Served</td><td style="padding: 8px;"><strong>{stats['served_papers']:,}</strong></td></tr>
+                <tr><td style="padding: 8px;">💰 Portfolio Value</td><td style="padding: 8px;"><strong>${stats['portfolio_value']:,.2f}</strong></td></tr>
+            </table>
+            <p style="margin-top: 20px; color: #28a745;">✅ All systems operational. Sleep well! 🛏️</p>
+            """
+            plain_body = (
+                discord_message.replace("**", "")
+                .replace("🌙 ", "")
+                .replace("📋 ", "")
+                .replace("🚗 ", "")
+                .replace("📬 ", "")
+                .replace("💰 ", "")
+                .replace("✅ ", "")
+                .replace("🛏️", "")
+            )
+
+            email_result = await send_ceo_briefing(
+                subject=f"Daily Recap - {today_str}",
+                html_body=html_body,
+                plain_body=plain_body,
+            )
+            results["email"] = email_result
+        except Exception as e:
+            logger.error(f"Failed to send daily recap email: {e}")
+            results["email"] = {"success": False, "error": str(e)}
+
+    logger.info(
+        "Daily recap complete: new=%d, gig=%d, served=%d, value=$%.2f",
+        stats["new_judgments"],
+        stats["gig_hits"],
+        stats["served_papers"],
+        stats["portfolio_value"],
+    )
+
+    results["success"] = results.get("discord", {}).get("success", False) or results.get(
+        "email", {}
+    ).get("success", False)
+    return results
