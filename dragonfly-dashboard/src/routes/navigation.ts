@@ -8,7 +8,7 @@ import EnforcementPage from '../pages/EnforcementPage';
 import CasesPage from '../pages/CasesPage';
 import { OpsConsolePage } from '../pages/OpsConsolePageNew';
 import MomEnforcementConsolePage from '../pages/MomEnforcementConsolePage';
-import SettingsPage from '../pages/SettingsPage';
+import SettingsPageNew from '../pages/SettingsPageNew';
 import HelpPage from '../pages/HelpPage';
 
 export interface NavigationRoute {
@@ -40,7 +40,7 @@ export const NAVIGATION_ROUTES: NavigationRoute[] = [
   { label: 'Overview', path: '/overview', component: OverviewPage },
   { label: 'Collectability', path: '/collectability', component: CollectabilityPage },
   { label: 'Call Queue', path: '/call-queue', component: CallQueuePage },
-  { label: 'Settings', path: '/settings', component: SettingsPage },
+  { label: 'Settings', path: '/settings', component: SettingsPageNew },
   { label: 'Help', path: '/help', component: HelpPage },
 ];
 
