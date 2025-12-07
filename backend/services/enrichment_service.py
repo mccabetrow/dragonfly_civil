@@ -593,6 +593,32 @@ async def _apply_enrichment(judgment_id: str, result: dict[str, Any]) -> None:
         breakdown.banking,
     )
 
+    # Auto-allocate to finance pool based on score (best-effort, never fail enrichment)
+    try:
+        from .allocation_service import auto_tranche_and_emit
+
+        jid_int = (
+            int(judgment_id)
+            if isinstance(judgment_id, str) and judgment_id.isdigit()
+            else int(judgment_id)
+        )
+        allocation_result = await auto_tranche_and_emit(jid_int)
+
+        if allocation_result:
+            logger.info(
+                "Judgment %s auto-allocated to pool '%s' (score=%s)",
+                judgment_id,
+                allocation_result.pool_name,
+                allocation_result.score,
+            )
+    except Exception as alloc_err:
+        # Never fail enrichment due to allocation issues
+        logger.warning(
+            "Auto-allocation skipped for judgment %s: %s",
+            judgment_id,
+            alloc_err,
+        )
+
     # Emit events for significant findings (best-effort, never fail enrichment)
     try:
         from .event_service import emit_event_for_judgment
