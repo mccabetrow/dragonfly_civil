@@ -9,18 +9,24 @@ from functools import cached_property
 from typing import Iterator, Literal
 from uuid import UUID, uuid5
 
-from pydantic import BaseModel, Field, ValidationError  # type: ignore[attr-defined]
+from pydantic import BaseModel, Field, ValidationError
 
 try:  # pragma: no cover - compatibility shim for pydantic < 2
-    from pydantic import ConfigDict, field_validator  # type: ignore[attr-defined]
+    from pydantic import ConfigDict
+    from pydantic import field_validator as pydantic_field_validator
+
+    field_validator = pydantic_field_validator  # Re-export for use in this module
 except ImportError:  # pragma: no cover - fallback to pydantic v1 APIs
     ConfigDict = dict  # type: ignore[misc, assignment]
 
-    from pydantic import validator as _pydantic_validator  # type: ignore
+    from pydantic import validator as _pydantic_validator
 
-    def field_validator(*fields, **kwargs):  # type: ignore[misc]
+    def _field_validator_v1_compat(*fields: str, **kwargs):  # type: ignore[misc]
+        """Pydantic v1 compatibility wrapper for field_validator."""
         kwargs.pop("mode", None)
         return _pydantic_validator(*fields, **kwargs)
+
+    field_validator = _field_validator_v1_compat  # type: ignore[assignment]
 
 _ENTITY_NAMESPACE = UUID("8bfa69a9-63fd-4d1f-bfd7-98ae1b85b8e9")
 _COMPANY_KEYWORDS = {

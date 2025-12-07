@@ -228,8 +228,9 @@ def get_settings() -> Settings:
     Get cached settings instance.
 
     Uses lru_cache to ensure settings are only loaded once.
+    Pydantic BaseSettings loads required fields from environment variables.
     """
-    return Settings()
+    return Settings()  # type: ignore[call-arg]
 
 
 def configure_logging(settings: Settings | None = None) -> None:
