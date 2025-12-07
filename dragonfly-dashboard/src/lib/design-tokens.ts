@@ -79,7 +79,7 @@ export const colors = {
     },
   },
 
-  // Surface Colors
+  // Surface Colors - Light mode
   surface: {
     page: 'slate-50',
     card: 'white',
@@ -88,6 +88,18 @@ export const colors = {
     sidebarHover: 'slate-800',
     header: 'white/95',
     overlay: 'slate-900/50',
+  },
+
+  // Surface Colors - Dark mode (Premium Fintech)
+  surfaceDark: {
+    page: 'dragonfly-navy-900',
+    card: 'dragonfly-navy-800',
+    cardHover: 'dragonfly-navy-700',
+    sidebar: 'dragonfly-navy-950',
+    sidebarHover: 'dragonfly-navy-900',
+    header: 'dragonfly-navy-900/80',
+    overlay: 'black/60',
+    elevated: 'dragonfly-navy-850',
   },
 
   // Text Colors
@@ -101,12 +113,42 @@ export const colors = {
     linkHover: 'blue-700',
   },
 
+  // Text Colors - Dark mode
+  textDark: {
+    primary: 'white',
+    secondary: 'slate-300',
+    tertiary: 'slate-400',
+    muted: 'slate-500',
+    inverse: 'dragonfly-navy-950',
+    link: 'cyan-400',
+    linkHover: 'cyan-300',
+  },
+
+  // Accent colors for dark mode
+  accent: {
+    primary: 'cyan-500',
+    primaryHover: 'cyan-400',
+    secondary: 'amber-400',
+    success: 'emerald-400',
+    warning: 'amber-400',
+    error: 'rose-400',
+  },
+
   // Border Colors
   border: {
     default: 'slate-200',
     hover: 'slate-300',
     focus: 'blue-500',
     separator: 'slate-100',
+  },
+
+  // Border Colors - Dark mode
+  borderDark: {
+    default: 'white/5',
+    hover: 'white/10',
+    focus: 'cyan-500/50',
+    separator: 'white/5',
+    glow: 'cyan-500/20',
   },
 } as const;
 
@@ -159,34 +201,34 @@ export const spacing = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const typography = {
-  // Headings
-  h1: 'text-2xl font-semibold text-slate-900',
-  h2: 'text-lg font-semibold text-slate-900',
-  h3: 'text-base font-semibold text-slate-900',
-  h4: 'text-sm font-semibold text-slate-900',
+  // Headings - Light mode
+  h1: 'text-2xl font-semibold text-slate-900 dark:text-white',
+  h2: 'text-lg font-semibold text-slate-900 dark:text-white',
+  h3: 'text-base font-semibold text-slate-900 dark:text-white',
+  h4: 'text-sm font-semibold text-slate-900 dark:text-white',
 
   // Body text
-  body: 'text-sm text-slate-600',
-  bodyLarge: 'text-base text-slate-600',
-  bodySmall: 'text-xs text-slate-600',
+  body: 'text-sm text-slate-600 dark:text-slate-300',
+  bodyLarge: 'text-base text-slate-600 dark:text-slate-300',
+  bodySmall: 'text-xs text-slate-600 dark:text-slate-400',
 
   // Labels
-  label: 'text-xs font-semibold uppercase tracking-wide text-slate-500',
-  labelSmall: 'text-[11px] font-semibold uppercase tracking-wide text-slate-400',
+  label: 'text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400',
+  labelSmall: 'text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500',
 
-  // Metrics
-  metricLarge: 'text-3xl font-semibold tracking-tight text-slate-900',
-  metricMedium: 'text-2xl font-semibold text-slate-900',
-  metricSmall: 'text-xl font-semibold text-slate-900',
+  // Metrics - Premium styling for dark mode
+  metricLarge: 'text-3xl font-semibold tracking-tight text-slate-900 dark:text-white',
+  metricMedium: 'text-2xl font-semibold text-slate-900 dark:text-white',
+  metricSmall: 'text-xl font-semibold text-slate-900 dark:text-white',
 
   // Table
-  tableHeader: 'text-xs font-semibold uppercase tracking-wide text-slate-500',
-  tableCell: 'text-sm text-slate-700',
-  tableCellMuted: 'text-sm text-slate-500',
+  tableHeader: 'text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400',
+  tableCell: 'text-sm text-slate-700 dark:text-slate-200',
+  tableCellMuted: 'text-sm text-slate-500 dark:text-slate-400',
 
   // Links
-  link: 'text-blue-600 hover:text-blue-700 hover:underline',
-  linkSubtle: 'text-slate-600 hover:text-slate-900',
+  link: 'text-blue-600 hover:text-blue-700 hover:underline dark:text-cyan-400 dark:hover:text-cyan-300',
+  linkSubtle: 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white',
 } as const;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -194,18 +236,25 @@ export const typography = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const components = {
-  // Card styles
+  // Card styles - Light mode
   card: {
-    base: 'rounded-2xl border border-slate-200 bg-white shadow-sm',
-    hover: 'hover:shadow-md hover:border-slate-300 transition-all duration-200',
-    interactive: 'cursor-pointer hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5 transition-all duration-200',
+    base: 'rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/5 dark:bg-dragonfly-navy-800/50 dark:backdrop-blur-sm',
+    hover: 'hover:shadow-md hover:border-slate-300 transition-all duration-200 dark:hover:border-white/10 dark:hover:shadow-card-md',
+    interactive: 'cursor-pointer hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5 transition-all duration-200 dark:hover:border-cyan-500/20 dark:hover:shadow-glow-cyan',
   },
 
-  // Button styles
+  // Premium card for dark mode
+  cardDark: {
+    base: 'rounded-2xl border border-white/5 bg-dragonfly-navy-800/50 backdrop-blur-sm',
+    elevated: 'rounded-2xl border border-white/10 bg-dragonfly-navy-800/80 shadow-card-md backdrop-blur-sm',
+    glow: 'rounded-2xl border border-cyan-500/20 bg-dragonfly-navy-800/50 shadow-glow-cyan backdrop-blur-sm',
+  },
+
+  // Button styles - with dark mode support
   button: {
-    base: 'inline-flex items-center justify-center font-semibold transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 active:scale-[0.98]',
-    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 focus-visible:ring-indigo-500',
-    secondary: 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 focus-visible:ring-slate-500',
+    base: 'inline-flex items-center justify-center font-semibold transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 active:scale-[0.98] dark:focus-visible:ring-offset-dragonfly-navy-900',
+    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 focus-visible:ring-indigo-500 dark:bg-cyan-500 dark:text-dragonfly-navy-950 dark:hover:bg-cyan-400 dark:focus-visible:ring-cyan-400',
+    secondary: 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 focus-visible:ring-slate-500 dark:bg-white/5 dark:text-white dark:border-white/10 dark:hover:bg-white/10 dark:hover:border-white/20',
     ghost: 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-slate-500',
     danger: 'bg-rose-600 text-white hover:bg-rose-700 focus-visible:ring-rose-500',
     sizes: {
