@@ -196,8 +196,8 @@ class Settings(BaseSettings):
         Returns None if DRAGONFLY_CORS_ORIGIN_REGEX is not set.
         """
         # Default pattern for Vercel preview deployments
-        # Matches: https://dragonfly-console1*.vercel.app
-        default_pattern = r"https://dragonfly-console1[\w-]*\.vercel\.app"
+        # Matches: https://dragonfly-console1*.vercel.app (any subdomain)
+        default_pattern = r"https://dragonfly-console1.*\.vercel\.app"
         return default_pattern if self.environment in ("prod", "staging") else None
 
     # Server
