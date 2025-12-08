@@ -32,9 +32,7 @@ class RadarRow(BaseModel):
     plaintiff_name: str = Field(..., description="Plaintiff name")
     defendant_name: str = Field(..., description="Defendant name")
     judgment_amount: float = Field(..., description="Judgment amount in dollars")
-    collectability_score: Optional[int] = Field(
-        None, description="Collectability score 0-100"
-    )
+    collectability_score: Optional[int] = Field(None, description="Collectability score 0-100")
     offer_strategy: str = Field(
         ..., description="BUY_CANDIDATE, CONTINGENCY, ENRICHMENT_PENDING, LOW_PRIORITY"
     )
@@ -42,6 +40,47 @@ class RadarRow(BaseModel):
     county: Optional[str] = Field(None, description="County")
     judgment_date: Optional[str] = Field(None, description="Judgment date ISO string")
     created_at: str = Field(..., description="Record creation timestamp")
+
+
+# =============================================================================
+# Wage Garnishment Candidate Models
+# =============================================================================
+
+
+class WageGarnishmentCandidate(BaseModel):
+    """Single wage garnishment candidate from enforcement.v_candidate_wage_garnishments."""
+
+    plaintiff_id: Optional[str] = Field(None, description="Plaintiff UUID")
+    case_number: str = Field(..., description="Court case number")
+    defendant_name: Optional[str] = Field(None, description="Defendant name")
+    employer_name: str = Field(..., description="Known employer name")
+    employer_address: Optional[str] = Field(None, description="Employer address")
+    balance: float = Field(..., description="Judgment balance in dollars")
+    jurisdiction: Optional[str] = Field(None, description="County/jurisdiction")
+    priority_score: float = Field(..., description="Computed priority score")
+    # Additional context
+    judgment_id: Optional[str] = Field(None, description="Judgment ID")
+    plaintiff_name: Optional[str] = Field(None, description="Plaintiff name")
+    plaintiff_tier: Optional[str] = Field(None, description="Plaintiff tier")
+    judgment_date: Optional[str] = Field(None, description="Judgment date")
+    collectability_score: Optional[int] = Field(None, description="Collectability 0-100")
+    income_band: Optional[str] = Field(None, description="Estimated income band")
+    intel_source: Optional[str] = Field(None, description="Intelligence data source")
+    intel_confidence: Optional[float] = Field(None, description="Intel confidence 0-100")
+    intel_verified: Optional[bool] = Field(None, description="Human-verified flag")
+    enforcement_stage: Optional[str] = Field(None, description="Current enforcement stage")
+    status: Optional[str] = Field(None, description="Judgment status")
+    created_at: Optional[str] = Field(None, description="Record creation timestamp")
+
+
+class WageGarnishmentCandidatesResponse(BaseModel):
+    """Paginated response for wage garnishment candidates."""
+
+    candidates: list[WageGarnishmentCandidate]
+    total: int = Field(..., description="Total matching candidates")
+    page: int = Field(..., description="Current page (1-indexed)")
+    page_size: int = Field(..., description="Number of items per page")
+    has_more: bool = Field(..., description="Whether more pages exist")
 
 
 # =============================================================================
@@ -60,9 +99,7 @@ class EnforcementStartRequest(BaseModel):
     priority: Literal["low", "normal", "high", "urgent"] = Field(
         default="normal", description="Priority level for the enforcement action"
     )
-    notes: str | None = Field(
-        default=None, description="Optional notes for the enforcement team"
-    )
+    notes: str | None = Field(default=None, description="Optional notes for the enforcement team")
 
 
 class EnforcementStartResponse(BaseModel):
@@ -263,9 +300,7 @@ async def stop_enforcement(
 
     Requires authentication.
     """
-    logger.info(
-        f"Enforcement stop requested by {auth.via}: case_id={case_id}, reason={reason}"
-    )
+    logger.info(f"Enforcement stop requested by {auth.via}: case_id={case_id}, reason={reason}")
 
     return EnforcementStartResponse(
         status="queued",
@@ -312,9 +347,7 @@ async def get_enforcement_radar(
     min_score: Optional[int] = Query(
         None, ge=0, le=100, description="Minimum collectability score"
     ),
-    min_amount: Optional[float] = Query(
-        None, ge=0, description="Minimum judgment amount"
-    ),
+    min_amount: Optional[float] = Query(None, ge=0, description="Minimum judgment amount"),
     auth: AuthContext = Depends(get_current_user),
 ) -> list[RadarRow]:
     """
@@ -378,9 +411,7 @@ async def get_enforcement_radar(
                     court=row.get("court"),
                     county=row.get("county"),
                     judgment_date=row.get("judgment_date"),
-                    created_at=str(
-                        row.get("created_at") or datetime.utcnow().isoformat()
-                    ),
+                    created_at=str(row.get("created_at") or datetime.utcnow().isoformat()),
                 )
             )
 
@@ -390,3 +421,139 @@ async def get_enforcement_radar(
     except Exception as e:
         logger.error(f"Enforcement radar query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to query radar: {e}")
+
+
+# =============================================================================
+# Wage Garnishment Candidates Endpoint
+# =============================================================================
+
+
+@router.get(
+    "/wage-candidates",
+    response_model=WageGarnishmentCandidatesResponse,
+    summary="Get wage garnishment candidates",
+    description="Returns paginated list of judgments with known employers suitable for NY wage garnishment (CPLR 5231).",
+)
+async def get_wage_candidates(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
+    min_balance: Optional[float] = Query(None, ge=0, description="Minimum judgment balance"),
+    min_priority: Optional[float] = Query(None, ge=0, description="Minimum priority score"),
+    jurisdiction: Optional[str] = Query(None, description="Filter by county/jurisdiction"),
+    verified_only: bool = Query(False, description="Only include verified employer intel"),
+    auth: AuthContext = Depends(get_current_user),
+) -> WageGarnishmentCandidatesResponse:
+    """
+    Get wage garnishment candidates from enforcement.v_candidate_wage_garnishments.
+
+    Returns judgments that meet NY wage garnishment criteria:
+    - Unsatisfied status
+    - Known employer (from debtor_intelligence)
+    - Balance >= $2,000 (practical threshold)
+
+    Candidates are scored by priority_score (higher = more actionable):
+    - Base: collectability_score (0-100)
+    - Employer verified: +20
+    - Employer present: +15
+    - High balance (>$10k): +10
+    - Recent judgment (<2 years): +5
+
+    Requires authentication.
+    """
+    logger.info(
+        f"Wage candidates requested by {auth.via}: "
+        f"page={page}, page_size={page_size}, min_balance={min_balance}, "
+        f"min_priority={min_priority}, jurisdiction={jurisdiction}"
+    )
+
+    try:
+        client = get_supabase_client()
+
+        # Build query using the enforcement view
+        # Note: Using schema-qualified name via PostgREST schema switching
+        # or accessing via RPC if view is in non-public schema
+        query = (
+            client.schema("enforcement")
+            .from_("v_candidate_wage_garnishments")
+            .select(
+                "*",
+                count="exact",  # type: ignore[arg-type]
+            )
+        )
+
+        # Apply filters
+        if min_balance is not None:
+            query = query.gte("balance", min_balance)
+
+        if min_priority is not None:
+            query = query.gte("priority_score", min_priority)
+
+        if jurisdiction:
+            query = query.ilike("jurisdiction", f"%{jurisdiction}%")
+
+        if verified_only:
+            query = query.eq("intel_verified", True)
+
+        # Pagination (0-indexed for PostgREST)
+        offset = (page - 1) * page_size
+        query = query.range(offset, offset + page_size - 1)
+
+        # Execute
+        result = query.execute()
+        rows: list[dict] = result.data or []  # type: ignore[assignment]
+        total: int = result.count or 0
+
+        # Map to response models
+        candidates: list[WageGarnishmentCandidate] = []
+        for row in rows:
+            candidates.append(
+                WageGarnishmentCandidate(
+                    plaintiff_id=str(row.get("plaintiff_id")) if row.get("plaintiff_id") else None,
+                    case_number=str(row.get("case_number") or ""),
+                    defendant_name=row.get("defendant_name"),
+                    employer_name=str(row.get("employer_name") or ""),
+                    employer_address=row.get("employer_address"),
+                    balance=float(row.get("balance") or 0),
+                    jurisdiction=row.get("jurisdiction"),
+                    priority_score=float(row.get("priority_score") or 0),
+                    judgment_id=str(row.get("judgment_id")) if row.get("judgment_id") else None,
+                    plaintiff_name=row.get("plaintiff_name"),
+                    plaintiff_tier=row.get("plaintiff_tier"),
+                    judgment_date=(
+                        str(row.get("judgment_date")) if row.get("judgment_date") else None
+                    ),
+                    collectability_score=(
+                        int(row["collectability_score"])
+                        if row.get("collectability_score")
+                        else None
+                    ),
+                    income_band=row.get("income_band"),
+                    intel_source=row.get("intel_source"),
+                    intel_confidence=(
+                        float(row["intel_confidence"]) if row.get("intel_confidence") else None
+                    ),
+                    intel_verified=row.get("intel_verified"),
+                    enforcement_stage=row.get("enforcement_stage"),
+                    status=row.get("status"),
+                    created_at=str(row.get("created_at")) if row.get("created_at") else None,
+                )
+            )
+
+        has_more = (offset + len(candidates)) < total
+
+        logger.info(f"Wage candidates returning {len(candidates)} of {total} total")
+
+        return WageGarnishmentCandidatesResponse(
+            candidates=candidates,
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_more=has_more,
+        )
+
+    except Exception as e:
+        logger.error(f"Wage candidates query failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to query wage candidates: {e}",
+        )
