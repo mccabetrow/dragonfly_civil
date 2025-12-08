@@ -276,31 +276,55 @@ COMMENT ON VIEW ops.v_intake_monitor IS 'Real-time batch monitoring dashboard wi
 -- ============================================================================
 -- SECTION 8: ops.v_enrichment_health VIEW
 -- ============================================================================
+-- This view ALWAYS returns exactly one row (even if job_queue is empty)
+-- to prevent 406 errors from .single() calls in the frontend
 CREATE OR REPLACE VIEW ops.v_enrichment_health AS
 SELECT COALESCE(
-        (
-            SELECT COUNT(*)
-            FROM ops.job_queue
-            WHERE status = 'pending'::ops.job_status_enum
+        SUM(
+            CASE
+                WHEN status = 'pending'::ops.job_status_enum THEN 1
+                ELSE 0
+            END
         ),
         0
     )::bigint AS pending_jobs,
     COALESCE(
-        (
-            SELECT COUNT(*)
-            FROM ops.job_queue
-            WHERE status = 'failed'::ops.job_status_enum
+        SUM(
+            CASE
+                WHEN status = 'processing'::ops.job_status_enum THEN 1
+                ELSE 0
+            END
+        ),
+        0
+    )::bigint AS processing_jobs,
+    COALESCE(
+        SUM(
+            CASE
+                WHEN status = 'failed'::ops.job_status_enum THEN 1
+                ELSE 0
+            END
         ),
         0
     )::bigint AS failed_jobs,
     COALESCE(
-        (
-            SELECT MAX(updated_at)
-            FROM ops.job_queue
+        SUM(
+            CASE
+                WHEN status = 'completed'::ops.job_status_enum THEN 1
+                ELSE 0
+            END
         ),
-        NOW()
-    ) AS last_activity;
-COMMENT ON VIEW ops.v_enrichment_health IS 'Enrichment queue health metrics for system monitoring';
+        0
+    )::bigint AS completed_jobs,
+    MAX(created_at) AS last_job_created_at,
+    MAX(updated_at) AS last_job_updated_at,
+    EXTRACT(
+        EPOCH
+        FROM (
+                NOW() AT TIME ZONE 'utc' - COALESCE(MAX(updated_at), NOW() AT TIME ZONE 'utc')
+            )
+    )::integer AS time_since_last_activity
+FROM ops.job_queue;
+COMMENT ON VIEW ops.v_enrichment_health IS 'Enrichment queue health metrics - always returns exactly one row';
 -- ============================================================================
 -- SECTION 9: ROW LEVEL SECURITY
 -- ============================================================================

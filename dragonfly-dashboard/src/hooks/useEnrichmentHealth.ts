@@ -55,11 +55,12 @@ export function useEnrichmentHealth(): MetricsHookResult<EnrichmentHealthSummary
 
     try {
       // Query the view directly - it returns a single row with aggregated metrics
+      // Use maybeSingle() to avoid 406 errors when the view returns no rows
       const query = supabaseClient
         .from('v_enrichment_health')
         .select('pending_jobs, processing_jobs, failed_jobs, completed_jobs, last_job_created_at, last_job_updated_at, time_since_last_activity')
         .limit(1)
-        .single();
+        .maybeSingle();
 
       const result = await demoSafeSelect<Record<string, unknown> | null>(query);
 
