@@ -13,6 +13,7 @@ from typing import Any, AsyncGenerator, Optional, Sequence  # noqa: E402
 import psycopg  # noqa: E402
 from loguru import logger  # noqa: E402
 from psycopg.rows import dict_row  # noqa: E402
+from psycopg_pool import AsyncConnectionPool  # noqa: E402
 
 from supabase import Client, create_client  # noqa: E402
 
@@ -20,8 +21,8 @@ from .config import get_settings  # noqa: E402
 
 settings = get_settings()
 
-# Single async connection used for health checks and simple queries.
-_db_conn: Optional[psycopg.AsyncConnection] = None
+# Async connection pool for database operations
+_db_pool: Optional[AsyncConnectionPool] = None
 _supabase_client: Optional[Client] = None
 
 
@@ -55,55 +56,62 @@ async def init_db_pool(app: Any | None = None) -> None:
     """
     Called from FastAPI startup.
 
-    We don't use a full pool here; just a single AsyncConnection that we reuse.
+    Initializes an async connection pool for database operations.
     `app` is accepted for FastAPI startup compatibility but is unused.
     """
-    global _db_conn
+    global _db_pool
 
-    if _db_conn is not None:
+    if _db_pool is not None:
         return
 
     if not settings.supabase_db_url:
         logger.warning("SUPABASE_DB_URL is not set; skipping DB init")
         return
 
-    logger.info("Opening async PostgreSQL connection for health checks")
-    _db_conn = await psycopg.AsyncConnection.connect(
+    logger.info("Initializing async PostgreSQL connection pool")
+    _db_pool = AsyncConnectionPool(
         settings.supabase_db_url,
-        autocommit=True,  # Enable autocommit mode - transactions must be explicit
-        options="-c application_name='Dragonfly v1.3'",
+        min_size=2,
+        max_size=10,
+        kwargs={"options": "-c application_name='Dragonfly v1.3.1'"},
     )
+    await _db_pool.open()
 
     # Simple ping to verify credentials & connectivity
-    async with _db_conn.cursor() as cur:
-        await cur.execute("SELECT 1;")
-        await cur.fetchone()
+    async with _db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT 1;")
+            await cur.fetchone()
 
-    logger.info("Database connection OK")
+    logger.info("Database connection pool initialized OK")
 
 
 async def close_db_pool() -> None:
     """
     Called from FastAPI shutdown.
     """
-    global _db_conn
-    if _db_conn is not None:
-        logger.info("Closing PostgreSQL connection")
-        await _db_conn.close()
-        _db_conn = None
+    global _db_pool
+    if _db_pool is not None:
+        logger.info("Closing PostgreSQL connection pool")
+        await _db_pool.close()
+        _db_pool = None
 
 
-async def get_pool() -> Optional[psycopg.AsyncConnection]:
+async def get_pool() -> Optional[AsyncConnectionPool]:
     """
-    Backwards-compatible helper for code that expects a connection "pool".
-    Returns the shared AsyncConnection (or None if DB URL isn't set).
-    """
-    global _db_conn
+    Returns the async connection pool.
 
-    if _db_conn is None:
+    Callers can use:
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            ...
+    """
+    global _db_pool
+
+    if _db_pool is None:
         await init_db_pool()
 
-    return _db_conn
+    return _db_pool
 
 
 @asynccontextmanager
@@ -118,12 +126,13 @@ async def get_connection() -> AsyncGenerator["AsyncConnectionWrapper", None]:
     The wrapper provides fetch/fetchrow/execute methods that work
     similarly to asyncpg's Connection interface.
     """
-    conn = await get_pool()
-    if conn is None:
-        raise RuntimeError("Database connection is not initialized")
+    pool = await get_pool()
+    if pool is None:
+        raise RuntimeError("Database connection pool is not initialized")
 
-    wrapper = AsyncConnectionWrapper(conn)
-    yield wrapper
+    async with pool.connection() as conn:
+        wrapper = AsyncConnectionWrapper(conn)
+        yield wrapper
 
 
 class AsyncConnectionWrapper:
@@ -183,14 +192,15 @@ async def ping_db() -> bool:
     """
     Used by /api/health/db to check live DB connectivity.
     """
-    conn = await get_pool()
-    if conn is None:
+    pool = await get_pool()
+    if pool is None:
         return False
 
     try:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT 1 AS ok;")
-            row = await cur.fetchone()
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1 AS ok;")
+                row = await cur.fetchone()
         return bool(row and row[0] == 1)
     except Exception as exc:
         logger.error(f"DB ping failed: {exc}")
@@ -204,14 +214,15 @@ async def fetch_one(
     """
     Convenience helper returning a single row as a dict.
     """
-    conn = await get_pool()
-    if conn is None:
-        raise RuntimeError("Database connection is not initialized")
+    pool = await get_pool()
+    if pool is None:
+        raise RuntimeError("Database connection pool is not initialized")
 
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(query, params or [])
-        row = await cur.fetchone()
-        return row
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(query, params or [])
+            row = await cur.fetchone()
+            return row
 
 
 async def fetch_val(
@@ -228,7 +239,7 @@ async def fetch_val(
         pool = await get_pool()
         await fetch_val("SELECT 1", pool=pool)
 
-    We accept and ignore any 'pool' argument and just use our global connection.
+    We accept and ignore any 'pool' argument and just use our global connection pool.
     """
     # Ignore optional 'pool' kwarg or first positional arg that looks like a pool
     kwargs.pop("pool", None)
@@ -238,11 +249,12 @@ async def fetch_val(
     if args and not isinstance(args[0], (str, int, float, bytes, dict, list, tuple)):
         args = args[1:]
 
-    conn = await get_pool()
-    if conn is None:
-        raise RuntimeError("Database connection is not initialized")
+    pool = await get_pool()
+    if pool is None:
+        raise RuntimeError("Database connection pool is not initialized")
 
-    async with conn.cursor() as cur:
-        await cur.execute(query, args)
-        row = await cur.fetchone()
-        return None if row is None else row[0]
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(query, args)
+            row = await cur.fetchone()
+            return None if row is None else row[0]

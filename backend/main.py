@@ -123,7 +123,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
-        title="Dragonfly Civil v1.3.0",
+        title="Dragonfly Civil v1.3.1",
         description=(
             "Backend service for Dragonfly Civil enforcement automation. "
             "Handles scheduled jobs, enforcement workflows, and API endpoints."
