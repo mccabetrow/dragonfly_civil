@@ -52,7 +52,7 @@ import logging
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, HttpUrl
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -71,8 +71,13 @@ class Settings(BaseSettings):
     )
 
     # Supabase configuration
-    supabase_url: HttpUrl = Field(
-        ..., description="Supabase project URL (e.g., https://xxx.supabase.co)"
+    # NOTE: Using str instead of HttpUrl for Pydantic v2 compatibility.
+    # HttpUrl causes "expected string, got HttpUrl" errors when passed to
+    # libraries like supabase-py that expect plain strings.
+    supabase_url: str = Field(
+        ...,
+        pattern=r"^https?://",
+        description="Supabase project URL (e.g., https://xxx.supabase.co)",
     )
     supabase_service_role_key: str = Field(
         ..., min_length=100, description="Supabase service role JWT key"
@@ -80,7 +85,7 @@ class Settings(BaseSettings):
     supabase_db_url: str = Field(..., description="Postgres connection string (pooler or direct)")
 
     # Discord notifications
-    discord_webhook_url: HttpUrl | None = Field(
+    discord_webhook_url: str | None = Field(
         default=None, description="Discord webhook URL for notifications"
     )
 
