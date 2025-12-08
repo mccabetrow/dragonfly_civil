@@ -22,7 +22,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -117,7 +117,7 @@ async def run_repair(env: str | None = None, dry_run: bool = False) -> dict[str,
         "success": False,
         "env": env,
         "dry_run": dry_run,
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
         "files_executed": [],
         "files_failed": [],
         "errors": [],
@@ -160,7 +160,7 @@ async def run_repair(env: str | None = None, dry_run: bool = False) -> dict[str,
 
     # Determine overall success
     result["success"] = len(result["files_failed"]) == 0
-    result["completed_at"] = datetime.utcnow().isoformat()
+    result["completed_at"] = datetime.now(timezone.utc).isoformat()
 
     # Log summary
     logger.info(
@@ -223,6 +223,12 @@ def main() -> None:
     # Set environment if specified
     if args.env:
         os.environ["SUPABASE_MODE"] = args.env
+
+    # Fix Windows asyncio event loop issue with psycopg
+    import platform
+
+    if platform.system() == "Windows":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     # Run repair
     result = asyncio.run(run_repair(env=args.env, dry_run=args.dry_run))
