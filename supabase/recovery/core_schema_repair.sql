@@ -28,6 +28,9 @@
 --     - ops.v_intake_monitor
 --     - ops.v_enrichment_health
 --
+--   ANALYTICS SCHEMA:
+--     - analytics.v_collectability_scores
+--
 -- ============================================================================
 BEGIN;
 -- ============================================================================
@@ -37,6 +40,7 @@ CREATE SCHEMA IF NOT EXISTS ops;
 CREATE SCHEMA IF NOT EXISTS enforcement;
 CREATE SCHEMA IF NOT EXISTS finance;
 CREATE SCHEMA IF NOT EXISTS judgments;
+CREATE SCHEMA IF NOT EXISTS analytics;
 -- ============================================================================
 -- SECTION 2: public.v_plaintiffs_overview
 -- Base view used by many other views
@@ -827,7 +831,226 @@ GRANT SELECT ON enforcement.v_candidate_wage_garnishments TO authenticated,
     service_role,
     anon;
 -- ============================================================================
--- SECTION 20: VALIDATION QUERIES
+-- SECTION 20: analytics.v_collectability_scores
+-- Collectability scoring model (v1 rule-based)
+-- ============================================================================
+GRANT USAGE ON SCHEMA analytics TO authenticated,
+    service_role;
+CREATE OR REPLACE VIEW analytics.v_collectability_scores AS WITH base_data AS (
+        SELECT j.id AS judgment_id,
+            j.plaintiff_id,
+            j.case_number,
+            j.judgment_amount,
+            j.judgment_date,
+            j.status,
+            j.enforcement_stage,
+            j.collectability_score AS existing_score,
+            j.county,
+            j.created_at,
+            p.tier AS plaintiff_tier,
+            p.name AS plaintiff_name,
+            CASE
+                WHEN j.judgment_date IS NOT NULL THEN EXTRACT(
+                    DAYS
+                    FROM (CURRENT_DATE - j.judgment_date)
+                )::int
+                ELSE NULL
+            END AS age_days,
+            di.employer_name,
+            di.bank_name,
+            di.income_band,
+            di.home_ownership,
+            di.is_verified AS intel_verified
+        FROM public.judgments j
+            LEFT JOIN public.plaintiffs p ON p.id = j.plaintiff_id
+            LEFT JOIN public.debtor_intelligence di ON di.judgment_id = j.id::uuid
+        WHERE j.status NOT IN ('satisfied', 'vacated', 'expired', 'closed')
+    ),
+    scored AS (
+        SELECT bd.*,
+            -- Amount (0-25)
+            CASE
+                WHEN judgment_amount >= 50000 THEN 25
+                WHEN judgment_amount >= 25000 THEN 22
+                WHEN judgment_amount >= 10000 THEN 18
+                WHEN judgment_amount >= 5000 THEN 14
+                WHEN judgment_amount >= 2000 THEN 10
+                WHEN judgment_amount >= 1000 THEN 5
+                ELSE 2
+            END AS amount_score,
+            -- Age (0-20)
+            CASE
+                WHEN age_days IS NULL THEN 5
+                WHEN age_days <= 365 THEN 20
+                WHEN age_days <= 730 THEN 16
+                WHEN age_days <= 1095 THEN 12
+                WHEN age_days <= 1825 THEN 8
+                WHEN age_days <= 3650 THEN 4
+                ELSE 1
+            END AS age_score,
+            -- Intel (0-25)
+            LEAST(
+                25,
+                (
+                    CASE
+                        WHEN employer_name IS NOT NULL THEN 10
+                        ELSE 0
+                    END + CASE
+                        WHEN bank_name IS NOT NULL THEN 8
+                        ELSE 0
+                    END + CASE
+                        WHEN income_band IS NOT NULL THEN 4
+                        ELSE 0
+                    END + CASE
+                        WHEN home_ownership = 'owner' THEN 3
+                        ELSE 0
+                    END + CASE
+                        WHEN intel_verified THEN 5
+                        ELSE 0
+                    END
+                )
+            )::int AS intel_score,
+            -- Tier (0-15)
+            CASE
+                upper(COALESCE(plaintiff_tier, ''))
+                WHEN 'A' THEN 15
+                WHEN 'B' THEN 10
+                WHEN 'C' THEN 5
+                ELSE 3
+            END AS tier_score,
+            -- County (0-10)
+            CASE
+                upper(COALESCE(county, ''))
+                WHEN 'NEW YORK' THEN 10
+                WHEN 'KINGS' THEN 10
+                WHEN 'QUEENS' THEN 10
+                WHEN 'BRONX' THEN 9
+                WHEN 'RICHMOND' THEN 9
+                WHEN 'NASSAU' THEN 8
+                WHEN 'SUFFOLK' THEN 7
+                WHEN 'WESTCHESTER' THEN 7
+                WHEN 'ROCKLAND' THEN 6
+                ELSE 4
+            END AS county_score,
+            -- Status (0-5)
+            CASE
+                WHEN enforcement_stage IN ('levy_issued', 'garnishment_active') THEN 5
+                WHEN enforcement_stage IN ('payment_plan', 'waiting_payment') THEN 4
+                WHEN enforcement_stage IN ('paperwork_filed') THEN 3
+                WHEN enforcement_stage IN ('pre_enforcement') THEN 2
+                ELSE 1
+            END AS status_score,
+            -- Flags
+            employer_name IS NOT NULL AS has_employer,
+            bank_name IS NOT NULL AS has_bank,
+            home_ownership = 'owner' AS is_homeowner
+        FROM base_data bd
+    )
+SELECT s.plaintiff_id,
+    s.case_number,
+    s.plaintiff_name,
+    (
+        s.amount_score + s.age_score + s.intel_score + s.tier_score + s.county_score + s.status_score
+    )::int AS score,
+    CASE
+        WHEN (
+            s.amount_score + s.age_score + s.intel_score + s.tier_score + s.county_score + s.status_score
+        ) >= 80 THEN 'A'
+        WHEN (
+            s.amount_score + s.age_score + s.intel_score + s.tier_score + s.county_score + s.status_score
+        ) >= 60 THEN 'B'
+        WHEN (
+            s.amount_score + s.age_score + s.intel_score + s.tier_score + s.county_score + s.status_score
+        ) >= 40 THEN 'C'
+        ELSE 'D'
+    END AS risk_band,
+    jsonb_build_object(
+        'score_version',
+        'v1_rule_based',
+        'computed_at',
+        timezone('utc', now()),
+        'components',
+        jsonb_build_object(
+            'amount',
+            jsonb_build_object(
+                'score',
+                s.amount_score,
+                'max',
+                25,
+                'value',
+                s.judgment_amount
+            ),
+            'age',
+            jsonb_build_object(
+                'score',
+                s.age_score,
+                'max',
+                20,
+                'value',
+                s.age_days
+            ),
+            'intel',
+            jsonb_build_object(
+                'score',
+                s.intel_score,
+                'max',
+                25,
+                'has_employer',
+                s.has_employer,
+                'has_bank',
+                s.has_bank,
+                'is_homeowner',
+                s.is_homeowner
+            ),
+            'tier',
+            jsonb_build_object(
+                'score',
+                s.tier_score,
+                'max',
+                15,
+                'value',
+                s.plaintiff_tier
+            ),
+            'county',
+            jsonb_build_object(
+                'score',
+                s.county_score,
+                'max',
+                10,
+                'value',
+                s.county
+            ),
+            'status',
+            jsonb_build_object(
+                'score',
+                s.status_score,
+                'max',
+                5,
+                'value',
+                s.enforcement_stage
+            )
+        )
+    ) AS factors,
+    s.judgment_id,
+    s.judgment_amount,
+    s.judgment_date,
+    s.age_days,
+    s.county,
+    s.enforcement_stage,
+    s.employer_name,
+    s.bank_name,
+    s.existing_score,
+    s.created_at
+FROM scored s
+ORDER BY (
+        s.amount_score + s.age_score + s.intel_score + s.tier_score + s.county_score + s.status_score
+    ) DESC,
+    s.judgment_amount DESC;
+GRANT SELECT ON analytics.v_collectability_scores TO authenticated,
+    service_role,
+    anon;
+-- ============================================================================
+-- SECTION 21: VALIDATION QUERIES
 -- ============================================================================
 SELECT 'v_plaintiffs_overview' AS view_name,
     to_regclass('public.v_plaintiffs_overview') IS NOT NULL AS exists;
@@ -855,8 +1078,10 @@ SELECT 'v_pipeline_snapshot' AS view_name,
     to_regclass('public.v_pipeline_snapshot') IS NOT NULL AS exists;
 SELECT 'v_candidate_wage_garnishments' AS view_name,
     to_regclass('enforcement.v_candidate_wage_garnishments') IS NOT NULL AS exists;
+SELECT 'v_collectability_scores' AS view_name,
+    to_regclass('analytics.v_collectability_scores') IS NOT NULL AS exists;
 -- ============================================================================
--- SECTION 21: NOTIFY POSTGREST
+-- SECTION 22: NOTIFY POSTGREST
 -- ============================================================================
 NOTIFY pgrst,
 'reload schema';
