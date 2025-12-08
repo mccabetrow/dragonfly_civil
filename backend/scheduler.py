@@ -259,6 +259,40 @@ async def intake_guardian_job() -> None:
         # Don't re-raise - we don't want to crash the scheduler
 
 
+async def schema_guard_job() -> None:
+    """
+    Schema Guard self-healing job.
+    Runs every 15 minutes to detect and auto-repair schema drift.
+
+    This is a production-critical self-healing mechanism that:
+    - Detects missing views/columns (schema drift)
+    - Automatically executes repair SQL files
+    - Sends Discord alerts on drift detection and repair status
+
+    The guard is fault-tolerant and will not crash the scheduler on errors.
+    """
+    logger.info("🛡️ Running Schema Guard check...")
+
+    try:
+        from .maintenance import check_and_repair
+
+        result = await check_and_repair()
+
+        if result.get("drift_detected"):
+            logger.warning(
+                f"🛡️ Schema Guard detected drift - repair_triggered={result.get('repair_triggered')}"
+            )
+        else:
+            logger.debug("🛡️ Schema Guard: No drift detected, schema healthy")
+
+        if result.get("error"):
+            logger.error(f"🛡️ Schema Guard error: {result.get('error')}")
+
+    except Exception as e:
+        logger.exception(f"🛡️ Schema Guard job failed: {e}")
+        # Don't re-raise - we don't want to crash the scheduler
+
+
 async def daily_recap_job() -> None:
     """
     Daily "Sleep Well" recap job.
@@ -440,6 +474,15 @@ def _register_jobs(scheduler: AsyncIOScheduler, settings: Any) -> None:
         trigger=IntervalTrigger(seconds=60),
         id="intake_guardian",
         name="Intake Guardian",
+        replace_existing=True,
+    )
+
+    # Schema Guard - every 15 minutes (self-healing for schema drift)
+    scheduler.add_job(
+        schema_guard_job,
+        trigger=IntervalTrigger(minutes=15),
+        id="schema_guard",
+        name="Schema Guard",
         replace_existing=True,
     )
 
