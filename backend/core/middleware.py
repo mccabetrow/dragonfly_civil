@@ -176,14 +176,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return config
         return None
 
-    def _clean_old_requests(
-        self, key: tuple[str, str], window: timedelta
-    ) -> list[datetime]:
+    def _clean_old_requests(self, key: tuple[str, str], window: timedelta) -> list[datetime]:
         """Remove requests older than the window."""
         cutoff = datetime.utcnow() - window
-        self._request_counts[key] = [
-            ts for ts in self._request_counts[key] if ts > cutoff
-        ]
+        self._request_counts[key] = [ts for ts in self._request_counts[key] if ts > cutoff]
         return self._request_counts[key]
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -283,6 +279,73 @@ class ResponseSanitizationMiddleware(BaseHTTPMiddleware):
                     "request_id": get_request_id(),
                     "path": request.url.path,
                     "status_code": response.status_code,
+                },
+            )
+
+        return response
+
+
+# =============================================================================
+# Performance Logging Middleware
+# =============================================================================
+
+# Threshold for slow request warnings (in seconds)
+SLOW_REQUEST_THRESHOLD_S = 1.0
+
+
+class PerformanceLoggingMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware that logs execution time of every request.
+
+    Features:
+    - Logs execution time in milliseconds for every request
+    - Emits WARNING for requests exceeding SLOW_REQUEST_THRESHOLD_S (1.0s default)
+    - Adds X-Response-Time header to all responses
+    - Designed for production observability in Railway/Render/Fly.io
+
+    This is separate from RequestLoggingMiddleware for separation of concerns:
+    - RequestLoggingMiddleware: Access logs (method, path, status, request_id)
+    - PerformanceLoggingMiddleware: Performance monitoring (duration, slow queries)
+    """
+
+    def __init__(self, app: ASGIApp, threshold_s: float = SLOW_REQUEST_THRESHOLD_S):
+        super().__init__(app)
+        self.threshold_s = threshold_s
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        start_time = time.perf_counter()
+
+        # Process request
+        response = await call_next(request)
+
+        # Calculate duration
+        duration_s = time.perf_counter() - start_time
+        duration_ms = duration_s * 1000
+
+        # Add response time header
+        response.headers["X-Response-Time"] = f"{duration_ms:.1f}ms"
+
+        # Log slow requests with WARNING level
+        if duration_s > self.threshold_s:
+            logger.warning(
+                f"⚠️ SLOW REQUEST DETECTED: {request.method} {request.url.path} "
+                f"took {duration_ms:.0f}ms (threshold: {self.threshold_s * 1000:.0f}ms)",
+                extra={
+                    "request_id": get_request_id(),
+                    "method": request.method,
+                    "path": request.url.path,
+                    "duration_ms": round(duration_ms, 2),
+                    "threshold_ms": self.threshold_s * 1000,
+                    "slow_request": True,
+                },
+            )
+        else:
+            # Debug-level log for normal requests (production typically INFO+)
+            logger.debug(
+                f"⏱️ {request.method} {request.url.path} completed in {duration_ms:.1f}ms",
+                extra={
+                    "request_id": get_request_id(),
+                    "duration_ms": round(duration_ms, 2),
                 },
             )
 

@@ -18,6 +18,7 @@ from .asyncio_compat import ensure_selector_policy_on_windows
 ensure_selector_policy_on_windows()
 
 import logging  # noqa: E402
+import traceback  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 from typing import Any, AsyncGenerator  # noqa: E402
 
@@ -29,9 +30,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa
 from . import __version__  # noqa: E402
 from .config import configure_logging, get_settings  # noqa: E402
 from .core.middleware import (  # noqa: E402
+    PerformanceLoggingMiddleware,
     RateLimitMiddleware,
     RequestLoggingMiddleware,
     ResponseSanitizationMiddleware,
+    get_request_id,
 )
 from .db import close_db_pool, init_db_pool  # noqa: E402
 
@@ -157,16 +160,17 @@ def create_app() -> FastAPI:
     )
 
     # 2. Response sanitization (safety net for credential leaks)
-    app.add_middleware(
-        ResponseSanitizationMiddleware, strict_mode=settings.is_production
-    )
+    app.add_middleware(ResponseSanitizationMiddleware, strict_mode=settings.is_production)
 
     # 3. Rate limiting for sensitive endpoints (production only)
     if settings.is_production:
         app.add_middleware(RateLimitMiddleware)
         logger.info("Rate limiting enabled for production")
 
-    # 4. Request logging (innermost - logs after CORS/rate limit decisions)
+    # 4. Performance logging (slow query detection)
+    app.add_middleware(PerformanceLoggingMiddleware, threshold_s=1.0)
+
+    # 5. Request logging (innermost - logs after CORS/rate limit decisions)
     app.add_middleware(RequestLoggingMiddleware)
 
     # ==========================================================================
@@ -175,9 +179,7 @@ def create_app() -> FastAPI:
     # ==========================================================================
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(
-        request: Request, exc: StarletteHTTPException
-    ) -> JSONResponse:
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         """Handle HTTP exceptions with CORS headers."""
         return JSONResponse(
             status_code=exc.status_code,
@@ -190,17 +192,36 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(Exception)
-    async def global_exception_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
-        """Handle unhandled exceptions with CORS headers."""
-        logger.exception(f"Unhandled exception: {exc}")
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """
+        Handle unhandled exceptions with CORS headers.
+
+        - Logs FULL stack trace to console (visible in Railway logs)
+        - Returns CLEAN JSON to frontend (no internal details)
+        - Includes request_id for correlation
+        """
+        req_id = get_request_id() or "unknown"
+
+        # Log full stack trace for debugging (Railway logs)
+        tb_str = traceback.format_exception(type(exc), exc, exc.__traceback__)
+        logger.error(
+            f"[{req_id}] 🔥 UNHANDLED EXCEPTION on {request.method} {request.url.path}\n"
+            f"{''.join(tb_str)}",
+            extra={
+                "request_id": req_id,
+                "path": request.url.path,
+                "method": request.method,
+                "exception_type": type(exc).__name__,
+            },
+        )
+
+        # Return clean JSON - NEVER expose stack trace to frontend
         return JSONResponse(
             status_code=500,
             content={
-                "error": "internal_error",
-                "message": "An unexpected error occurred",
-                "status_code": 500,
+                "error": "Internal System Error",
+                "code": "500",
+                "request_id": req_id,
             },
             headers=_get_cors_headers(settings),
         )
@@ -215,21 +236,15 @@ def create_app() -> FastAPI:
     # v1 API - Primary versioned endpoints
     # NOTE: These routers already have /v1/... in their internal prefix
     # We only add /api as the base prefix here
-    app.include_router(
-        intake_router, prefix="/api/v1", tags=["intake"]
-    )  # internal: /intake
+    app.include_router(intake_router, prefix="/api/v1", tags=["intake"])  # internal: /intake
     app.include_router(
         enforcement_router, prefix="/api", tags=["enforcement"]
     )  # internal: /v1/enforcement
-    app.include_router(
-        offers_router, prefix="/api", tags=["offers"]
-    )  # internal: /v1/offers
+    app.include_router(offers_router, prefix="/api", tags=["offers"])  # internal: /v1/offers
     app.include_router(
         portfolio_router, prefix="/api", tags=["portfolio"]
     )  # internal: /v1/portfolio
-    app.include_router(
-        search_router, prefix="/api/v1", tags=["search"]
-    )  # internal: /search
+    app.include_router(search_router, prefix="/api/v1", tags=["search"])  # internal: /search
 
     # v1 Ops - Operational monitoring endpoints
     app.include_router(
@@ -243,26 +258,18 @@ def create_app() -> FastAPI:
     app.include_router(
         analytics_router, prefix="/api", tags=["analytics"]
     )  # internal: /v1/analytics
-    app.include_router(
-        budget_router, prefix="/api", tags=["budget"]
-    )  # internal: /v1/budget
+    app.include_router(budget_router, prefix="/api", tags=["budget"])  # internal: /v1/budget
     app.include_router(
         intelligence_router, prefix="/api", tags=["intelligence"]
     )  # internal: /v1/intelligence
-    app.include_router(
-        packets_router, prefix="/api", tags=["packets"]
-    )  # internal: /v1/packets
+    app.include_router(packets_router, prefix="/api", tags=["packets"])  # internal: /v1/packets
     app.include_router(events_router, prefix="/api", tags=["events"])
 
     # Finance - Securitization engine (pools, NAV, performance)
-    app.include_router(
-        finance_router, prefix="/api", tags=["finance"]
-    )  # internal: /v1/finance
+    app.include_router(finance_router, prefix="/api", tags=["finance"])  # internal: /v1/finance
 
     # Webhooks - external service callbacks (Proof.com, etc.)
-    app.include_router(
-        webhooks_router, prefix="/api", tags=["webhooks"]
-    )  # internal: /v1/webhooks
+    app.include_router(webhooks_router, prefix="/api", tags=["webhooks"])  # internal: /v1/webhooks
 
     # Initialize scheduler (uses on_event internally)
     init_scheduler(app)
