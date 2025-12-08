@@ -38,8 +38,9 @@ def get_supabase_client() -> Client:
     global _supabase_client
     if _supabase_client is None:
         logger.info("Creating Supabase client")
+        # Cast HttpUrl to str for Pydantic v2 compatibility
         _supabase_client = create_client(
-            settings.supabase_url,
+            str(settings.supabase_url),
             settings.supabase_service_role_key,
         )
     return _supabase_client
