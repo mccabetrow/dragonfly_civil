@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import AppShellNew from './layouts/AppShellNew';
+import AppShell from './layouts/AppShell';
 import { ToastProvider } from './components/ui/Toast';
 import { RefreshProvider } from './context/RefreshContext';
 import CommandPalette from './components/ui/CommandPalette';
@@ -19,8 +19,6 @@ import OpsQueuePage from './pages/OpsQueuePage';
 import CeoOverviewPage from './pages/CeoOverviewPage';
 import OpsCommandCenter from './pages/ops/OpsCommandCenter';
 import PortfolioPage from './pages/finance/Portfolio';
-// Legacy pages (kept for reference, not wired)
-// import OverviewPage from './pages/OverviewPage';
 
 const App: React.FC = () => {
   return (
@@ -29,7 +27,7 @@ const App: React.FC = () => {
         <BrowserRouter>
           <CommandPalette />
           <Routes>
-            <Route element={<AppShellNew />}>
+            <Route element={<AppShell />}>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<PortfolioDashboardPage />} />
               <Route path="/ceo/overview" element={<CeoOverviewPage />} />
