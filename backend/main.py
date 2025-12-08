@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
 
     # Startup
-    logger.info(f"🚀 Starting Dragonfly Engine v{__version__} ({settings.environment})")
+    logger.info(f"🚀 Starting Dragonfly Engine v{__version__} (Asset Class)")
 
     try:
         await init_db_pool(settings)
@@ -123,7 +123,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
-        title="Dragonfly Engine",
+        title="Dragonfly Civil v1.3.0",
         description=(
             "Backend service for Dragonfly Civil enforcement automation. "
             "Handles scheduled jobs, enforcement workflows, and API endpoints."
@@ -305,7 +305,7 @@ def create_app() -> FastAPI:
             "health": "/api/health",
         }
 
-    logger.info(f"FastAPI app created: {app.title} v{app.version}")
+    logger.info(f"FastAPI app created: {app.title}")
 
     return app
 

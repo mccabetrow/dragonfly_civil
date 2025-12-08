@@ -70,6 +70,7 @@ async def init_db_pool(app: Any | None = None) -> None:
     _db_conn = await psycopg.AsyncConnection.connect(
         settings.supabase_db_url,
         autocommit=True,  # Enable autocommit mode - transactions must be explicit
+        options="-c application_name='Dragonfly v1.3'",
     )
 
     # Simple ping to verify credentials & connectivity
