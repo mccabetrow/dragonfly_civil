@@ -1,5 +1,7 @@
 # Dragonfly Quickstart
 
+<!-- CI/CD: production_deploy workflow triggers on push to main -->
+
 1. Activate a virtual environment:
    - Windows: `python -m venv .venv && .\.venv\Scripts\Activate.ps1`
    - macOS/Linux: `python -m venv .venv && source .venv/bin/activate`

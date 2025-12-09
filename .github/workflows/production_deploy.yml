@@ -2,7 +2,7 @@ name: production_deploy
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch: {}
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
 
       # App deploy targets
       RAILWAY_DEPLOY_WEBHOOK: ${{ secrets.RAILWAY_DEPLOY_WEBHOOK }}
-      VERCEL_DEPLOY_WEBHOOK:  ${{ secrets.VERCEL_DEPLOY_WEBHOOK }}
+      VERCEL_DEPLOY_WEBHOOK: ${{ secrets.VERCEL_DEPLOY_WEBHOOK }}
 
       # Notifications
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -43,7 +43,6 @@ jobs:
       - name: Run tests against Dev
         env:
           SUPABASE_MODE: dev
-          # If your tests read a DEV URL from env, set it here as a secret too:
           SUPABASE_DB_URL_DEV: ${{ secrets.SUPABASE_DB_URL_DEV }}
         run: |
           python -m pytest -q
@@ -52,8 +51,8 @@ jobs:
         if: success()
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_URL_PROD:  ${{ secrets.SUPABASE_DB_URL_PROD }}
-          SUPABASE_PROJECT_REF:  ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_DB_URL_PROD: ${{ secrets.SUPABASE_DB_URL_PROD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: |
           supabase db push \
             --project-ref "$SUPABASE_PROJECT_REF" \
