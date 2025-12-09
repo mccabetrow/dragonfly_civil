@@ -52,20 +52,25 @@ GRANT ALL PRIVILEGES ON SEQUENCES TO service_role;
 -- -----------------------------------------------------------------------------
 -- 2. FIX RLS POLICIES FOR INTAKE TABLES
 -- -----------------------------------------------------------------------------
--- ops.intake_batches: Drop existing policies and create service_role full access
-DO $$ BEGIN -- Drop existing policies if they exist
-DROP POLICY IF EXISTS "Service Role Full Access" ON ops.intake_batches;
-DROP POLICY IF EXISTS "service_role_full_access" ON ops.intake_batches;
-EXCEPTION
-WHEN undefined_table THEN RAISE NOTICE 'Table ops.intake_batches does not exist, skipping policy drop';
-END $$;
+-- NOTE: ops.intake_batches doesn't exist - the actual table is ops.ingest_batches
+-- Skip RLS for intake_batches since it doesn't exist
+-- ops.ingest_batches: Enable RLS and grant service_role access
 DO $$ BEGIN -- Enable RLS if not already enabled
-ALTER TABLE ops.intake_batches ENABLE ROW LEVEL SECURITY;
--- Service role bypasses RLS by default, but create explicit policy for clarity
-CREATE POLICY "Service Role Full Access" ON ops.intake_batches FOR ALL TO service_role USING (true) WITH CHECK (true);
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'ops'
+        AND table_name = 'ingest_batches'
+        AND table_type = 'BASE TABLE'
+) THEN
+ALTER TABLE ops.ingest_batches ENABLE ROW LEVEL SECURITY;
+-- Create policy if it doesn't exist
+BEGIN CREATE POLICY "Service Role Full Access" ON ops.ingest_batches FOR ALL TO service_role USING (true) WITH CHECK (true);
 EXCEPTION
-WHEN undefined_table THEN RAISE NOTICE 'Table ops.intake_batches does not exist, skipping RLS setup';
-WHEN duplicate_object THEN RAISE NOTICE 'Policy already exists on ops.intake_batches';
+WHEN duplicate_object THEN NULL;
+-- Policy already exists
+END;
+END IF;
 END $$;
 -- ops.intake_logs: Drop existing policies and create service_role full access
 DO $$ BEGIN DROP POLICY IF EXISTS "Service Role Full Access" ON ops.intake_logs;
@@ -161,11 +166,7 @@ GRANT USAGE ON SCHEMA intelligence TO authenticated;
 GRANT SELECT ON public.judgments TO authenticated;
 GRANT SELECT ON public.plaintiffs TO authenticated;
 -- Read access on ops tables for authenticated
-DO $$ BEGIN EXECUTE 'GRANT SELECT ON ops.intake_batches TO authenticated';
-EXCEPTION
-WHEN undefined_table THEN NULL;
-END $$;
-DO $$ BEGIN EXECUTE 'GRANT SELECT ON ops.intake_logs TO authenticated';
+DO $$ BEGIN EXECUTE 'GRANT SELECT ON ops.ingest_batches TO authenticated';
 EXCEPTION
 WHEN undefined_table THEN NULL;
 END $$;

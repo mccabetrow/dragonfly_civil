@@ -4,7 +4,7 @@
 -- =============================================================================
 -- Created: 2025-12-18
 -- Purpose: Fix 404s for missing views that cause "Network Error" in frontend
--- Strategy: CREATE OR REPLACE VIEW for idempotent deployment
+-- Strategy: DROP CASCADE then CREATE for column changes
 -- Note: Uses actual production column names (judgment_amount, not amount)
 -- =============================================================================
 -- -----------------------------------------------------------------------------
@@ -17,6 +17,14 @@ CREATE SCHEMA IF NOT EXISTS finance;
 GRANT USAGE ON SCHEMA ops TO authenticated;
 GRANT USAGE ON SCHEMA enforcement TO authenticated;
 GRANT USAGE ON SCHEMA finance TO authenticated;
+-- -----------------------------------------------------------------------------
+-- Drop existing views to allow column structure changes
+-- -----------------------------------------------------------------------------
+DROP VIEW IF EXISTS ops.v_metrics_intake_daily CASCADE;
+DROP VIEW IF EXISTS enforcement.v_enforcement_pipeline_status CASCADE;
+DROP VIEW IF EXISTS enforcement.v_plaintiff_call_queue CASCADE;
+DROP VIEW IF EXISTS finance.v_portfolio_stats CASCADE;
+DROP VIEW IF EXISTS ops.v_enrichment_health CASCADE;
 -- -----------------------------------------------------------------------------
 -- ops.v_metrics_intake_daily
 -- Daily intake metrics aggregated by source system
@@ -67,7 +75,6 @@ COMMENT ON VIEW enforcement.v_enforcement_pipeline_status IS 'Enforcement pipeli
 -- enforcement.v_plaintiff_call_queue
 -- Plaintiffs ready for outreach calls
 -- Used by: Ops Console > Call Queue page
--- Note: plaintiffs table doesn't have phone column - using metadata->>'phone' if available
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW enforcement.v_plaintiff_call_queue AS
 SELECT p.id AS plaintiff_id,
@@ -76,19 +83,28 @@ SELECT p.id AS plaintiff_id,
     p.status,
     COALESCE(SUM(j.judgment_amount), 0)::numeric(15, 2) AS total_judgment_amount,
     COUNT(j.id) AS case_count,
-    COALESCE(p.metadata->>'phone', '') AS phone
+    -- Phone comes from plaintiff_contacts, not plaintiffs directly
+    COALESCE(pc.phone, '') AS phone
 FROM public.plaintiffs p
     LEFT JOIN public.judgments j ON j.plaintiff_id = p.id
+    LEFT JOIN LATERAL (
+        SELECT c.phone
+        FROM public.plaintiff_contacts c
+        WHERE c.plaintiff_id = p.id
+            AND c.phone IS NOT NULL
+        LIMIT 1
+    ) pc ON TRUE
 WHERE p.status IN (
-        'active',
-        'pending_outreach',
-        'callback_scheduled'
+        'new',
+        'contacted',
+        'qualified',
+        'sent_agreement'
     )
 GROUP BY p.id,
     p.name,
     p.firm_name,
     p.status,
-    p.metadata
+    pc.phone
 ORDER BY total_judgment_amount DESC
 LIMIT 100;
 COMMENT ON VIEW enforcement.v_plaintiff_call_queue IS 'Plaintiff call queue for outreach operations';

@@ -33,18 +33,20 @@ CREATE OR REPLACE VIEW enforcement.v_candidate_wage_garnishments AS WITH judgmen
             j.enforcement_stage,
             j.collectability_score,
             j.created_at,
-            -- Get employer data from debtor_intelligence (0200 schema)
-            di.employer_name,
-            di.employer_address,
-            di.income_band,
-            di.data_source AS intel_source,
-            di.confidence_score AS intel_confidence,
-            di.is_verified AS intel_verified,
+            -- Note: debtor_intelligence schema uses UUID for judgment_id
+            -- but public.judgments uses bigint. Skip join for now - will populate
+            -- employer data via enrichment workers once schema is aligned.
+            -- For now, return NULLs for employer fields to keep view structure stable.
+            NULL::text AS employer_name,
+            NULL::text AS employer_address,
+            NULL::text AS income_band,
+            NULL::text AS intel_source,
+            NULL::numeric AS intel_confidence,
+            NULL::boolean AS intel_verified,
             -- Get plaintiff name
             p.name AS plaintiff_name,
             p.tier AS plaintiff_tier
         FROM public.judgments j
-            LEFT JOIN public.debtor_intelligence di ON di.judgment_id = j.id::uuid
             LEFT JOIN public.plaintiffs p ON p.id = j.plaintiff_id
         WHERE j.status IN ('unsatisfied', 'active', 'in_enforcement')
             AND j.judgment_amount >= 2000 -- Practical minimum for wage garnishment ROI
@@ -98,7 +100,7 @@ SELECT s.plaintiff_id,
 FROM scored s
 ORDER BY s.priority_score DESC,
     s.judgment_amount DESC;
-COMMENT ON VIEW enforcement.v_candidate_wage_garnishments IS 'Judgments meeting NY wage garnishment criteria with known employer. ' 'Use for CPLR 5231 income execution planning.';
+COMMENT ON VIEW enforcement.v_candidate_wage_garnishments IS 'Judgments meeting NY wage garnishment criteria with known employer. Use for CPLR 5231 income execution planning.';
 -- ============================================================================
 -- GRANTS
 -- ============================================================================

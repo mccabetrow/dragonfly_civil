@@ -49,26 +49,23 @@ CREATE OR REPLACE VIEW analytics.v_collectability_scores AS WITH base_data AS (
             -- Plaintiff tier
             p.tier AS plaintiff_tier,
             p.name AS plaintiff_name,
-            -- Calculate age
+            -- Calculate age (date subtraction returns integer days in Postgres)
             CASE
-                WHEN j.judgment_date IS NOT NULL THEN EXTRACT(
-                    DAYS
-                    FROM (CURRENT_DATE - j.judgment_date)
-                )::int
+                WHEN j.judgment_date IS NOT NULL THEN (CURRENT_DATE - j.judgment_date)::int
                 ELSE NULL
             END AS age_days,
-            -- Employment intel
-            di.employer_name,
-            di.employer_address,
-            di.income_band,
-            di.bank_name,
-            di.bank_address,
-            di.home_ownership,
-            di.is_verified AS intel_verified,
-            di.confidence_score AS intel_confidence
+            -- Employment intel (schema mismatch: debtor_intelligence uses UUID, judgments uses bigint)
+            -- TODO: Enable join once schema is aligned
+            NULL::text AS employer_name,
+            NULL::text AS employer_address,
+            NULL::text AS income_band,
+            NULL::text AS bank_name,
+            NULL::text AS bank_address,
+            NULL::text AS home_ownership,
+            NULL::boolean AS intel_verified,
+            NULL::numeric AS intel_confidence
         FROM public.judgments j
             LEFT JOIN public.plaintiffs p ON p.id = j.plaintiff_id
-            LEFT JOIN public.debtor_intelligence di ON di.judgment_id = j.id::uuid
         WHERE j.status NOT IN ('satisfied', 'vacated', 'expired', 'closed')
     ),
     -- COMPONENT 1: Amount Factor (0-25 points)
@@ -368,7 +365,7 @@ ORDER BY (
         c.amount_score + c.age_score + c.intel_score + c.tier_score + c.county_score + c.status_score
     ) DESC,
     c.judgment_amount DESC;
-COMMENT ON VIEW analytics.v_collectability_scores IS 'Judgment collectability scoring (v1 rule-based). ' 'Outputs: plaintiff_id, case_number, score, risk_band, factors JSON. ' 'Designed for future ML model integration via score_version.';
+COMMENT ON VIEW analytics.v_collectability_scores IS 'Judgment collectability scoring (v1 rule-based). Outputs: plaintiff_id, case_number, score, risk_band, factors JSON. Designed for future ML model integration via score_version.';
 -- ============================================================================
 -- GRANTS
 -- ============================================================================

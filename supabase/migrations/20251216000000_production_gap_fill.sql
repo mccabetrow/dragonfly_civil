@@ -15,7 +15,34 @@
 -- migrate:up
 BEGIN;
 -- =============================================================================
--- 1. public.v_metrics_intake_daily
+-- 0. Drop dependency graph (v_plaintiffs_overview is depended on by v_plaintiff_call_queue)
+-- Must drop CASCADE here to clean up dependent views, then recreate in correct order
+-- =============================================================================
+DROP VIEW IF EXISTS public.v_plaintiffs_overview CASCADE;
+DROP VIEW IF EXISTS public.v_plaintiff_call_queue CASCADE;
+DROP VIEW IF EXISTS public.v_metrics_intake_daily CASCADE;
+DROP VIEW IF EXISTS public.v_enforcement_pipeline_status CASCADE;
+DROP VIEW IF EXISTS public.v_portfolio_stats CASCADE;
+-- =============================================================================
+-- 1. public.v_plaintiffs_overview (dependency for v_plaintiff_call_queue)
+-- Must be created before v_plaintiff_call_queue
+-- =============================================================================
+CREATE OR REPLACE VIEW public.v_plaintiffs_overview AS
+SELECT p.id AS plaintiff_id,
+    p.name AS plaintiff_name,
+    p.firm_name,
+    p.status,
+    COALESCE(SUM(j.judgment_amount), 0)::numeric AS total_judgment_amount,
+    COUNT(DISTINCT j.id) AS case_count
+FROM public.plaintiffs p
+    LEFT JOIN public.judgments j ON j.plaintiff_id = p.id
+GROUP BY p.id,
+    p.name,
+    p.firm_name,
+    p.status;
+COMMENT ON VIEW public.v_plaintiffs_overview IS 'Aggregated plaintiff view with judgment totals.';
+-- =============================================================================
+-- 2. public.v_metrics_intake_daily
 -- Daily intake funnel metrics for the executive dashboard
 -- =============================================================================
 CREATE OR REPLACE VIEW public.v_metrics_intake_daily AS WITH import_rows AS (
@@ -80,10 +107,9 @@ ORDER BY k.activity_date DESC,
     k.source_system ASC;
 COMMENT ON VIEW public.v_metrics_intake_daily IS 'Daily intake funnel rollups by source system for the executive dashboard.';
 -- =============================================================================
--- 2. public.v_enforcement_pipeline_status
+-- 3. public.v_enforcement_pipeline_status
 -- Enforcement pipeline status for the dashboard
 -- =============================================================================
-DROP VIEW IF EXISTS public.v_enforcement_pipeline_status CASCADE;
 CREATE OR REPLACE VIEW public.v_enforcement_pipeline_status AS
 SELECT j.id AS judgment_id,
     j.case_number,
@@ -124,7 +150,7 @@ ORDER BY j.collectability_score DESC NULLS LAST,
     j.judgment_amount DESC;
 COMMENT ON VIEW public.v_enforcement_pipeline_status IS 'Enforcement pipeline status with computed offer strategy and tier.';
 -- =============================================================================
--- 3. public.v_plaintiff_call_queue (ensure exists)
+-- 4. public.v_plaintiff_call_queue
 -- Prioritized call queue for ops
 -- =============================================================================
 CREATE OR REPLACE VIEW public.v_plaintiff_call_queue AS
@@ -154,7 +180,7 @@ ORDER BY COALESCE(ov.total_judgment_amount, 0::numeric) DESC,
     COALESCE(status_info.last_contacted_at, p.created_at) ASC;
 COMMENT ON VIEW public.v_plaintiff_call_queue IS 'Prioritized plaintiff call queue for ops console.';
 -- =============================================================================
--- 4. public.v_portfolio_stats
+-- 5. public.v_portfolio_stats
 -- Portfolio-level statistics for CEO Portfolio page
 -- =============================================================================
 -- First ensure enforcement.offers exists (may not on fresh installs)
@@ -278,20 +304,6 @@ GRANT SELECT ON public.v_plaintiff_call_queue TO anon,
 GRANT SELECT ON public.v_portfolio_stats TO anon,
     authenticated,
     service_role;
--- Also ensure v_plaintiffs_overview exists (dependency for call queue)
-CREATE OR REPLACE VIEW public.v_plaintiffs_overview AS
-SELECT p.id AS plaintiff_id,
-    p.name AS plaintiff_name,
-    p.firm_name,
-    p.status,
-    COALESCE(SUM(j.judgment_amount), 0)::numeric AS total_judgment_amount,
-    COUNT(DISTINCT j.id) AS case_count
-FROM public.plaintiffs p
-    LEFT JOIN public.judgments j ON j.plaintiff_id = p.id
-GROUP BY p.id,
-    p.name,
-    p.firm_name,
-    p.status;
 GRANT SELECT ON public.v_plaintiffs_overview TO anon,
     authenticated,
     service_role;

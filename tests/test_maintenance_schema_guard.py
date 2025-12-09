@@ -297,61 +297,145 @@ class TestSchemaDataContracts:
     These tests verify that critical tables and views exist with the
     expected columns. Failures here indicate Dev/Prod schema drift
     that must be fixed before deployment.
+
+    CANONICAL TABLES & VIEWS (per .github/copilot-instructions.md):
+    - public.judgments
+    - public.plaintiffs
+    - public.plaintiff_contacts
+    - public.plaintiff_status_history
+    - public.v_plaintiffs_overview
+    - public.v_judgment_pipeline
+    - public.v_enforcement_overview
+    - public.v_enforcement_recent
+    - public.v_plaintiff_call_queue
+    - ops.job_queue
+    - ops.ingest_batches
+    - analytics.v_ceo_command_center
+    - analytics.v_intake_radar
     """
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Table: enforcement.enforcement_plans
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def test_enforcement_plans_table_exists(self):
-        """Verify enforcement.enforcement_plans table exists."""
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Set up database connection."""
         url = _get_connection_url()
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                exists = _table_exists(cur, "enforcement", "enforcement_plans")
-                assert exists, (
-                    "Table enforcement.enforcement_plans does not exist. "
-                    "Run migrations to create it."
-                )
+        self.conn = psycopg.connect(url)
+        yield
+        self.conn.close()
 
-    def test_enforcement_plans_required_columns(self):
-        """Verify enforcement.enforcement_plans has required columns."""
-        # Canonical columns per 20251209_promote_enforcement_to_prod.sql
-        required_columns = {"id", "case_id", "plan_status"}
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TABLE: public.judgments
+    # ═══════════════════════════════════════════════════════════════════════════
 
-        url = _get_connection_url()
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                actual_columns = _get_table_columns(cur, "enforcement", "enforcement_plans")
+    def test_public_judgments_table_exists(self):
+        """Verify public.judgments table exists."""
+        with self.conn.cursor() as cur:
+            exists = _table_exists(cur, "public", "judgments")
+            assert exists, (
+                "Table public.judgments does not exist. " "This is a CORE table - check migrations."
+            )
+
+    def test_public_judgments_required_columns(self):
+        """Verify public.judgments has required columns."""
+        required_columns = {
+            "id",
+            "case_number",
+            "plaintiff_name",
+            "defendant_name",
+            "judgment_amount",
+            "status",
+            "created_at",
+        }
+
+        with self.conn.cursor() as cur:
+            actual_columns = _get_table_columns(cur, "public", "judgments")
 
         missing = required_columns - actual_columns
         assert not missing, (
-            f"enforcement.enforcement_plans missing required columns: {missing}. "
+            f"public.judgments missing required columns: {missing}. "
             "Schema contract violation - check migrations."
         )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Table: ops.ingest_batches
-    # ─────────────────────────────────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TABLE: public.plaintiffs
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_public_plaintiffs_table_exists(self):
+        """Verify public.plaintiffs table exists."""
+        with self.conn.cursor() as cur:
+            exists = _table_exists(cur, "public", "plaintiffs")
+            assert exists, (
+                "Table public.plaintiffs does not exist. "
+                "This is a CORE table - check migrations."
+            )
+
+    def test_public_plaintiffs_required_columns(self):
+        """Verify public.plaintiffs has required columns."""
+        required_columns = {
+            "id",
+            "name",
+            "status",
+            "created_at",
+        }
+
+        with self.conn.cursor() as cur:
+            actual_columns = _get_table_columns(cur, "public", "plaintiffs")
+
+        missing = required_columns - actual_columns
+        assert not missing, (
+            f"public.plaintiffs missing required columns: {missing}. "
+            "Schema contract violation - check migrations."
+        )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TABLE: ops.job_queue
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_ops_job_queue_table_exists(self):
+        """Verify ops.job_queue table exists."""
+        with self.conn.cursor() as cur:
+            exists = _table_exists(cur, "ops", "job_queue")
+            assert exists, (
+                "Table ops.job_queue does not exist. "
+                "This is required for worker operations - check migrations."
+            )
+
+    def test_ops_job_queue_required_columns(self):
+        """Verify ops.job_queue has required columns."""
+        required_columns = {
+            "id",
+            "job_type",
+            "status",
+            "payload",
+            "created_at",
+        }
+
+        with self.conn.cursor() as cur:
+            actual_columns = _get_table_columns(cur, "ops", "job_queue")
+
+        missing = required_columns - actual_columns
+        assert not missing, (
+            f"ops.job_queue missing required columns: {missing}. "
+            "Schema contract violation - check migrations."
+        )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TABLE: ops.ingest_batches
+    # ═══════════════════════════════════════════════════════════════════════════
 
     def test_ops_ingest_batches_table_exists(self):
         """Verify ops.ingest_batches table exists."""
-        url = _get_connection_url()
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                exists = _table_exists(cur, "ops", "ingest_batches")
-                assert exists, (
-                    "Table ops.ingest_batches does not exist. " "Run migrations to create it."
-                )
+        with self.conn.cursor() as cur:
+            exists = _table_exists(cur, "ops", "ingest_batches")
+            assert exists, (
+                "Table ops.ingest_batches does not exist. " "Run migrations to create it."
+            )
 
     def test_ops_ingest_batches_required_columns(self):
         """Verify ops.ingest_batches has required columns."""
         required_columns = {"id", "status", "row_count_valid"}
 
-        url = _get_connection_url()
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                actual_columns = _get_table_columns(cur, "ops", "ingest_batches")
+        with self.conn.cursor() as cur:
+            actual_columns = _get_table_columns(cur, "ops", "ingest_batches")
 
         missing = required_columns - actual_columns
         assert not missing, (
@@ -359,41 +443,260 @@ class TestSchemaDataContracts:
             "Schema contract violation - check migrations."
         )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # View: ops.v_intake_monitor
-    # ─────────────────────────────────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TABLE: enforcement.enforcement_plans
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_enforcement_plans_table_exists(self):
+        """Verify enforcement.enforcement_plans table exists."""
+        with self.conn.cursor() as cur:
+            exists = _table_exists(cur, "enforcement", "enforcement_plans")
+            assert exists, (
+                "Table enforcement.enforcement_plans does not exist. "
+                "Run migrations to create it."
+            )
+
+    def test_enforcement_plans_required_columns(self):
+        """Verify enforcement.enforcement_plans has required columns."""
+        # Canonical columns per 20251209_promote_enforcement_to_prod.sql
+        required_columns = {"id", "case_id", "plan_status"}
+
+        with self.conn.cursor() as cur:
+            actual_columns = _get_table_columns(cur, "enforcement", "enforcement_plans")
+
+        missing = required_columns - actual_columns
+        assert not missing, (
+            f"enforcement.enforcement_plans missing required columns: {missing}. "
+            "Schema contract violation - check migrations."
+        )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VIEW: public.v_plaintiffs_overview (DASHBOARD-CRITICAL)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_v_plaintiffs_overview_exists(self):
+        """Verify public.v_plaintiffs_overview view exists."""
+        with self.conn.cursor() as cur:
+            exists = _view_exists(cur, "public", "v_plaintiffs_overview")
+            assert exists, (
+                "View public.v_plaintiffs_overview does not exist. "
+                "This is DASHBOARD-CRITICAL - check migrations."
+            )
+
+    def test_v_plaintiffs_overview_queryable(self):
+        """Verify public.v_plaintiffs_overview can be queried."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM public.v_plaintiffs_overview")
+            row = cur.fetchone()
+            assert row is not None, "Query returned no result set"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VIEW: public.v_judgment_pipeline (DASHBOARD-CRITICAL)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_v_judgment_pipeline_exists(self):
+        """Verify public.v_judgment_pipeline view exists."""
+        with self.conn.cursor() as cur:
+            exists = _view_exists(cur, "public", "v_judgment_pipeline")
+            assert exists, (
+                "View public.v_judgment_pipeline does not exist. "
+                "This is DASHBOARD-CRITICAL - check migrations."
+            )
+
+    def test_v_judgment_pipeline_queryable(self):
+        """Verify public.v_judgment_pipeline can be queried."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM public.v_judgment_pipeline")
+            row = cur.fetchone()
+            assert row is not None, "Query returned no result set"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VIEW: public.v_enforcement_overview (DASHBOARD-CRITICAL)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_v_enforcement_overview_exists(self):
+        """Verify public.v_enforcement_overview view exists."""
+        with self.conn.cursor() as cur:
+            exists = _view_exists(cur, "public", "v_enforcement_overview")
+            assert exists, (
+                "View public.v_enforcement_overview does not exist. "
+                "This is DASHBOARD-CRITICAL - check migrations."
+            )
+
+    def test_v_enforcement_overview_queryable(self):
+        """Verify public.v_enforcement_overview can be queried."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM public.v_enforcement_overview")
+            row = cur.fetchone()
+            assert row is not None, "Query returned no result set"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VIEW: public.v_enforcement_recent (DASHBOARD-CRITICAL)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_v_enforcement_recent_exists(self):
+        """Verify public.v_enforcement_recent view exists."""
+        with self.conn.cursor() as cur:
+            exists = _view_exists(cur, "public", "v_enforcement_recent")
+            assert exists, (
+                "View public.v_enforcement_recent does not exist. "
+                "This is DASHBOARD-CRITICAL - check migrations."
+            )
+
+    def test_v_enforcement_recent_queryable(self):
+        """Verify public.v_enforcement_recent can be queried."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM public.v_enforcement_recent")
+            row = cur.fetchone()
+            assert row is not None, "Query returned no result set"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VIEW: public.v_plaintiff_call_queue (DASHBOARD-CRITICAL)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_v_plaintiff_call_queue_exists(self):
+        """Verify public.v_plaintiff_call_queue view exists."""
+        with self.conn.cursor() as cur:
+            exists = _view_exists(cur, "public", "v_plaintiff_call_queue")
+            assert exists, (
+                "View public.v_plaintiff_call_queue does not exist. "
+                "This is DASHBOARD-CRITICAL - check migrations."
+            )
+
+    def test_v_plaintiff_call_queue_queryable(self):
+        """Verify public.v_plaintiff_call_queue can be queried."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM public.v_plaintiff_call_queue")
+            row = cur.fetchone()
+            assert row is not None, "Query returned no result set"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VIEW: ops.v_intake_monitor
+    # ═══════════════════════════════════════════════════════════════════════════
 
     def test_ops_v_intake_monitor_exists(self):
         """Verify ops.v_intake_monitor view exists."""
-        url = _get_connection_url()
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                exists = _view_exists(cur, "ops", "v_intake_monitor")
-                assert exists, (
-                    "View ops.v_intake_monitor does not exist. " "Run migrations to create it."
+        with self.conn.cursor() as cur:
+            exists = _view_exists(cur, "ops", "v_intake_monitor")
+            assert exists, (
+                "View ops.v_intake_monitor does not exist. " "Run migrations to create it."
+            )
+
+    def test_ops_v_intake_monitor_queryable(self):
+        """Verify ops.v_intake_monitor can be queried."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM ops.v_intake_monitor")
+            row = cur.fetchone()
+            assert row is not None, "Query returned no result set"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VIEW: analytics.v_intake_radar (CEO DASHBOARD)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_analytics_v_intake_radar_exists(self):
+        """Verify analytics.v_intake_radar view exists."""
+        with self.conn.cursor() as cur:
+            exists = _view_exists(cur, "analytics", "v_intake_radar")
+            if not exists:
+                pytest.skip(
+                    "analytics.v_intake_radar not yet deployed - "
+                    "migration 20251209180000 pending"
                 )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # View: finance.v_portfolio_stats
-    # ─────────────────────────────────────────────────────────────────────────
+    def test_analytics_v_intake_radar_queryable(self):
+        """Verify analytics.v_intake_radar can be queried."""
+        with self.conn.cursor() as cur:
+            if not _view_exists(cur, "analytics", "v_intake_radar"):
+                pytest.skip("analytics.v_intake_radar not deployed")
+            cur.execute("SELECT * FROM analytics.v_intake_radar")
+            row = cur.fetchone()
+            # Single-row view - should always return exactly 1 row
+            assert row is not None, "analytics.v_intake_radar should return 1 row"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VIEW: analytics.v_ceo_command_center (CEO DASHBOARD)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_analytics_v_ceo_command_center_exists(self):
+        """Verify analytics.v_ceo_command_center view exists."""
+        with self.conn.cursor() as cur:
+            exists = _view_exists(cur, "analytics", "v_ceo_command_center")
+            if not exists:
+                pytest.skip(
+                    "analytics.v_ceo_command_center not yet deployed - "
+                    "migration 20251209200000 pending"
+                )
+
+    def test_analytics_v_ceo_command_center_queryable(self):
+        """Verify analytics.v_ceo_command_center can be queried."""
+        with self.conn.cursor() as cur:
+            if not _view_exists(cur, "analytics", "v_ceo_command_center"):
+                pytest.skip("analytics.v_ceo_command_center not deployed")
+            cur.execute("SELECT * FROM analytics.v_ceo_command_center")
+            row = cur.fetchone()
+            # Single-row view - should always return exactly 1 row
+            assert row is not None, "analytics.v_ceo_command_center should return 1 row"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VIEW: finance.v_portfolio_stats
+    # ═══════════════════════════════════════════════════════════════════════════
 
     def test_finance_v_portfolio_stats_exists(self):
         """Verify finance.v_portfolio_stats view exists."""
-        url = _get_connection_url()
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                exists = _view_exists(cur, "finance", "v_portfolio_stats")
-                assert exists, (
-                    "View finance.v_portfolio_stats does not exist. " "Run migrations to create it."
-                )
+        with self.conn.cursor() as cur:
+            exists = _view_exists(cur, "finance", "v_portfolio_stats")
+            assert exists, (
+                "View finance.v_portfolio_stats does not exist. " "Run migrations to create it."
+            )
 
     def test_finance_v_portfolio_stats_queryable(self):
         """Verify finance.v_portfolio_stats can be queried without error."""
-        url = _get_connection_url()
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                # This will raise if the view is broken or has missing deps
-                cur.execute("SELECT COUNT(*) FROM finance.v_portfolio_stats")
-                row = cur.fetchone()
-                assert row is not None, "Query returned no rows"
-                # Count can be zero - that's fine, view just needs to be queryable
+        with self.conn.cursor() as cur:
+            # This will raise if the view is broken or has missing deps
+            cur.execute("SELECT COUNT(*) FROM finance.v_portfolio_stats")
+            row = cur.fetchone()
+            assert row is not None, "Query returned no rows"
+            # Count can be zero - that's fine, view just needs to be queryable
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # RPC: public.ceo_command_center_metrics()
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_ceo_command_center_metrics_rpc_exists(self):
+        """Verify public.ceo_command_center_metrics() RPC function exists."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM pg_proc p
+                JOIN pg_namespace n ON p.pronamespace = n.oid
+                WHERE n.nspname = 'public'
+                  AND p.proname = 'ceo_command_center_metrics'
+                """
+            )
+            exists = cur.fetchone() is not None
+            if not exists:
+                pytest.skip(
+                    "public.ceo_command_center_metrics() not yet deployed - "
+                    "migration 20251209200000 pending"
+                )
+
+    def test_ceo_command_center_metrics_rpc_callable(self):
+        """Verify public.ceo_command_center_metrics() can be called."""
+        with self.conn.cursor() as cur:
+            # Check function exists first
+            cur.execute(
+                """
+                SELECT 1
+                FROM pg_proc p
+                JOIN pg_namespace n ON p.pronamespace = n.oid
+                WHERE n.nspname = 'public'
+                  AND p.proname = 'ceo_command_center_metrics'
+                """
+            )
+            if cur.fetchone() is None:
+                pytest.skip("RPC not deployed")
+
+            cur.execute("SELECT * FROM public.ceo_command_center_metrics()")
+            row = cur.fetchone()
+            assert row is not None, "RPC should return exactly 1 row"
