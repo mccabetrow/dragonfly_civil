@@ -25,6 +25,7 @@ GRANT USAGE ON SCHEMA enforcement TO authenticated,
 -- SECTION 1: enforcement.v_radar
 -- Core radar view for enforcement opportunity identification
 -- ============================================================================
+DROP VIEW IF EXISTS enforcement.v_radar CASCADE;
 CREATE OR REPLACE VIEW enforcement.v_radar AS
 SELECT j.id,
     j.case_number,
@@ -58,6 +59,7 @@ GRANT SELECT ON enforcement.v_radar TO authenticated,
 -- SECTION 2: enforcement.v_enforcement_pipeline_status
 -- Pipeline status aggregation for dashboard
 -- ============================================================================
+DROP VIEW IF EXISTS enforcement.v_enforcement_pipeline_status CASCADE;
 CREATE OR REPLACE VIEW enforcement.v_enforcement_pipeline_status AS
 SELECT j.enforcement_stage,
     COUNT(*) AS case_count,
@@ -85,6 +87,7 @@ GRANT SELECT ON enforcement.v_enforcement_pipeline_status TO authenticated,
 -- SECTION 3: enforcement.v_plaintiff_call_queue
 -- Plaintiff contact prioritization for outreach
 -- ============================================================================
+DROP VIEW IF EXISTS enforcement.v_plaintiff_call_queue CASCADE;
 CREATE OR REPLACE VIEW enforcement.v_plaintiff_call_queue AS
 SELECT p.id AS plaintiff_id,
     p.name AS plaintiff_name,
@@ -103,7 +106,6 @@ SELECT p.id AS plaintiff_id,
     END AS priority_rank
 FROM public.plaintiffs p
     LEFT JOIN public.plaintiff_contacts pc ON pc.plaintiff_id = p.id
-    AND pc.is_primary = true
     LEFT JOIN public.judgments j ON j.plaintiff_id = p.id
 WHERE p.status IN ('active', 'pending_outreach', 'follow_up')
 GROUP BY p.id,
@@ -122,6 +124,7 @@ GRANT SELECT ON enforcement.v_plaintiff_call_queue TO authenticated,
 -- SECTION 4: enforcement.v_candidate_wage_garnishments
 -- Wage garnishment candidates (CPLR 5231 enforcement)
 -- ============================================================================
+DROP VIEW IF EXISTS enforcement.v_candidate_wage_garnishments CASCADE;
 CREATE OR REPLACE VIEW enforcement.v_candidate_wage_garnishments AS WITH judgment_intelligence AS (
         SELECT j.id AS judgment_id,
             j.plaintiff_id,
@@ -134,18 +137,17 @@ CREATE OR REPLACE VIEW enforcement.v_candidate_wage_garnishments AS WITH judgmen
             j.enforcement_stage,
             j.collectability_score,
             j.created_at,
-            -- Get employer data from debtor_intelligence
-            di.employer_name,
-            di.employer_address,
-            di.income_band,
-            di.data_source AS intel_source,
-            di.confidence_score AS intel_confidence,
-            di.is_verified AS intel_verified,
+            -- debtor_intelligence columns (disabled: table uses uuid, judgments uses bigint)
+            NULL::text AS employer_name,
+            NULL::text AS employer_address,
+            NULL::text AS income_band,
+            NULL::text AS intel_source,
+            NULL::numeric AS intel_confidence,
+            FALSE AS intel_verified,
             -- Get plaintiff name
             p.name AS plaintiff_name,
             p.tier AS plaintiff_tier
         FROM public.judgments j
-            LEFT JOIN public.debtor_intelligence di ON di.judgment_id = j.id::uuid
             LEFT JOIN public.plaintiffs p ON p.id = j.plaintiff_id
         WHERE j.status IN ('unsatisfied', 'active', 'in_enforcement')
             AND j.judgment_amount >= 2000
@@ -198,33 +200,15 @@ GRANT SELECT ON enforcement.v_candidate_wage_garnishments TO authenticated,
 -- ============================================================================
 -- SECTION 5: enforcement.v_serve_jobs_active
 -- Active physical service jobs tracker
+-- DISABLED: enforcement.serve_jobs table does not exist in current schema
 -- ============================================================================
-CREATE OR REPLACE VIEW enforcement.v_serve_jobs_active AS
-SELECT sj.id,
-    sj.judgment_id,
-    sj.defendant_name,
-    sj.serve_address,
-    sj.serve_type,
-    sj.status,
-    sj.attempts,
-    sj.last_attempt_at,
-    sj.assigned_to,
-    sj.created_at,
-    sj.updated_at,
-    j.case_number,
-    j.plaintiff_name,
-    j.judgment_amount
-FROM enforcement.serve_jobs sj
-    LEFT JOIN public.judgments j ON j.id = sj.judgment_id
-WHERE sj.status IN ('pending', 'in_progress', 'retry')
-ORDER BY sj.created_at ASC;
-COMMENT ON VIEW enforcement.v_serve_jobs_active IS 'Active physical service jobs requiring attention';
-GRANT SELECT ON enforcement.v_serve_jobs_active TO authenticated,
-    service_role;
+-- DROP VIEW IF EXISTS enforcement.v_serve_jobs_active CASCADE;
+-- View creation skipped - underlying table does not exist
 -- ============================================================================
 -- SECTION 6: public.v_enforcement_overview
 -- CEO Dashboard enforcement summary
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_enforcement_overview CASCADE;
 CREATE OR REPLACE VIEW public.v_enforcement_overview AS
 SELECT j.enforcement_stage,
     COUNT(*) AS count,
@@ -240,6 +224,7 @@ GRANT SELECT ON public.v_enforcement_overview TO anon,
 -- SECTION 7: public.v_enforcement_recent
 -- Recent enforcement activity feed
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_enforcement_recent CASCADE;
 CREATE OR REPLACE VIEW public.v_enforcement_recent AS
 SELECT j.id,
     j.case_number,

@@ -278,6 +278,8 @@ COMMENT ON VIEW ops.v_intake_monitor IS 'Real-time batch monitoring dashboard wi
 -- ============================================================================
 -- This view ALWAYS returns exactly one row (even if job_queue is empty)
 -- to prevent 406 errors from .single() calls in the frontend
+-- DROP first to allow column type changes
+DROP VIEW IF EXISTS ops.v_enrichment_health CASCADE;
 CREATE OR REPLACE VIEW ops.v_enrichment_health AS
 SELECT COALESCE(
         SUM(

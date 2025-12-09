@@ -45,6 +45,7 @@ CREATE SCHEMA IF NOT EXISTS analytics;
 -- SECTION 2: public.v_plaintiffs_overview
 -- Base view used by many other views
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_plaintiffs_overview CASCADE;
 CREATE OR REPLACE VIEW public.v_plaintiffs_overview AS
 SELECT p.id AS plaintiff_id,
     p.name AS plaintiff_name,
@@ -64,6 +65,7 @@ GRANT SELECT ON public.v_plaintiffs_overview TO anon,
 -- ============================================================================
 -- SECTION 3: public.v_enforcement_overview
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_enforcement_overview CASCADE;
 CREATE OR REPLACE VIEW public.v_enforcement_overview AS
 SELECT j.enforcement_stage,
     cs.collectability_tier,
@@ -79,6 +81,7 @@ GRANT SELECT ON public.v_enforcement_overview TO anon,
 -- ============================================================================
 -- SECTION 4: public.v_enforcement_recent
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_enforcement_recent CASCADE;
 CREATE OR REPLACE VIEW public.v_enforcement_recent AS
 SELECT j.id AS judgment_id,
     j.case_number,
@@ -99,6 +102,7 @@ GRANT SELECT ON public.v_enforcement_recent TO anon,
 -- ============================================================================
 -- SECTION 5: public.v_judgment_pipeline
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_judgment_pipeline CASCADE;
 CREATE OR REPLACE VIEW public.v_judgment_pipeline AS
 SELECT j.id AS judgment_id,
     j.case_number,
@@ -121,6 +125,7 @@ GRANT SELECT ON public.v_judgment_pipeline TO anon,
 -- ============================================================================
 -- SECTION 6: public.v_priority_pipeline
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_priority_pipeline CASCADE;
 CREATE OR REPLACE VIEW public.v_priority_pipeline AS WITH normalized AS (
         SELECT j.id AS judgment_id,
             COALESCE(p.name, j.plaintiff_name) AS plaintiff_name,
@@ -173,6 +178,7 @@ GRANT SELECT ON public.v_priority_pipeline TO service_role;
 -- ============================================================================
 -- SECTION 7: public.v_metrics_intake_daily
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_metrics_intake_daily CASCADE;
 CREATE OR REPLACE VIEW public.v_metrics_intake_daily AS WITH import_rows AS (
         SELECT date_trunc('day', timezone('utc', started_at))::date AS activity_date,
             COALESCE(NULLIF(lower(source_system), ''), 'unknown') AS source_system,
@@ -240,6 +246,7 @@ GRANT SELECT ON public.v_metrics_intake_daily TO anon,
 -- ============================================================================
 -- SECTION 8: public.v_metrics_pipeline
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_metrics_pipeline CASCADE;
 CREATE OR REPLACE VIEW public.v_metrics_pipeline AS
 SELECT COALESCE(
         NULLIF(lower(j.enforcement_stage), ''),
@@ -264,6 +271,7 @@ GRANT SELECT ON public.v_metrics_pipeline TO anon,
 -- ============================================================================
 -- SECTION 9: public.v_metrics_enforcement
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_metrics_enforcement CASCADE;
 CREATE OR REPLACE VIEW public.v_metrics_enforcement AS WITH case_rows AS (
         SELECT ec.id,
             ec.opened_at,
@@ -367,6 +375,7 @@ GRANT SELECT ON public.v_metrics_enforcement TO anon,
 -- ============================================================================
 -- SECTION 10: public.v_plaintiffs_jbi_900
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_plaintiffs_jbi_900 CASCADE;
 CREATE OR REPLACE VIEW public.v_plaintiffs_jbi_900 AS
 SELECT p.status,
     COUNT(*)::bigint AS plaintiff_count,
@@ -390,6 +399,7 @@ GRANT SELECT ON public.v_plaintiffs_jbi_900 TO anon,
 -- ============================================================================
 -- SECTION 11: public.v_plaintiff_open_tasks
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_plaintiff_open_tasks CASCADE;
 CREATE OR REPLACE VIEW public.v_plaintiff_open_tasks AS WITH tier_lookup AS (
         SELECT j.plaintiff_id,
             MIN(
@@ -441,6 +451,7 @@ GRANT SELECT ON public.v_plaintiff_open_tasks TO anon,
 -- ============================================================================
 -- SECTION 12: public.v_plaintiff_call_queue
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_plaintiff_call_queue CASCADE;
 CREATE OR REPLACE VIEW public.v_plaintiff_call_queue AS WITH ranked_call_tasks AS (
         SELECT ot.*,
             row_number() OVER (
@@ -535,6 +546,7 @@ GRANT SELECT ON public.v_plaintiff_call_queue TO anon,
 -- ============================================================================
 -- SECTION 13: public.v_pipeline_snapshot
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_pipeline_snapshot CASCADE;
 CREATE OR REPLACE VIEW public.v_pipeline_snapshot AS WITH simplicity AS (
         SELECT COUNT(*)::bigint AS total
         FROM public.plaintiffs
@@ -636,6 +648,7 @@ GRANT SELECT ON public.v_pipeline_snapshot TO service_role;
 -- ============================================================================
 -- SECTION 14: ops.v_metrics_intake_daily (ops schema version)
 -- ============================================================================
+DROP VIEW IF EXISTS ops.v_metrics_intake_daily CASCADE;
 CREATE OR REPLACE VIEW ops.v_metrics_intake_daily AS
 SELECT COALESCE(j.created_at::date, CURRENT_DATE) AS activity_date,
     COALESCE(p.source_system, 'unknown') AS source_system,
@@ -660,6 +673,7 @@ GRANT SELECT ON ops.v_metrics_intake_daily TO authenticated,
 -- ============================================================================
 -- SECTION 15: enforcement.v_enforcement_pipeline_status
 -- ============================================================================
+DROP VIEW IF EXISTS enforcement.v_enforcement_pipeline_status CASCADE;
 CREATE OR REPLACE VIEW enforcement.v_enforcement_pipeline_status AS
 SELECT COALESCE(j.status, 'unknown') AS status,
     COUNT(*) AS count,
@@ -682,6 +696,7 @@ GRANT SELECT ON enforcement.v_enforcement_pipeline_status TO authenticated,
 -- ============================================================================
 -- SECTION 16: enforcement.v_plaintiff_call_queue
 -- ============================================================================
+DROP VIEW IF EXISTS enforcement.v_plaintiff_call_queue CASCADE;
 CREATE OR REPLACE VIEW enforcement.v_plaintiff_call_queue AS
 SELECT p.id AS plaintiff_id,
     p.name AS plaintiff_name,
@@ -689,7 +704,7 @@ SELECT p.id AS plaintiff_id,
     p.status,
     COALESCE(SUM(j.judgment_amount), 0)::numeric(15, 2) AS total_judgment_amount,
     COUNT(j.id) AS case_count,
-    COALESCE(p.metadata->>'phone', '') AS phone
+    COALESCE(p.phone, '') AS phone
 FROM public.plaintiffs p
     LEFT JOIN public.judgments j ON j.plaintiff_id = p.id
 WHERE p.status IN (
@@ -701,7 +716,7 @@ GROUP BY p.id,
     p.name,
     p.firm_name,
     p.status,
-    p.metadata
+    p.phone
 ORDER BY total_judgment_amount DESC
 LIMIT 100;
 COMMENT ON VIEW enforcement.v_plaintiff_call_queue IS 'Plaintiff call queue for outreach operations';
@@ -710,6 +725,7 @@ GRANT SELECT ON enforcement.v_plaintiff_call_queue TO authenticated,
 -- ============================================================================
 -- SECTION 17: finance.v_portfolio_stats
 -- ============================================================================
+DROP VIEW IF EXISTS finance.v_portfolio_stats CASCADE;
 CREATE OR REPLACE VIEW finance.v_portfolio_stats AS
 SELECT COALESCE(SUM(j.judgment_amount), 0)::numeric(15, 2) AS total_aum,
     COALESCE(
@@ -758,6 +774,7 @@ GRANT USAGE ON SCHEMA finance TO authenticated,
 -- SECTION 19: enforcement.v_candidate_wage_garnishments
 -- Wage garnishment candidate view for CPLR 5231 enforcement
 -- ============================================================================
+DROP VIEW IF EXISTS enforcement.v_candidate_wage_garnishments CASCADE;
 CREATE OR REPLACE VIEW enforcement.v_candidate_wage_garnishments AS WITH judgment_intelligence AS (
         SELECT j.id AS judgment_id,
             j.plaintiff_id,
@@ -770,18 +787,17 @@ CREATE OR REPLACE VIEW enforcement.v_candidate_wage_garnishments AS WITH judgmen
             j.enforcement_stage,
             j.collectability_score,
             j.created_at,
-            -- Get employer data from debtor_intelligence (0200 schema)
-            di.employer_name,
-            di.employer_address,
-            di.income_band,
-            di.data_source AS intel_source,
-            di.confidence_score AS intel_confidence,
-            di.is_verified AS intel_verified,
+            -- debtor_intelligence columns (disabled: table uses uuid, judgments uses bigint)
+            NULL::text AS employer_name,
+            NULL::text AS employer_address,
+            NULL::text AS income_band,
+            NULL::text AS intel_source,
+            NULL::numeric AS intel_confidence,
+            FALSE AS intel_verified,
             -- Get plaintiff name
             p.name AS plaintiff_name,
             p.tier AS plaintiff_tier
         FROM public.judgments j
-            LEFT JOIN public.debtor_intelligence di ON di.judgment_id = j.id::uuid
             LEFT JOIN public.plaintiffs p ON p.id = j.plaintiff_id
         WHERE j.status IN ('unsatisfied', 'active', 'in_enforcement')
             AND j.judgment_amount >= 2000
@@ -836,6 +852,7 @@ GRANT SELECT ON enforcement.v_candidate_wage_garnishments TO authenticated,
 -- ============================================================================
 GRANT USAGE ON SCHEMA analytics TO authenticated,
     service_role;
+DROP VIEW IF EXISTS analytics.v_collectability_scores CASCADE;
 CREATE OR REPLACE VIEW analytics.v_collectability_scores AS WITH base_data AS (
         SELECT j.id AS judgment_id,
             j.plaintiff_id,
@@ -850,20 +867,17 @@ CREATE OR REPLACE VIEW analytics.v_collectability_scores AS WITH base_data AS (
             p.tier AS plaintiff_tier,
             p.name AS plaintiff_name,
             CASE
-                WHEN j.judgment_date IS NOT NULL THEN EXTRACT(
-                    DAYS
-                    FROM (CURRENT_DATE - j.judgment_date)
-                )::int
+                WHEN j.judgment_date IS NOT NULL THEN (CURRENT_DATE - j.judgment_date::date)
                 ELSE NULL
             END AS age_days,
-            di.employer_name,
-            di.bank_name,
-            di.income_band,
-            di.home_ownership,
-            di.is_verified AS intel_verified
+            -- debtor_intelligence columns (disabled: table uses uuid, judgments uses bigint)
+            NULL::text AS employer_name,
+            NULL::text AS bank_name,
+            NULL::text AS income_band,
+            NULL::text AS home_ownership,
+            FALSE AS intel_verified
         FROM public.judgments j
             LEFT JOIN public.plaintiffs p ON p.id = j.plaintiff_id
-            LEFT JOIN public.debtor_intelligence di ON di.judgment_id = j.id::uuid
         WHERE j.status NOT IN ('satisfied', 'vacated', 'expired', 'closed')
     ),
     scored AS (

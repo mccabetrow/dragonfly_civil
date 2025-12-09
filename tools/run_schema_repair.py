@@ -131,27 +131,30 @@ async def run_repair(env: str | None = None, dry_run: bool = False) -> dict[str,
         logger.error(f"[repair] Cannot get DB URL: {e}")
         return result
 
-    # Connect to database
+    # Connect to database and execute each file in its own transaction
     try:
         import psycopg
 
-        async with await psycopg.AsyncConnection.connect(db_url) as conn:
-            # Execute each repair file
-            for file_name in RECOVERY_FILES:
-                file_path = RECOVERY_DIR / file_name
+        for file_name in RECOVERY_FILES:
+            file_path = RECOVERY_DIR / file_name
 
-                file_result = await execute_sql_file(conn, file_path, dry_run)
+            # Each file gets its own connection/transaction for isolation
+            try:
+                async with await psycopg.AsyncConnection.connect(db_url) as conn:
+                    file_result = await execute_sql_file(conn, file_path, dry_run)
 
-                if file_result["success"]:
-                    result["files_executed"].append(file_name)
-                else:
-                    result["files_failed"].append(file_name)
-                    if file_result["error"]:
-                        result["errors"].append(f"{file_name}: {file_result['error']}")
-
-            # Commit if not dry run
-            if not dry_run:
-                await conn.commit()
+                    if file_result["success"]:
+                        if not dry_run:
+                            await conn.commit()
+                        result["files_executed"].append(file_name)
+                    else:
+                        result["files_failed"].append(file_name)
+                        if file_result["error"]:
+                            result["errors"].append(f"{file_name}: {file_result['error']}")
+            except Exception as file_err:
+                result["files_failed"].append(file_name)
+                result["errors"].append(f"{file_name}: {file_err}")
+                logger.error(f"[repair] File execution error for {file_name}: {file_err}")
 
     except Exception as e:
         result["errors"].append(f"Database connection error: {e}")
