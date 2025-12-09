@@ -143,6 +143,29 @@ jobs:
           echo "✓ Vercel deployment triggered"
 
       # ─────────────────────────────────────────────────────────────
+      # PHASE: SMOKE TEST
+      # ─────────────────────────────────────────────────────────────
+      - name: "Phase: Smoke Test"
+        if: success()
+        run: echo "PHASE=smoke-test" >> $GITHUB_ENV
+
+      - name: Wait for Railway deployment to settle
+        if: success()
+        run: |
+          echo "Waiting 30s for Railway deployment to stabilize..."
+          sleep 30
+
+      - name: Post-deploy smoke test
+        if: success()
+        env:
+          SUPABASE_DB_URL_PROD: ${{ secrets.SUPABASE_DB_URL_PROD }}
+        run: |
+          echo "::group::Production Smoke Test"
+          python -m tools.prod_smoke
+          echo "::endgroup::"
+          echo "✓ Production smoke test passed"
+
+      # ─────────────────────────────────────────────────────────────
       # PHASE: COMPLETE
       # ─────────────────────────────────────────────────────────────
       - name: "Phase: Complete"
