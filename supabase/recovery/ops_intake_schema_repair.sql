@@ -279,12 +279,14 @@ COMMENT ON VIEW ops.v_intake_monitor IS 'Real-time batch monitoring dashboard wi
 -- This view ALWAYS returns exactly one row (even if job_queue is empty)
 -- to prevent 406 errors from .single() calls in the frontend
 -- DROP first to allow column type changes
+-- NOTE: Use text comparison (not enum cast) for compatibility with both
+-- dev (enum type) and prod (text type) schemas
 DROP VIEW IF EXISTS ops.v_enrichment_health CASCADE;
 CREATE OR REPLACE VIEW ops.v_enrichment_health AS
 SELECT COALESCE(
         SUM(
             CASE
-                WHEN status = 'pending'::ops.job_status_enum THEN 1
+                WHEN status::text = 'pending' THEN 1
                 ELSE 0
             END
         ),
@@ -293,7 +295,7 @@ SELECT COALESCE(
     COALESCE(
         SUM(
             CASE
-                WHEN status = 'processing'::ops.job_status_enum THEN 1
+                WHEN status::text = 'processing' THEN 1
                 ELSE 0
             END
         ),
@@ -302,7 +304,7 @@ SELECT COALESCE(
     COALESCE(
         SUM(
             CASE
-                WHEN status = 'failed'::ops.job_status_enum THEN 1
+                WHEN status::text = 'failed' THEN 1
                 ELSE 0
             END
         ),
@@ -311,7 +313,7 @@ SELECT COALESCE(
     COALESCE(
         SUM(
             CASE
-                WHEN status = 'completed'::ops.job_status_enum THEN 1
+                WHEN status::text = 'completed' THEN 1
                 ELSE 0
             END
         ),

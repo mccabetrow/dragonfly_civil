@@ -113,27 +113,8 @@ async def run_repair(env: str | None = None, dry_run: bool = False) -> dict[str,
 
     logger.info(f"[repair] Starting schema repair (env={env}, dry_run={dry_run})")
 
-    # SAFETY: Prod schema is behind dev - repair SQL references columns that don't exist
-    # Skip repair in prod until schemas are synchronized
-    # TODO: Remove this check once prod has tier, priority_level, ops.intake_jobs columns
-    if env == "prod":
-        logger.warning("[repair] ⚠️  Schema repair SKIPPED in prod (schema mismatch with dev)")
-        logger.warning(
-            "[repair] Prod is missing: plaintiffs.tier, judgments.priority_level, ops.intake_jobs"
-        )
-        logger.warning("[repair] Run migrations to sync schemas, then remove this check")
-        return {
-            "success": True,  # Don't trigger alerts - this is intentional
-            "env": env,
-            "dry_run": dry_run,
-            "skipped": True,
-            "reason": "Prod schema behind dev - repair SQL incompatible",
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-            "files_executed": [],
-            "files_failed": [],
-            "errors": [],
-        }
+    # NOTE: Prod-skip guard removed 2025-12-09 after migration 20251209092248
+    # synced plaintiffs.tier, judgments.priority_level, and v_migration_status to prod.
 
     result = {
         "success": False,
