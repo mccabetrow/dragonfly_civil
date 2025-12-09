@@ -27,9 +27,9 @@ if (-not (Test-Path -LiteralPath $pythonExe)) {
     exit 1
 }
 
-$dbPushScript = Join-Path $PSScriptRoot 'db_push.ps1'
-if (-not (Test-Path -LiteralPath $dbPushScript)) {
-    Write-Host "[FAIL] Unable to find db_push.ps1 at $dbPushScript" -ForegroundColor Red
+$dbMigrateScript = Join-Path $PSScriptRoot 'db_migrate.ps1'
+if (-not (Test-Path -LiteralPath $dbMigrateScript)) {
+    Write-Host "[FAIL] Unable to find db_migrate.ps1 at $dbMigrateScript" -ForegroundColor Red
     exit 1
 }
 
@@ -60,8 +60,8 @@ function Invoke-Step {
     }
 }
 
-Invoke-Step "db_push checks ($SupabaseEnv)" {
-    & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $dbPushScript -SupabaseEnv $SupabaseEnv -Mode 'Checks'
+Invoke-Step "db_migrate checks ($SupabaseEnv)" {
+    & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $dbMigrateScript -SupabaseEnv $SupabaseEnv -DryRun
 }
 
 Invoke-Step "tools.check_schema_consistency ($SupabaseEnv)" {
@@ -104,7 +104,8 @@ Invoke-Step "Production API Health Check" {
         if ($json.status -eq 'ok') {
             Write-Host "  API Status: $($json.status)" -ForegroundColor White
             Write-Host "  Environment: $($json.environment)" -ForegroundColor White
-        } else {
+        }
+        else {
             throw "Health check returned status: $($json.status)"
         }
     }
