@@ -5,24 +5,36 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+# Prevent concurrent deploys to avoid race conditions
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   test-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     env:
+      # Phase tracking for failure notifications
+      PHASE: "init"
+
       # Supabase
       SUPABASE_DB_URL_PROD: ${{ secrets.SUPABASE_DB_URL_PROD }}
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
 
       # App deploy targets
-      RAILWAY_DEPLOY_WEBHOOK: ${{ secrets.RAILWAY_DEPLOY_WEBHOOK }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       VERCEL_DEPLOY_WEBHOOK: ${{ secrets.VERCEL_DEPLOY_WEBHOOK }}
 
       # Notifications
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
     steps:
+      # ─────────────────────────────────────────────────────────────
+      # SETUP PHASE
+      # ─────────────────────────────────────────────────────────────
       - name: Checkout repo
         uses: actions/checkout@v4
 
@@ -30,54 +42,164 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "requirements.txt"
 
-      - name: Install dependencies
+      - name: Cache npm packages
+        id: cache-npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-cli-tools-v3
+          restore-keys: |
+            ${{ runner.os }}-npm-cli-tools-
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install Supabase CLI
+      - name: Install CLI tools (Supabase + Railway)
         run: |
-          npm install -g supabase
+          npm install -g supabase @railway/cli
+          echo "✓ Supabase CLI: $(supabase --version)"
+          echo "✓ Railway CLI: $(railway --version)"
+
+      # ─────────────────────────────────────────────────────────────
+      # PHASE: TESTS
+      # ─────────────────────────────────────────────────────────────
+      - name: "Phase: Tests"
+        run: echo "PHASE=tests" >> $GITHUB_ENV
 
       - name: Run tests against Dev
+        if: success()
         env:
           SUPABASE_MODE: dev
-          SUPABASE_DB_URL_DEV: ${{ secrets.SUPABASE_DB_URL_DEV }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL_DEV }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL_DEV }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY_DEV }}
         run: |
-          python -m pytest -q
+          echo "::group::Running pytest"
+          python -m pytest -q --tb=short
+          echo "::endgroup::"
+          echo "✓ All tests passed"
 
-      - name: Apply migrations to Prod (supabase db push)
+      # ─────────────────────────────────────────────────────────────
+      # PHASE: MIGRATIONS
+      # ─────────────────────────────────────────────────────────────
+      - name: "Phase: Migrations"
+        if: success()
+        run: echo "PHASE=migrations" >> $GITHUB_ENV
+
+      - name: Validate PROD secrets
+        if: success()
+        run: |
+          if [ -z "$SUPABASE_DB_URL_PROD" ]; then
+            echo "::error::SUPABASE_DB_URL_PROD is not set"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "::error::SUPABASE_PROJECT_REF is not set"
+            exit 1
+          fi
+          echo "✓ PROD secrets validated"
+
+      - name: Apply migrations to Prod
         if: success()
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_URL_PROD: ${{ secrets.SUPABASE_DB_URL_PROD }}
-          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: |
+          echo "::group::Supabase db push"
           supabase db push \
             --project-ref "$SUPABASE_PROJECT_REF" \
             --db-url "$SUPABASE_DB_URL_PROD"
+          echo "::endgroup::"
+          echo "✓ Migrations applied to PROD"
 
-      - name: Trigger Railway deploy
-        if: success() && env.RAILWAY_DEPLOY_WEBHOOK != ''
+      # ─────────────────────────────────────────────────────────────
+      # PHASE: DEPLOY
+      # ─────────────────────────────────────────────────────────────
+      - name: "Phase: Deploy"
+        if: success()
+        run: echo "PHASE=deploy" >> $GITHUB_ENV
+
+      - name: Deploy to Railway
+        if: success() && env.RAILWAY_TOKEN != ''
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          curl -X POST "$RAILWAY_DEPLOY_WEBHOOK"
+          echo "::group::Railway deployment"
+          railway link --environment production
+          railway up --service dragonfly-api --environment production --detach
+          echo "::endgroup::"
+          echo "✓ Railway deployment triggered"
 
-      - name: Trigger Vercel deploy
+      - name: Deploy to Vercel
         if: success() && env.VERCEL_DEPLOY_WEBHOOK != ''
         run: |
-          curl -X POST "$VERCEL_DEPLOY_WEBHOOK"
+          echo "::group::Vercel deployment"
+          curl -fsS -X POST "$VERCEL_DEPLOY_WEBHOOK"
+          echo "::endgroup::"
+          echo "✓ Vercel deployment triggered"
 
+      # ─────────────────────────────────────────────────────────────
+      # PHASE: COMPLETE
+      # ─────────────────────────────────────────────────────────────
+      - name: "Phase: Complete"
+        if: success()
+        run: echo "PHASE=complete" >> $GITHUB_ENV
+
+      # ─────────────────────────────────────────────────────────────
+      # NOTIFICATIONS
+      # ─────────────────────────────────────────────────────────────
       - name: Notify Discord on success
         if: success() && env.DISCORD_WEBHOOK_URL != ''
         run: |
-          curl -H "Content-Type: application/json" \
-               -d "{\"content\": \"🚀 Dragonfly Prod Deployed & Synced (commit: $GITHUB_SHA)\"}" \
-               "$DISCORD_WEBHOOK_URL"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          AUTHOR="${{ github.actor }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+
+          curl -fsS -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"🚀 Dragonfly Prod Deployed\",
+                \"color\": 5763719,
+                \"fields\": [
+                  {\"name\": \"Commit\", \"value\": \"[\`${SHORT_SHA}\`](${COMMIT_URL})\", \"inline\": true},
+                  {\"name\": \"Author\", \"value\": \"${AUTHOR}\", \"inline\": true},
+                  {\"name\": \"Branch\", \"value\": \"main\", \"inline\": true}
+                ],
+                \"footer\": {\"text\": \"All phases completed successfully\"},
+                \"url\": \"${RUN_URL}\",
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }]
+            }" \
+            "$DISCORD_WEBHOOK_URL"
 
       - name: Notify Discord on failure
         if: failure() && env.DISCORD_WEBHOOK_URL != ''
         run: |
-          curl -H "Content-Type: application/json" \
-               -d "{\"content\": \"❌ Dragonfly Prod deployment FAILED (commit: $GITHUB_SHA). Check GitHub Actions logs.\"}" \
-               "$DISCORD_WEBHOOK_URL"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          AUTHOR="${{ github.actor }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          FAILED_PHASE="${PHASE:-unknown}"
+
+          curl -fsS -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"❌ Dragonfly Prod Deploy FAILED\",
+                \"description\": \"Pipeline failed during **${FAILED_PHASE}** phase\",
+                \"color\": 15548997,
+                \"fields\": [
+                  {\"name\": \"Failed Phase\", \"value\": \"\`${FAILED_PHASE}\`\", \"inline\": true},
+                  {\"name\": \"Commit\", \"value\": \"[\`${SHORT_SHA}\`](${COMMIT_URL})\", \"inline\": true},
+                  {\"name\": \"Author\", \"value\": \"${AUTHOR}\", \"inline\": true}
+                ],
+                \"footer\": {\"text\": \"Click to view logs\"},
+                \"url\": \"${RUN_URL}\",
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }]
+            }" \
+            "$DISCORD_WEBHOOK_URL"
