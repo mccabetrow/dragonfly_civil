@@ -78,9 +78,7 @@ async def test_handle_enforce_spawns_flow(fake_supabase, monkeypatch, caplog):
     job = {
         "msg_id": 789,
         "idempotency_key": "enforce:SIM-0003",
-        "payload": {
-            "payload": {"case_number": "SIM-0003", "template_code": "CUSTOM_FLOW"}
-        },
+        "payload": {"payload": {"case_number": "SIM-0003", "template_code": "CUSTOM_FLOW"}},
     }
 
     with caplog.at_level("INFO"):

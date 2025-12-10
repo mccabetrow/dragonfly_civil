@@ -42,9 +42,7 @@ class PoolCreateRequest(BaseModel):
 
     name: str = Field(..., description="Pool name (e.g., 'Queens 2025-A')")
     target_irr: Optional[float] = Field(None, description="Target IRR (%)")
-    management_fee_percent: float = Field(
-        0.015, description="Management fee (default 1.5%)"
-    )
+    management_fee_percent: float = Field(0.015, description="Management fee (default 1.5%)")
     description: Optional[str] = Field(None, description="Pool description")
 
 

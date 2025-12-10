@@ -126,6 +126,4 @@ class MockIdiCORE:
 
 
 # Verify MockIdiCORE implements SkipTraceVendor protocol
-assert isinstance(
-    MockIdiCORE(), SkipTraceVendor
-), "MockIdiCORE must implement SkipTraceVendor"
+assert isinstance(MockIdiCORE(), SkipTraceVendor), "MockIdiCORE must implement SkipTraceVendor"

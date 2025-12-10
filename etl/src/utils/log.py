@@ -53,7 +53,9 @@ def _redact(value: Any) -> Any:
 class SafeFilter(logging.Filter):
     """Filter that redacts sensitive values on structured log records."""
 
-    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover - behavior verified via event
+    def filter(
+        self, record: logging.LogRecord
+    ) -> bool:  # pragma: no cover - behavior verified via event
         payload = getattr(record, "_event_payload", None)
         if isinstance(payload, dict):
             redacted = _redact(payload)

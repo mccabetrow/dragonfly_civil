@@ -272,12 +272,8 @@ async def handle_judgment_enrich(job: Dict[str, Any]) -> bool:
 
         # Parse RPC response
         rpc_result = rpc_response.data if rpc_response.data else {}
-        fcra_log_id = (
-            rpc_result.get("fcra_log_id") if isinstance(rpc_result, dict) else None
-        )
-        intel_id = (
-            rpc_result.get("intelligence_id") if isinstance(rpc_result, dict) else None
-        )
+        fcra_log_id = rpc_result.get("fcra_log_id") if isinstance(rpc_result, dict) else None
+        intel_id = rpc_result.get("intelligence_id") if isinstance(rpc_result, dict) else None
 
         logger.info(
             "judgment_enrich_complete kind=judgment_enrich msg_id=%s judgment_id=%s "

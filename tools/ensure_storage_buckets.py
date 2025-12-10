@@ -25,9 +25,7 @@ def ensure_storage_buckets(
 ) -> list[str]:
     client = create_supabase_client(env)
     existing = {
-        bucket.name
-        for bucket in client.storage.list_buckets()
-        if getattr(bucket, "name", None)
+        bucket.name for bucket in client.storage.list_buckets() if getattr(bucket, "name", None)
     }
 
     created: list[str] = []
@@ -42,9 +40,7 @@ def ensure_storage_buckets(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Ensure Supabase storage buckets exist"
-    )
+    parser = argparse.ArgumentParser(description="Ensure Supabase storage buckets exist")
     parser.add_argument(
         "--env",
         choices=["dev", "prod"],

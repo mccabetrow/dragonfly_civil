@@ -13,11 +13,7 @@ import click
 import psycopg
 from psycopg import sql
 
-from etl.src.importers.jbi_900 import (
-    JBI_LAST_PARSE_ERRORS,
-    parse_jbi_900_csv,
-    run_jbi_900_import,
-)
+from etl.src.importers.jbi_900 import JBI_LAST_PARSE_ERRORS, parse_jbi_900_csv, run_jbi_900_import
 from etl.src.importers.pipeline_support import QueueJobManager
 from etl.src.importers.simplicity_plaintiffs import (
     LAST_PARSE_ERRORS,
@@ -27,7 +23,8 @@ from etl.src.importers.simplicity_plaintiffs import (
 from etl.src.worker_enrich import JobResult, process_once
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 from tools import check_schema_consistency
-from tools.ops_daily_report import OpsDailyReport, UTC as OPS_UTC
+from tools.ops_daily_report import UTC as OPS_UTC
+from tools.ops_daily_report import OpsDailyReport
 from tools.task_planner import DatabaseTaskPlannerRepository, PlannerConfig, TaskPlanner
 from workers.queue_client import QueueClient, QueueRpcNotFound
 
@@ -125,9 +122,7 @@ class PipelineContext:
                 self.queued_jobs.append(job)
                 if (job.get("status") or "").lower() == "queued":
                     kind = str(job.get("kind") or "unknown")
-                    self.queue_expectations[kind] = (
-                        self.queue_expectations.get(kind, 0) + 1
-                    )
+                    self.queue_expectations[kind] = self.queue_expectations.get(kind, 0) + 1
 
     def expected_enrich_jobs(self) -> int:
         return self.queue_expectations.get("enrich", 0)
@@ -202,9 +197,7 @@ def _run_preflight(ctx: PipelineContext, stage: PipelineStage) -> StageResult:
     }
     status = "success" if schema_code == 0 and queue_probe.available else "error"
     error = None if status == "success" else "Schema or queue checks failed"
-    return _stage_result(
-        stage, status=status, started=started, details=details, error=error
-    )
+    return _stage_result(stage, status=status, started=started, details=details, error=error)
 
 
 def _run_validation(ctx: PipelineContext, stage: PipelineStage) -> StageResult:
@@ -217,8 +210,7 @@ def _run_validation(ctx: PipelineContext, stage: PipelineStage) -> StageResult:
             "path": str(ctx.simplicity_csv),
             "rows": len(rows),
             "parse_errors": [
-                {"row": issue.row_number, "error": issue.error}
-                for issue in LAST_PARSE_ERRORS
+                {"row": issue.row_number, "error": issue.error} for issue in LAST_PARSE_ERRORS
             ],
         }
     if ctx.jbi_csv:
@@ -227,8 +219,7 @@ def _run_validation(ctx: PipelineContext, stage: PipelineStage) -> StageResult:
             "path": str(ctx.jbi_csv),
             "rows": len(rows),
             "parse_errors": [
-                {"row": issue.row_number, "error": issue.error}
-                for issue in JBI_LAST_PARSE_ERRORS
+                {"row": issue.row_number, "error": issue.error} for issue in JBI_LAST_PARSE_ERRORS
             ],
         }
 
@@ -240,18 +231,14 @@ def _run_validation(ctx: PipelineContext, stage: PipelineStage) -> StageResult:
             details={"reason": "No CSV sources configured"},
         )
 
-    parse_failures = sum(
-        len(entry.get("parse_errors", [])) for entry in details.values()
-    )
+    parse_failures = sum(len(entry.get("parse_errors", [])) for entry in details.values())
     status = "success" if parse_failures == 0 else "error"
     error = None
     if parse_failures and not ctx.dry_run:
         error = f"{parse_failures} row(s) failed validation"
     elif parse_failures:
         status = "success"
-    return _stage_result(
-        stage, status=status, started=started, details=details, error=error
-    )
+    return _stage_result(stage, status=status, started=started, details=details, error=error)
 
 
 def _import_source(
@@ -292,9 +279,7 @@ def _run_imports(ctx: PipelineContext, stage: PipelineStage) -> StageResult:
     details: Dict[str, Any] = {}
     try:
         if ctx.simplicity_csv:
-            result = _import_source(
-                ctx, source="simplicity", csv_path=ctx.simplicity_csv
-            )
+            result = _import_source(ctx, source="simplicity", csv_path=ctx.simplicity_csv)
             details["simplicity"] = {
                 "rows": result.get("row_count"),
                 "inserted": result.get("insert_count"),
@@ -319,9 +304,7 @@ def _run_imports(ctx: PipelineContext, stage: PipelineStage) -> StageResult:
         )
 
     status = "success"
-    if not ctx.dry_run and any(
-        (info.get("errors") or 0) > 0 for info in details.values()
-    ):
+    if not ctx.dry_run and any((info.get("errors") or 0) > 0 for info in details.values()):
         status = "error"
     return _stage_result(stage, status=status, started=started, details=details)
 
@@ -410,9 +393,7 @@ def _run_collectability(ctx: PipelineContext, stage: PipelineStage) -> StageResu
         "idle_loops": idle_streak,
     }
     error = None if status == "success" else "Collectability jobs did not finish"
-    return _stage_result(
-        stage, status=status, started=started, details=details, error=error
-    )
+    return _stage_result(stage, status=status, started=started, details=details, error=error)
 
 
 def _run_task_planner(ctx: PipelineContext, stage: PipelineStage) -> StageResult:
@@ -557,9 +538,7 @@ def _default_batch_name() -> str:
     help="Optional external reference recorded in import_runs",
 )
 @click.option("--commit/--dry-run", default=False, help="Apply changes to Supabase")
-@click.option(
-    "--skip-jobs", is_flag=True, help="Skip queue_job RPC submissions during import"
-)
+@click.option("--skip-jobs", is_flag=True, help="Skip queue_job RPC submissions during import")
 @click.option(
     "--start-stage",
     type=int,
@@ -567,9 +546,7 @@ def _default_batch_name() -> str:
     show_default=True,
     help="First stage to execute",
 )
-@click.option(
-    "--end-stage", type=int, default=6, show_default=True, help="Last stage to execute"
-)
+@click.option("--end-stage", type=int, default=6, show_default=True, help="Last stage to execute")
 @click.option(
     "--collectability-limit",
     type=int,
@@ -614,9 +591,7 @@ def main(
     )
     resolved_jbi = _resolve_csv_path(jbi_csv, candidates=DEFAULT_JBI_CANDIDATES)
     if resolved_simplicity is None and resolved_jbi is None:
-        raise click.ClickException(
-            "No CSV sources found; provide --simplicity-csv or --jbi-csv"
-        )
+        raise click.ClickException("No CSV sources found; provide --simplicity-csv or --jbi-csv")
 
     label = batch_name or _default_batch_name()
     source_ref = source_reference or label
@@ -639,9 +614,7 @@ def main(
         summary = ctx.serialize(stages)
 
     if summary_path:
-        summary_path.write_text(
-            json.dumps(summary, indent=2 if pretty else None), encoding="utf-8"
-        )
+        summary_path.write_text(json.dumps(summary, indent=2 if pretty else None), encoding="utf-8")
 
     payload = json.dumps(summary, indent=2 if pretty else None)
     click.echo(payload)

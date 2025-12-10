@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from src.api.app import require_api_key, _normalize_env, _get_supabase_client_cached
+from src.api.app import _get_supabase_client_cached, _normalize_env, require_api_key
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,9 +52,7 @@ class OpsDigestResponse(BaseModel):
     pending_signatures: int
     call_queue_count: int
     call_queue_top10: List[CallQueueItem]
-    enforcement_stalled: int = Field(
-        description="Cases >3 days in current enforcement stage"
-    )
+    enforcement_stalled: int = Field(description="Cases >3 days in current enforcement stage")
 
 
 class EnrichmentCompletePayload(BaseModel):
@@ -99,9 +97,7 @@ async def get_ops_digest(
     pipeline_counts = PipelineStageCounts()
     try:
         pipeline_response = (
-            supabase.table("v_enforcement_pipeline_status")
-            .select("pipeline_stage")
-            .execute()
+            supabase.table("v_enforcement_pipeline_status").select("pipeline_stage").execute()
         )
         rows = pipeline_response.data or []
         for row in rows:

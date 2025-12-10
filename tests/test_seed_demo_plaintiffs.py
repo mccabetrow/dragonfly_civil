@@ -101,17 +101,13 @@ def test_happy_path_runs_seed(monkeypatch):
         lambda url: ("demo-host", "demo-db", "postgres"),
     )
     monkeypatch.setattr(seed_demo_plaintiffs, "_demo_specs", lambda now: fake_specs)
-    monkeypatch.setattr(
-        seed_demo_plaintiffs, "_reset_demo_rows", lambda *_args, **_kwargs: {}
-    )
+    monkeypatch.setattr(seed_demo_plaintiffs, "_reset_demo_rows", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         seed_demo_plaintiffs,
         "_now",
         lambda: datetime(2025, 1, 1, tzinfo=timezone.utc),
     )
-    monkeypatch.setattr(
-        seed_demo_plaintiffs, "_seed_dataset", lambda conn, specs, now: summary
-    )
+    monkeypatch.setattr(seed_demo_plaintiffs, "_seed_dataset", lambda conn, specs, now: summary)
     monkeypatch.setattr(
         seed_demo_plaintiffs.psycopg,
         "connect",
@@ -121,6 +117,4 @@ def test_happy_path_runs_seed(monkeypatch):
     result = runner.invoke(seed_demo_plaintiffs.main)
 
     assert result.exit_code == 0
-    assert (
-        "seeded plaintiffs=3 contacts=4 statuses=5 judgments=6 tasks=7" in result.output
-    )
+    assert "seeded plaintiffs=3 contacts=4 statuses=5 judgments=6 tasks=7" in result.output

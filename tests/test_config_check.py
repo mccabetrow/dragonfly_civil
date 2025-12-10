@@ -33,9 +33,7 @@ def test_evaluate_env_requirements_flags_missing_value():
     env_values.pop("OPENAI_API_KEY")
 
     results = config_check.evaluate_env_requirements("dev", env_values=env_values)
-    openai_result = next(
-        result for result in results if result.name == "OPENAI_API_KEY"
-    )
+    openai_result = next(result for result in results if result.name == "OPENAI_API_KEY")
 
     assert openai_result.status == "WARN"
 
@@ -45,9 +43,7 @@ def test_evaluate_env_requirements_flags_missing_value_prod():
     env_values.pop("OPENAI_API_KEY")
 
     results = config_check.evaluate_env_requirements("prod", env_values=env_values)
-    openai_result = next(
-        result for result in results if result.name == "OPENAI_API_KEY"
-    )
+    openai_result = next(result for result in results if result.name == "OPENAI_API_KEY")
 
     assert openai_result.status == "FAIL"
 
@@ -68,9 +64,7 @@ def test_db_requirement_flags_missing_when_no_password_or_url():
     env_values.pop("SUPABASE_DB_PASSWORD")
 
     results = config_check.evaluate_env_requirements("dev", env_values=env_values)
-    db_result = next(
-        result for result in results if result.name == "SUPABASE_DB_PASSWORD"
-    )
+    db_result = next(result for result in results if result.name == "SUPABASE_DB_PASSWORD")
 
     assert db_result.status == "FAIL"
 
@@ -113,9 +107,7 @@ def test_run_checks_includes_storage_and_db(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr(
-        config_check.psycopg, "connect", lambda *args, **kwargs: _FakeConn()
-    )
+    monkeypatch.setattr(config_check.psycopg, "connect", lambda *args, **kwargs: _FakeConn())
 
     class _FakeStorage:
         def list_buckets(self):

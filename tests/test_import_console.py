@@ -18,9 +18,7 @@ class _DummyCursor:
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
         return None
 
-    def execute(
-        self, query: Any, params: Any
-    ) -> None:  # pragma: no cover - placeholder
+    def execute(self, query: Any, params: Any) -> None:  # pragma: no cover - placeholder
         self.query = query
         self.params = params
 
@@ -115,9 +113,7 @@ def test_simplicity_command_uses_resume_plan(tmp_path: Path, monkeypatch):
     assert captured["kwargs"]["dry_run"] is True
 
 
-def _command_invoker(
-    monkeypatch, fetch_map: dict[str, Callable[[Any], list[dict[str, Any]]]]
-):
+def _command_invoker(monkeypatch, fetch_map: dict[str, Callable[[Any], list[dict[str, Any]]]]):
     dummy_conn = _DummyConnection()
     monkeypatch.setattr(import_console, "_connect_db", lambda env=None: dummy_conn)
 

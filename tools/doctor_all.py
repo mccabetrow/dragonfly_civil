@@ -211,14 +211,10 @@ def _enforcement_case_integrity_runner(env: str) -> Runner:
         """
         rows = _run_query(env, query)
         if not rows:
-            click.echo(
-                "[doctor_all] enforcement_cases: all rows reference valid judgments."
-            )
+            click.echo("[doctor_all] enforcement_cases: all rows reference valid judgments.")
             return
 
-        click.echo(
-            "[doctor_all] enforcement_cases: invalid judgment references detected:"
-        )
+        click.echo("[doctor_all] enforcement_cases: invalid judgment references detected:")
         for row in rows:
             case_id, judgment_id, case_number, status, current_stage = row
             click.echo(

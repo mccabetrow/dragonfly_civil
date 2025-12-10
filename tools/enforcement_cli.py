@@ -75,17 +75,11 @@ def _fetch_judgment(conn: psycopg.Connection, judgment_id: int) -> dict[str, Any
 @app.command("create-case")
 def create_case(
     judgment_id: int = typer.Argument(..., help="ID of the judgment to link"),
-    stage: str | None = typer.Option(
-        None, "--stage", help="Optional starting stage label"
-    ),
+    stage: str | None = typer.Option(None, "--stage", help="Optional starting stage label"),
     status: str = typer.Option("open", "--status", help="Case status (default: open)"),
-    assigned_to: str | None = typer.Option(
-        None, "--assigned-to", help="Who owns the case now"
-    ),
+    assigned_to: str | None = typer.Option(None, "--assigned-to", help="Who owns the case now"),
     metadata: str | None = typer.Option(None, "--metadata", help="JSON metadata blob"),
-    env: SupabaseEnv | None = typer.Option(
-        None, "--env", help="Override SUPABASE_MODE"
-    ),
+    env: SupabaseEnv | None = typer.Option(None, "--env", help="Override SUPABASE_MODE"),
 ) -> None:
     meta = _load_metadata(metadata)
     with _connect(env) as conn, conn.cursor() as cur:
@@ -106,25 +100,19 @@ def create_case(
             ),
         )
         case_row = cur.fetchone()
-    typer.echo(
-        f"[enforcement_cli] Created case {case_row['id']} for judgment {judgment_id}"
-    )
+    typer.echo(f"[enforcement_cli] Created case {case_row['id']} for judgment {judgment_id}")
 
 
 @app.command("add-event")
 def add_event(
     case_id: str = typer.Argument(..., help="Enforcement case UUID"),
-    event_type: str = typer.Option(
-        ..., "--type", help="Short label (e.g., levy_issued)"
-    ),
+    event_type: str = typer.Option(..., "--type", help="Short label (e.g., levy_issued)"),
     event_date: datetime | str | None = typer.Option(
         None, "--date", help="ISO timestamp; defaults to now"
     ),
     notes: str | None = typer.Option(None, "--notes", help="Long-form detail"),
     metadata: str | None = typer.Option(None, "--metadata", help="JSON metadata blob"),
-    env: SupabaseEnv | None = typer.Option(
-        None, "--env", help="Override SUPABASE_MODE"
-    ),
+    env: SupabaseEnv | None = typer.Option(None, "--env", help="Override SUPABASE_MODE"),
 ) -> None:
     meta = _load_metadata(metadata)
     occurred_at = _coerce_datetime(event_date)
@@ -153,16 +141,10 @@ def attach_evidence(
         readable=True,
         resolve_path=True,
     ),
-    file_type: str | None = typer.Option(
-        None, "--type", help="Optional friendly file type label"
-    ),
-    uploaded_by: str | None = typer.Option(
-        None, "--uploaded-by", help="Who uploaded the file"
-    ),
+    file_type: str | None = typer.Option(None, "--type", help="Optional friendly file type label"),
+    uploaded_by: str | None = typer.Option(None, "--uploaded-by", help="Who uploaded the file"),
     metadata: str | None = typer.Option(None, "--metadata", help="JSON metadata blob"),
-    env: SupabaseEnv | None = typer.Option(
-        None, "--env", help="Override SUPABASE_MODE"
-    ),
+    env: SupabaseEnv | None = typer.Option(None, "--env", help="Override SUPABASE_MODE"),
     ttl_seconds: int = typer.Option(
         3600, "--ttl", help="Signed URL lifetime for confirmation (seconds)"
     ),
@@ -172,9 +154,7 @@ def attach_evidence(
     file_bytes = file_path.read_bytes()
     file_size = file_path.stat().st_size
     content_type = (
-        file_type
-        or mimetypes.guess_type(file_path.name)[0]
-        or "application/octet-stream"
+        file_type or mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
     )
     object_key = f"cases/{case_id}/{int(datetime.now(timezone.utc).timestamp())}_{file_path.name}"
 
@@ -222,18 +202,12 @@ def list_cases(
     plaintiff_id: str | None = typer.Option(
         None, "--plaintiff-id", help="Filter by plaintiff UUID"
     ),
-    judgment_id: int | None = typer.Option(
-        None, "--judgment-id", help="Filter by judgment ID"
-    ),
+    judgment_id: int | None = typer.Option(None, "--judgment-id", help="Filter by judgment ID"),
     status: str | None = typer.Option(
         "open", "--status", help="Filter by case status (default: open)"
     ),
-    limit: int = typer.Option(
-        25, "--limit", min=1, max=200, help="Maximum rows to display"
-    ),
-    env: SupabaseEnv | None = typer.Option(
-        None, "--env", help="Override SUPABASE_MODE"
-    ),
+    limit: int = typer.Option(25, "--limit", min=1, max=200, help="Maximum rows to display"),
+    env: SupabaseEnv | None = typer.Option(None, "--env", help="Override SUPABASE_MODE"),
 ) -> None:
     conditions: list[str] = []
     params: list[Any] = []

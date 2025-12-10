@@ -58,9 +58,7 @@ def _clean_identifier(value: str | None) -> str | None:
     return cleaned
 
 
-def _extract_from_url(
-    url: str | None, flow_path: Path, node_name: str
-) -> List[FlowReference]:
+def _extract_from_url(url: str | None, flow_path: Path, node_name: str) -> List[FlowReference]:
     if not url or "/rest/v1" not in url:
         return []
 
@@ -110,9 +108,7 @@ def _extract_from_url(
     return references
 
 
-def _extract_from_supabase_node(
-    node: dict, flow_path: Path, node_name: str
-) -> List[FlowReference]:
+def _extract_from_supabase_node(node: dict, flow_path: Path, node_name: str) -> List[FlowReference]:
     params = node.get("parameters", {})
     table = params.get("table")
     if isinstance(table, str):
@@ -156,13 +152,9 @@ def collect_flow_references(flow_dir: Path) -> List[FlowReference]:
             node_refs: List[FlowReference] = []
 
             if isinstance(params, dict):
-                node_refs.extend(
-                    _extract_from_url(params.get("url"), flow_file, node_name)
-                )
+                node_refs.extend(_extract_from_url(params.get("url"), flow_file, node_name))
             if node.get("type") == "n8n-nodes-base.supabase":
-                node_refs.extend(
-                    _extract_from_supabase_node(node, flow_file, node_name)
-                )
+                node_refs.extend(_extract_from_supabase_node(node, flow_file, node_name))
 
             for ref in node_refs:
                 key = (ref.flow_path, ref.kind, ref.normalized_name)
@@ -264,9 +256,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not exists and not ref.is_stub_flow and not ref.allow_missing
     ]
     warned = [
-        ref
-        for ref, exists in findings
-        if not exists and (ref.is_stub_flow or ref.allow_missing)
+        ref for ref, exists in findings if not exists and (ref.is_stub_flow or ref.allow_missing)
     ]
 
     if warned:

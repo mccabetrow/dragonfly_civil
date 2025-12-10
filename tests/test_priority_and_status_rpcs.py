@@ -19,9 +19,7 @@ def _resolve_db_url() -> str:
     if project_ref and password:
         return f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
 
-    pytest.skip(
-        "Supabase database credentials not configured for RPC integration tests"
-    )
+    pytest.skip("Supabase database credentials not configured for RPC integration tests")
     return ""
 
 

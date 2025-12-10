@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Generate a daily operations report for intake + enforcement queues."""
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, Mapping, cast
-import json
 
 import click
 import psycopg
@@ -127,21 +127,16 @@ class OpsDailyReport:
         }
         status_placeholders = ", ".join(f"%({key})s" for key in self._status_params())
         case_filter = (
-            "COALESCE(NULLIF(lower(status), ''), 'active') NOT IN ("
-            f"{status_placeholders})"
+            "COALESCE(NULLIF(lower(status), ''), 'active') NOT IN (" f"{status_placeholders})"
         )
-        count_sql = (
-            "SELECT COUNT(*) FROM public.enforcement_cases " f"WHERE {case_filter}"
-        )
+        count_sql = "SELECT COUNT(*) FROM public.enforcement_cases " f"WHERE {case_filter}"
         sample_sql = (
             "SELECT id, case_number, status, opened_at, created_at "
             "FROM public.enforcement_cases "
             f"WHERE {case_filter} "
             "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT %(limit)s"
         )
-        return self._run_metric(
-            "active_enforcement_cases", count_sql, sample_sql, params
-        )
+        return self._run_metric("active_enforcement_cases", count_sql, sample_sql, params)
 
     # ------------------------------------------------------------------
     def _run_metric(
@@ -161,19 +156,14 @@ class OpsDailyReport:
             row = cur.fetchone()
             return int(row[0]) if row else 0
 
-    def _fetch_rows(
-        self, sql: str, params: Mapping[str, Any]
-    ) -> list[Mapping[str, Any]]:
+    def _fetch_rows(self, sql: str, params: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(cast(Query, sql), params)
             rows = cur.fetchall()
             return [dict(row) for row in rows]
 
     def _status_params(self) -> Dict[str, str]:
-        return {
-            f"status_{idx}": status
-            for idx, status in enumerate(sorted(CLOSED_CASE_STATUSES))
-        }
+        return {f"status_{idx}": status for idx, status in enumerate(sorted(CLOSED_CASE_STATUSES))}
 
     def snapshot_payload(self, report: Dict[str, DailyMetric]) -> Dict[str, Any]:
         return {
@@ -181,9 +171,7 @@ class OpsDailyReport:
                 "total": metric.total,
                 "samples": [
                     {
-                        key: (
-                            value.isoformat() if isinstance(value, datetime) else value
-                        )
+                        key: (value.isoformat() if isinstance(value, datetime) else value)
                         for key, value in sample.items()
                     }
                     for sample in metric.samples
@@ -226,9 +214,7 @@ def _json_friendly(report: Dict[str, DailyMetric]) -> Dict[str, Any]:
 
 
 def _print_report(report: Dict[str, DailyMetric], day_start: datetime) -> None:
-    click.echo(
-        f"[ops_daily_report] date={day_start.date().isoformat()} metrics={len(report)}"
-    )
+    click.echo(f"[ops_daily_report] date={day_start.date().isoformat()} metrics={len(report)}")
     for name, metric in report.items():
         click.echo(f"[{name}] total={metric.total} samples={len(metric.samples)}")
         for sample in metric.samples[:5]:
@@ -267,12 +253,8 @@ def _resolve_env(value: str | None) -> SupabaseEnv:
     default=None,
     help="ISO date (YYYY-MM-DD) to report on (default: today UTC).",
 )
-@click.option(
-    "--sample-limit", default=DEFAULT_SAMPLE_LIMIT, show_default=True, type=int
-)
-@click.option(
-    "--json-output", is_flag=True, help="Emit JSON payload instead of text summary."
-)
+@click.option("--sample-limit", default=DEFAULT_SAMPLE_LIMIT, show_default=True, type=int)
+@click.option("--json-output", is_flag=True, help="Emit JSON payload instead of text summary.")
 @click.option(
     "--record/--no-record",
     default=False,

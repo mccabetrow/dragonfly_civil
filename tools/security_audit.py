@@ -153,9 +153,7 @@ def _load_relations(conn: psycopg.Connection) -> Dict[str, RelationSecurity]:
     return relations
 
 
-def _load_policies(
-    conn: psycopg.Connection, relations: Dict[str, RelationSecurity]
-) -> None:
+def _load_policies(conn: psycopg.Connection, relations: Dict[str, RelationSecurity]) -> None:
     query = """
          SELECT schemaname,
              tablename,
@@ -186,9 +184,7 @@ def _load_policies(
             )
 
 
-def _load_grants(
-    conn: psycopg.Connection, relations: Dict[str, RelationSecurity]
-) -> None:
+def _load_grants(conn: psycopg.Connection, relations: Dict[str, RelationSecurity]) -> None:
     query = """
         SELECT table_name,
                grantee,
@@ -218,15 +214,11 @@ def capture_security_snapshot(env: str) -> List[RelationSecurity]:
         return list(relations.values())
 
 
-def _assert_no_grants(
-    violations: List[str], rel: RelationSecurity, roles: Iterable[str]
-) -> None:
+def _assert_no_grants(violations: List[str], rel: RelationSecurity, roles: Iterable[str]) -> None:
     for role in roles:
         privs = rel.grants.get(role, set())
         if privs:
-            violations.append(
-                f"{rel.name}: role '{role}' must not have privileges {sorted(privs)}"
-            )
+            violations.append(f"{rel.name}: role '{role}' must not have privileges {sorted(privs)}")
 
 
 def _collect_write_roles(rel: RelationSecurity) -> Dict[str, Set[str]]:
@@ -253,15 +245,11 @@ def _enforce_key_table_rules(
     write_holders = _collect_write_roles(rel)
     unexpected = set(write_holders.keys()) - allowed_roles
     if unexpected:
-        violations.append(
-            f"{rel.name}: unexpected write privileges for roles {sorted(unexpected)}"
-        )
+        violations.append(f"{rel.name}: unexpected write privileges for roles {sorted(unexpected)}")
 
     missing = allowed_roles - set(write_holders.keys())
     if missing:
-        violations.append(
-            f"{rel.name}: missing write privileges for roles {sorted(missing)}"
-        )
+        violations.append(f"{rel.name}: missing write privileges for roles {sorted(missing)}")
 
 
 def evaluate_rules(relations: Sequence[RelationSecurity]) -> List[str]:

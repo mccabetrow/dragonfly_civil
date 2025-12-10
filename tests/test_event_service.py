@@ -81,9 +81,10 @@ class TestEmitEvent:
     @pytest.mark.asyncio
     async def test_emit_event_rejects_invalid_type(self):
         """emit_event should log warning and return for invalid event types."""
-        with patch("backend.services.event_service.get_pool") as mock_get_pool, patch(
-            "backend.services.event_service.logger"
-        ) as mock_logger:
+        with (
+            patch("backend.services.event_service.get_pool") as mock_get_pool,
+            patch("backend.services.event_service.logger") as mock_logger,
+        ):
             await emit_event(
                 entity_id=SAMPLE_ENTITY_ID,
                 event_type="invalid_type",  # type: ignore
@@ -103,9 +104,10 @@ class TestEmitEvent:
         mock_conn, mock_cursor = create_mock_connection()
         mock_cursor.execute.side_effect = Exception("Database error")
 
-        with patch(
-            "backend.services.event_service.get_pool", return_value=mock_conn
-        ), patch("backend.services.event_service.logger") as mock_logger:
+        with (
+            patch("backend.services.event_service.get_pool", return_value=mock_conn),
+            patch("backend.services.event_service.logger") as mock_logger,
+        ):
             # Should not raise
             await emit_event(
                 entity_id=SAMPLE_ENTITY_ID,
@@ -119,9 +121,10 @@ class TestEmitEvent:
     @pytest.mark.asyncio
     async def test_emit_event_handles_no_connection(self):
         """emit_event should handle case when no DB connection is available."""
-        with patch("backend.services.event_service.get_pool", return_value=None), patch(
-            "backend.services.event_service.logger"
-        ) as mock_logger:
+        with (
+            patch("backend.services.event_service.get_pool", return_value=None),
+            patch("backend.services.event_service.logger") as mock_logger,
+        ):
             await emit_event(
                 entity_id=SAMPLE_ENTITY_ID,
                 event_type="job_found",
@@ -137,9 +140,7 @@ class TestEmitEvent:
         for event_type in EVENT_TYPES:
             mock_conn, mock_cursor = create_mock_connection()
 
-            with patch(
-                "backend.services.event_service.get_pool", return_value=mock_conn
-            ):
+            with patch("backend.services.event_service.get_pool", return_value=mock_conn):
                 await emit_event(
                     entity_id=SAMPLE_ENTITY_ID,
                     event_type=event_type,  # type: ignore
@@ -268,19 +269,22 @@ class TestGetTimelineForJudgment:
         """get_timeline_for_judgment should return timeline when entity exists."""
         now = datetime.now(timezone.utc)
 
-        with patch(
-            "backend.services.event_service.get_entity_id_for_judgment",
-            return_value=SAMPLE_ENTITY_ID,
-        ), patch(
-            "backend.services.event_service.get_timeline_for_entity",
-            return_value=[
-                EventDTO(
-                    id=str(SAMPLE_EVENT_ID),
-                    event_type="new_judgment",
-                    created_at=now,
-                    payload={"amount": "5000"},
-                )
-            ],
+        with (
+            patch(
+                "backend.services.event_service.get_entity_id_for_judgment",
+                return_value=SAMPLE_ENTITY_ID,
+            ),
+            patch(
+                "backend.services.event_service.get_timeline_for_entity",
+                return_value=[
+                    EventDTO(
+                        id=str(SAMPLE_EVENT_ID),
+                        event_type="new_judgment",
+                        created_at=now,
+                        payload={"amount": "5000"},
+                    )
+                ],
+            ),
         ):
             events = await get_timeline_for_judgment(SAMPLE_JUDGMENT_ID)
 
@@ -310,27 +314,31 @@ class TestEmitEventForJudgment:
     @pytest.mark.asyncio
     async def test_emits_event_when_entity_found(self):
         """emit_event_for_judgment should emit event when entity exists."""
-        with patch(
-            "backend.services.event_service.get_entity_id_for_judgment",
-            return_value=SAMPLE_ENTITY_ID,
-        ), patch("backend.services.event_service.emit_event") as mock_emit:
+        with (
+            patch(
+                "backend.services.event_service.get_entity_id_for_judgment",
+                return_value=SAMPLE_ENTITY_ID,
+            ),
+            patch("backend.services.event_service.emit_event") as mock_emit,
+        ):
             await emit_event_for_judgment(
                 judgment_id=SAMPLE_JUDGMENT_ID,
                 event_type="offer_made",
                 payload={"amount": "1000"},
             )
 
-        mock_emit.assert_called_once_with(
-            SAMPLE_ENTITY_ID, "offer_made", {"amount": "1000"}
-        )
+        mock_emit.assert_called_once_with(SAMPLE_ENTITY_ID, "offer_made", {"amount": "1000"})
 
     @pytest.mark.asyncio
     async def test_skips_when_no_entity(self):
         """emit_event_for_judgment should skip when no entity found."""
-        with patch(
-            "backend.services.event_service.get_entity_id_for_judgment",
-            return_value=None,
-        ), patch("backend.services.event_service.emit_event") as mock_emit:
+        with (
+            patch(
+                "backend.services.event_service.get_entity_id_for_judgment",
+                return_value=None,
+            ),
+            patch("backend.services.event_service.emit_event") as mock_emit,
+        ):
             await emit_event_for_judgment(
                 judgment_id=SAMPLE_JUDGMENT_ID,
                 event_type="offer_made",

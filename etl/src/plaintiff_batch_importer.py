@@ -29,9 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Batch import plaintiffs from multiple CSV files"
-    )
+    parser = argparse.ArgumentParser(description="Batch import plaintiffs from multiple CSV files")
     parser.add_argument(
         "--glob",
         dest="glob_pattern",
@@ -161,18 +159,14 @@ def _run_cli(argv: Optional[Sequence[str]]) -> int:
                             except (
                                 Exception
                             ) as rollback_exc:  # pragma: no cover - defensive rollback
-                                logger.error(
-                                    "Rollback failed after %s: %s", path, rollback_exc
-                                )
+                                logger.error("Rollback failed after %s: %s", path, rollback_exc)
                                 return 1
                         continue
                 else:
                     logger.info("No valid plaintiff rows in %s", path)
 
                 per_file_results.append((path, file_stats))
-                decorated_examples = [
-                    f"{path.name}: {example}" for example in file_stats.examples
-                ]
+                decorated_examples = [f"{path.name}: {example}" for example in file_stats.examples]
                 file_stats.examples = decorated_examples[:3]
                 _merge_stats(overall_stats, file_stats)
     except Exception as exc:  # pragma: no cover - connection guard

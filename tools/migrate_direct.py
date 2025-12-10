@@ -44,9 +44,7 @@ def _load_applied(conn: psycopg.Connection) -> set[str]:
         return {row[0] for row in cur.fetchall()}
 
 
-def _seed_from_supabase_history(
-    conn: psycopg.Connection, applied: set[str]
-) -> set[str]:
+def _seed_from_supabase_history(conn: psycopg.Connection, applied: set[str]) -> set[str]:
     check_sql = "select to_regclass('supabase_migrations.schema_migrations')"
     with conn.cursor() as cur:
         cur.execute(check_sql, prepare=False)
@@ -84,9 +82,7 @@ def _seed_from_supabase_history(
 
 def _iter_migration_files() -> list[Path]:
     if not MIGRATIONS_DIR.is_dir():
-        print(
-            f"[FAIL] Migrations directory not found: {MIGRATIONS_DIR}", file=sys.stderr
-        )
+        print(f"[FAIL] Migrations directory not found: {MIGRATIONS_DIR}", file=sys.stderr)
         sys.exit(1)
     return sorted(MIGRATIONS_DIR.glob("*.sql"))
 

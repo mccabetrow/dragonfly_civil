@@ -77,9 +77,7 @@ def test_import_cases_enqueues_jobs_and_classifies_status(tmp_path: Path):
     assert first_payload["metadata"]["plaintiff_name"] == "Acme Funding LLC"
 
     assert len(fake_client.queue_calls) == 3
-    idempotency_values = [
-        call["payload"]["idempotency_key"] for call in fake_client.queue_calls
-    ]
+    idempotency_values = [call["payload"]["idempotency_key"] for call in fake_client.queue_calls]
     assert idempotency_values == [
         "INTAKE_DEFAULT:CASE-001",
         "INTAKE_DEFAULT:CASE-002",

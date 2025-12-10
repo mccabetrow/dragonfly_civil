@@ -70,7 +70,9 @@ class _DPAPICipher:
         if data:
             array_type = self._ctypes.c_byte * len(data)
             buf_ref = array_type.from_buffer_copy(data)  # keep buffer alive during DPAPI call
-            blob = self._BLOB(len(data), self._ctypes.cast(buf_ref, self._ctypes.POINTER(self._ctypes.c_byte)))
+            blob = self._BLOB(
+                len(data), self._ctypes.cast(buf_ref, self._ctypes.POINTER(self._ctypes.c_byte))
+            )
         else:
             null_ptr = self._ctypes.POINTER(self._ctypes.c_byte)()
             blob = self._BLOB(0, null_ptr)
@@ -116,7 +118,9 @@ class _DPAPICipher:
 
 
 @lru_cache(maxsize=None)
-def _resolve_cipher(expected: Optional[str] = None, require_flag: bool = True) -> Tuple[str, object]:
+def _resolve_cipher(
+    expected: Optional[str] = None, require_flag: bool = True
+) -> Tuple[str, object]:
     if require_flag and not _encryption_enabled():
         raise RuntimeError("Encryption requested but ENCRYPT_SESSIONS is disabled")
 

@@ -41,9 +41,7 @@ def _get_api_key() -> str | None:
     if not key:
         env = os.environ.get("ENVIRONMENT", "dev")
         if env == "prod":
-            logger.warning(
-                "DRAGONFLY_API_KEY not set in production - API key auth will fail"
-            )
+            logger.warning("DRAGONFLY_API_KEY not set in production - API key auth will fail")
     return key
 
 

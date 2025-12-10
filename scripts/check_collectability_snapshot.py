@@ -25,8 +25,14 @@ def main() -> None:
             (count,) = row
             print("rows:", count)
 
+
 def ensure_view(db_url: str) -> None:
-    migration_path = Path(__file__).resolve().parents[1] / "supabase" / "migrations" / "0058_collectability_public_view.sql"
+    migration_path = (
+        Path(__file__).resolve().parents[1]
+        / "supabase"
+        / "migrations"
+        / "0058_collectability_public_view.sql"
+    )
     up_sql_text = migration_path.read_text(encoding="utf-8")
     up_sql_section = up_sql_text.split("-- migrate:down", 1)[0]
     if "-- migrate:up" in up_sql_section:

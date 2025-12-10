@@ -18,11 +18,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ValidationError, field_validator
 
-from src.supabase_client import (
-    create_supabase_client,
-    get_supabase_db_url,
-    get_supabase_env,
-)
+from src.supabase_client import create_supabase_client, get_supabase_db_url, get_supabase_env
 
 from .core_judgment_bridge import CoreJudgmentBridge
 from .pipeline_support import (
@@ -358,10 +354,7 @@ def parse_simplicity_csv(path: str) -> List[SimplicityImportRow]:
         reader = csv.DictReader(handle)
         if reader.fieldnames is None:
             raise ValueError("CSV file is missing a header row")
-        header = [
-            name.strip() if isinstance(name, str) else name
-            for name in reader.fieldnames
-        ]
+        header = [name.strip() if isinstance(name, str) else name for name in reader.fieldnames]
         if header != EXPECTED_HEADERS:
             raise ValueError("Unexpected Simplicity CSV header")
 
@@ -380,9 +373,7 @@ def parse_simplicity_csv(path: str) -> List[SimplicityImportRow]:
                 )
                 continue
 
-            if not any(
-                _clean_cell(value) for key, value in raw_row.items() if key is not None
-            ):
+            if not any(_clean_cell(value) for key, value in raw_row.items() if key is not None):
                 continue
 
             try:
@@ -545,8 +536,7 @@ def _upsert_plaintiff(
                     (row.plaintiff_phone, existing["id"]),
                 )
             if source_system and (
-                not existing.get("source_system")
-                or existing.get("source_system") == "unknown"
+                not existing.get("source_system") or existing.get("source_system") == "unknown"
             ):
                 cur.execute(
                     """
@@ -835,9 +825,7 @@ def run_simplicity_import(
     if requested_skip_rows:
         original_count = len(good_rows)
         good_rows = [
-            row
-            for row in good_rows
-            if (row.raw_row_number or 0) not in requested_skip_rows
+            row for row in good_rows if (row.raw_row_number or 0) not in requested_skip_rows
         ]
         resume_hint = {
             "requested_skip_rows": len(requested_skip_rows),
@@ -857,8 +845,7 @@ def run_simplicity_import(
     if resume_hint:
         metadata["resume"] = resume_hint
     metadata["parse_errors"] = [
-        {"row_number": issue.row_number, "error": issue.error}
-        for issue in LAST_PARSE_ERRORS
+        {"row_number": issue.row_number, "error": issue.error} for issue in LAST_PARSE_ERRORS
     ]
     parse_errors = metadata["parse_errors"]
 
@@ -870,9 +857,7 @@ def run_simplicity_import(
     metadata["core_judgments_bridge"] = {"enabled": enable_new_pipeline}
 
     if dry_run:
-        metadata["planned_storage_path"] = (
-            f"simplicity_imports/DRY_RUN/{Path(csv_path).name}"
-        )
+        metadata["planned_storage_path"] = f"simplicity_imports/DRY_RUN/{Path(csv_path).name}"
 
     row_count = len(good_rows) + len(parse_errors)
     insert_count = 0
@@ -922,9 +907,7 @@ def run_simplicity_import(
         metadata["contact_inserts"] = dict(contact_totals)
         metadata["follow_up_tasks"] = dict(follow_up_totals)
         metadata["enforcement_initializations"] = enforcement_initializations
-        metadata["queued_jobs"] = (
-            queue_manager.summary() if queue_manager is not None else []
-        )
+        metadata["queued_jobs"] = queue_manager.summary() if queue_manager is not None else []
         metadata["raw_import_log"] = (
             raw_writer.summary() if raw_writer is not None else {"enabled": False}
         )
@@ -948,9 +931,7 @@ def run_simplicity_import(
                 )
             db_conn.commit()
 
-            supabase_client = storage_client or create_supabase_client(
-                get_supabase_env()
-            )
+            supabase_client = storage_client or create_supabase_client(get_supabase_env())
             storage_path = f"simplicity_imports/{import_run_id}/{Path(csv_path).name}"
             try:
                 _upload_csv_to_storage(
@@ -1127,9 +1108,7 @@ def run_simplicity_import(
                         core_judgments_stats["skipped"] += 1
                         operation["core_judgment_skipped"] = True
                         if core_judgment_result.judgment_id:
-                            operation["core_judgment_id"] = (
-                                core_judgment_result.judgment_id
-                            )
+                            operation["core_judgment_id"] = core_judgment_result.judgment_id
                     elif core_judgment_result.error:
                         core_judgments_stats["errors"] += 1
                         operation["core_judgment_error"] = core_judgment_result.error

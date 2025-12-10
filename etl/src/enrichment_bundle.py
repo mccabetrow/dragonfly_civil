@@ -50,7 +50,9 @@ def build_stub_enrichment(
     snapshot_dict = dict(snapshot or {})
     job_payload_dict = dict(job_payload or {})
 
-    case_number = _as_str(snapshot_dict.get("case_number") or job_payload_dict.get("case_number")) or case_id
+    case_number = (
+        _as_str(snapshot_dict.get("case_number") or job_payload_dict.get("case_number")) or case_id
+    )
 
     amount = _coerce_decimal(
         snapshot_dict.get("judgment_amount")

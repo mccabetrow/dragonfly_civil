@@ -257,9 +257,7 @@ class TestHandleJudgmentEnrich:
 
     async def test_successful_enrichment(self, fake_client, monkeypatch):
         """Test successful enrichment flow using complete_enrichment RPC."""
-        monkeypatch.setattr(
-            judgment_enrich_handler, "create_supabase_client", lambda: fake_client
-        )
+        monkeypatch.setattr(judgment_enrich_handler, "create_supabase_client", lambda: fake_client)
         monkeypatch.setattr(judgment_enrich_handler, "_get_vendor", MockIdiCORE)
 
         job = {
@@ -272,9 +270,7 @@ class TestHandleJudgmentEnrich:
         assert result is True
 
         # Verify complete_enrichment RPC was called (atomic operation)
-        enrich_calls = [
-            c for c in fake_client.rpc_calls if c["name"] == "complete_enrichment"
-        ]
+        enrich_calls = [c for c in fake_client.rpc_calls if c["name"] == "complete_enrichment"]
         assert len(enrich_calls) == 1
 
         params = enrich_calls[0]["params"]
@@ -288,9 +284,7 @@ class TestHandleJudgmentEnrich:
 
     async def test_skips_already_enriched(self, fake_client, monkeypatch):
         """Test that already-enriched judgments are skipped."""
-        monkeypatch.setattr(
-            judgment_enrich_handler, "create_supabase_client", lambda: fake_client
-        )
+        monkeypatch.setattr(judgment_enrich_handler, "create_supabase_client", lambda: fake_client)
         monkeypatch.setattr(judgment_enrich_handler, "_get_vendor", MockIdiCORE)
 
         job = {
@@ -308,17 +302,13 @@ class TestHandleJudgmentEnrich:
         # Verify no FCRA calls (no enrichment happened)
         assert len(fake_client.rpc_calls) == 0
 
-    async def test_duplicate_job_no_additional_fcra_calls(
-        self, fake_client, monkeypatch
-    ):
+    async def test_duplicate_job_no_additional_fcra_calls(self, fake_client, monkeypatch):
         """Test that duplicate/retry jobs do NOT create additional FCRA audit rows.
 
         This test simulates what happens when a job is retried or duplicated.
         The handler should check for existing debtor_intelligence and skip if present.
         """
-        monkeypatch.setattr(
-            judgment_enrich_handler, "create_supabase_client", lambda: fake_client
-        )
+        monkeypatch.setattr(judgment_enrich_handler, "create_supabase_client", lambda: fake_client)
         monkeypatch.setattr(judgment_enrich_handler, "_get_vendor", MockIdiCORE)
 
         # already-enriched-456 returns existing debtor_intelligence in FakeTable
@@ -333,28 +323,20 @@ class TestHandleJudgmentEnrich:
         assert result is True
 
         # Critical assertion: no complete_enrichment RPC calls
-        enrich_calls = [
-            c for c in fake_client.rpc_calls if c["name"] == "complete_enrichment"
-        ]
+        enrich_calls = [c for c in fake_client.rpc_calls if c["name"] == "complete_enrichment"]
         assert len(enrich_calls) == 0, "No RPC call should happen on retry"
 
         # Critical assertion: no log_external_data_call RPC calls
-        log_calls = [
-            c for c in fake_client.rpc_calls if c["name"] == "log_external_data_call"
-        ]
+        log_calls = [c for c in fake_client.rpc_calls if c["name"] == "log_external_data_call"]
         assert len(log_calls) == 0, "No FCRA log should happen on retry"
 
-    async def test_idempotent_across_multiple_invocations(
-        self, fake_client, monkeypatch
-    ):
+    async def test_idempotent_across_multiple_invocations(self, fake_client, monkeypatch):
         """Test that calling the handler twice with same judgment_id is idempotent.
 
         First call succeeds normally. Second call should detect existing data and skip.
         """
         # We need a client that can track state changes
-        monkeypatch.setattr(
-            judgment_enrich_handler, "create_supabase_client", lambda: fake_client
-        )
+        monkeypatch.setattr(judgment_enrich_handler, "create_supabase_client", lambda: fake_client)
         monkeypatch.setattr(judgment_enrich_handler, "_get_vendor", MockIdiCORE)
 
         # already-enriched-456 simulates a judgment that has already been enriched
@@ -375,9 +357,7 @@ class TestHandleJudgmentEnrich:
 
     async def test_handles_not_found_judgment(self, fake_client, monkeypatch):
         """Test handling of non-existent judgment."""
-        monkeypatch.setattr(
-            judgment_enrich_handler, "create_supabase_client", lambda: fake_client
-        )
+        monkeypatch.setattr(judgment_enrich_handler, "create_supabase_client", lambda: fake_client)
         monkeypatch.setattr(judgment_enrich_handler, "_get_vendor", MockIdiCORE)
 
         job = {
@@ -395,9 +375,7 @@ class TestHandleJudgmentEnrich:
 
     async def test_handles_missing_judgment_id(self, fake_client, monkeypatch):
         """Test handling of missing judgment_id in payload."""
-        monkeypatch.setattr(
-            judgment_enrich_handler, "create_supabase_client", lambda: fake_client
-        )
+        monkeypatch.setattr(judgment_enrich_handler, "create_supabase_client", lambda: fake_client)
 
         job = {
             "msg_id": 4,
@@ -410,9 +388,7 @@ class TestHandleJudgmentEnrich:
 
     async def test_ignores_doctor_healthcheck(self, fake_client, monkeypatch, caplog):
         """Test that doctor healthcheck jobs are ignored."""
-        monkeypatch.setattr(
-            judgment_enrich_handler, "create_supabase_client", lambda: fake_client
-        )
+        monkeypatch.setattr(judgment_enrich_handler, "create_supabase_client", lambda: fake_client)
 
         job = {
             "msg_id": 5,
@@ -424,9 +400,7 @@ class TestHandleJudgmentEnrich:
             result = await handle_judgment_enrich(job)
 
         assert result is True
-        assert any(
-            "healthcheck_ignored" in record.getMessage() for record in caplog.records
-        )
+        assert any("healthcheck_ignored" in record.getMessage() for record in caplog.records)
 
         # Verify nothing was written
         assert "debtor_intelligence" not in fake_client.data_store
@@ -450,9 +424,7 @@ class TestHandleJudgmentEnrich:
             await handle_judgment_enrich(job)
 
         # The complete_enrichment call should have been attempted
-        enrich_calls = [
-            c for c in failing_client.rpc_calls if c["name"] == "complete_enrichment"
-        ]
+        enrich_calls = [c for c in failing_client.rpc_calls if c["name"] == "complete_enrichment"]
         assert len(enrich_calls) == 1
 
     async def test_no_double_write_on_rpc_error(self, monkeypatch):

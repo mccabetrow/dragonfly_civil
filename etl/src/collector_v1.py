@@ -1,11 +1,12 @@
-import os
 import asyncio
-import uuid
 import logging
+import os
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List
-from dotenv import load_dotenv
+
 import httpx
+from dotenv import load_dotenv
 
 from .models import CaseIn
 
@@ -20,9 +21,7 @@ INSERT_CASE_URL = f"{BASE}/rest/v1/rpc/insert_case"
 INSERT_CASE_UPSERT_URL = f"{BASE}/rest/v1/rpc/insert_or_get_case"
 INSERT_ENTITY_URL = f"{BASE}/rest/v1/rpc/insert_entity"
 INSERT_COMPOSITE_URL = f"{BASE}/rest/v1/rpc/insert_case_with_entities"
-INSERT_IDEMPOTENT_COMPOSITE_URL = (
-    f"{BASE}/rest/v1/rpc/insert_or_get_case_with_entities"
-)
+INSERT_IDEMPOTENT_COMPOSITE_URL = f"{BASE}/rest/v1/rpc/insert_or_get_case_with_entities"
 QUEUE_JOB_URL = f"{BASE}/rest/v1/rpc/queue_job"
 CASES_VIEW_URL = f"{BASE}/rest/v1/v_cases_with_org"
 ENTITIES_VIEW_URL = f"{BASE}/rest/v1/v_entities_simple"
@@ -101,6 +100,7 @@ async def _queue_job(kind: str, payload: Dict[str, Any], idempotency_key: str) -
         raise RuntimeError("Queue job RPC returned no message id")
     return int(msg_id)
 
+
 async def _enqueue_enrich_job(
     case_payload: Dict[str, Any],
     case_id: str | None,
@@ -133,9 +133,7 @@ async def _fetch_case_record(case_number: str, source: str) -> Dict[str, Any] | 
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:  # pragma: no cover - smoke helper
-            raise RuntimeError(
-                f"Supabase view lookup failed: {exc.response.text}"
-            ) from exc
+            raise RuntimeError(f"Supabase view lookup failed: {exc.response.text}") from exc
         data = response.json()
 
     if isinstance(data, list) and data:
@@ -145,9 +143,7 @@ async def _fetch_case_record(case_number: str, source: str) -> Dict[str, Any] | 
     return None
 
 
-async def _fetch_entity_record(
-    case_id: str, role: str, name_full: str
-) -> Dict[str, Any] | None:
+async def _fetch_entity_record(case_id: str, role: str, name_full: str) -> Dict[str, Any] | None:
     params = {
         "case_id": f"eq.{case_id}",
         "role": f"eq.{role}",
@@ -161,9 +157,7 @@ async def _fetch_entity_record(
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:  # pragma: no cover - smoke helper
-            raise RuntimeError(
-                f"Supabase entity view lookup failed: {exc.response.text}"
-            ) from exc
+            raise RuntimeError(f"Supabase entity view lookup failed: {exc.response.text}") from exc
         data = response.json()
 
     if isinstance(data, list) and data:
@@ -206,9 +200,7 @@ async def _determine_case_status(case_payload: Dict[str, Any]) -> str:
     return "existing"
 
 
-async def _determine_entity_status(
-    case_id: str, entity_payload: Dict[str, Any]
-) -> str:
+async def _determine_entity_status(case_id: str, entity_payload: Dict[str, Any]) -> str:
     role = entity_payload.get("role")
     name_full = entity_payload.get("name_full")
     if not role or not name_full:
@@ -256,9 +248,7 @@ async def insert_entity(payload: Dict[str, Any]) -> str:
 async def insert_case_with_entities(
     payload: Dict[str, Any], *, idempotent: bool = False
 ) -> Dict[str, Any]:
-    rpc_url = (
-        INSERT_IDEMPOTENT_COMPOSITE_URL if idempotent else INSERT_COMPOSITE_URL
-    )
+    rpc_url = INSERT_IDEMPOTENT_COMPOSITE_URL if idempotent else INSERT_COMPOSITE_URL
     data = await _post_json(rpc_url, {"payload": payload})
     case_payload = payload.get("case") if isinstance(payload, dict) else None
     case_id: str | None = None
@@ -318,9 +308,7 @@ def make_demo_entities(case_id: str) -> List[Dict[str, Any]]:
     ]
 
 
-async def do_composite(
-    case_number_override: str | None, use_idempotent_composite: bool
-) -> None:
+async def do_composite(case_number_override: str | None, use_idempotent_composite: bool) -> None:
     case = make_smoke_case(case_number_override)
     case_payload = case.model_dump(mode="json")
     entities_payload = [
@@ -336,9 +324,7 @@ async def do_composite(
         },
     ]
     payload = {"case": case_payload, "entities": entities_payload}
-    result = await insert_case_with_entities(
-        payload, idempotent=use_idempotent_composite
-    )
+    result = await insert_case_with_entities(payload, idempotent=use_idempotent_composite)
 
     case_id = _extract_value(result, "case_id")
     case_status = await _determine_case_status(case_payload)

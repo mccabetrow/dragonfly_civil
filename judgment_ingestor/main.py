@@ -6,10 +6,10 @@ import json
 import logging
 import math
 import os
+import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-import time
 
 import pandas as pd
 import yaml
@@ -20,8 +20,8 @@ from src.db_upload_safe import (
     upsert_public_judgments_chunked,
 )
 from src.logging_setup import configure_logging
-from src.telemetry import log_run_start, log_run_ok, log_run_error
 from src.settings import get_settings as get_app_settings
+from src.telemetry import log_run_error, log_run_ok, log_run_start
 from workers.queue_client import QueueClient, QueueRpcNotFound
 
 configure_logging()
@@ -121,12 +121,18 @@ def _load_schema_map() -> None:
         if not isinstance(target, str):
             continue
         if isinstance(aliases, list):
-            normalized_columns[target] = [alias.lower() for alias in aliases if isinstance(alias, str)]
+            normalized_columns[target] = [
+                alias.lower() for alias in aliases if isinstance(alias, str)
+            ]
         elif isinstance(aliases, str):
             normalized_columns[target] = [aliases.lower()]
 
     SCHEMA_MAP = normalized_columns
-    SCHEMA_DEFAULTS = {k: v for k, v in defaults.items() if isinstance(k, str)} if isinstance(defaults, dict) else {}
+    SCHEMA_DEFAULTS = (
+        {k: v for k, v in defaults.items() if isinstance(k, str)}
+        if isinstance(defaults, dict)
+        else {}
+    )
     _SCHEMA_LOADED = True
 
 
@@ -345,7 +351,9 @@ def _normalize_dataframe(df: pd.DataFrame) -> list[dict]:
     if REQUIRED_COLUMN not in allowed_columns_present:
         return []
 
-    selected_columns = [REQUIRED_COLUMN] + [col for col in defaults if col in allowed_columns_present]
+    selected_columns = [REQUIRED_COLUMN] + [
+        col for col in defaults if col in allowed_columns_present
+    ]
     frame = frame[selected_columns]
 
     for column, default in defaults.items():
@@ -540,7 +548,9 @@ def process_file(file_path: Path, *, dry_run: bool = False) -> int:
                     "Uploading in chunks of 500 to avoid overloading PostgREST",
                     extra=log_extra,
                 )
-                effective_count, returned_rows, status_code = upsert_public_judgments_chunked(records)
+                effective_count, returned_rows, status_code = upsert_public_judgments_chunked(
+                    records
+                )
             else:
                 effective_count, returned_rows, status_code = upsert_public_judgments(records)
         except ChunkUploadError as chunk_exc:

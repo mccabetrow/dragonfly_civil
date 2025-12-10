@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 class ProofServiceError(Exception):
     """Raised when Proof.com API operations fail."""
 
-    def __init__(
-        self, message: str, status_code: int | None = None, response: dict | None = None
-    ):
+    def __init__(self, message: str, status_code: int | None = None, response: dict | None = None):
         super().__init__(message)
         self.status_code = status_code
         self.response = response
@@ -66,14 +64,10 @@ class ProofClient:
         self.api_url = (
             api_url or getattr(settings, "proof_api_url", None) or self.SANDBOX_URL
         ).rstrip("/")
-        self.webhook_secret = webhook_secret or getattr(
-            settings, "proof_webhook_secret", None
-        )
+        self.webhook_secret = webhook_secret or getattr(settings, "proof_webhook_secret", None)
 
         if not self.api_key:
-            logger.warning(
-                "PROOF_API_KEY not configured - Proof.com integration disabled"
-            )
+            logger.warning("PROOF_API_KEY not configured - Proof.com integration disabled")
 
     @property
     def is_configured(self) -> bool:
@@ -403,9 +397,7 @@ async def dispatch_service_of_process(
                 result["compliance_bypass"] = "gig_detected"
 
         except ComplianceError as ce:
-            logger.warning(
-                f"Compliance failed for judgment {judgment_id}: {ce} (rule={ce.rule})"
-            )
+            logger.warning(f"Compliance failed for judgment {judgment_id}: {ce} (rule={ce.rule})")
 
             # Create manual review task instead of dispatching
             try:
@@ -413,9 +405,7 @@ async def dispatch_service_of_process(
                 result["manual_review_task_id"] = task_id
                 result["compliance_error"] = str(ce)
                 result["compliance_rule"] = ce.rule
-                logger.info(
-                    f"Created manual review task {task_id} for judgment {judgment_id}"
-                )
+                logger.info(f"Created manual review task {task_id} for judgment {judgment_id}")
             except Exception as task_err:
                 logger.error(
                     f"Failed to create manual review task for judgment {judgment_id}: {task_err}"
@@ -426,9 +416,7 @@ async def dispatch_service_of_process(
 
     else:
         result["compliance_bypass"] = "skip_compliance_flag"
-        logger.warning(
-            f"Compliance skipped for judgment {judgment_id} (skip_compliance=True)"
-        )
+        logger.warning(f"Compliance skipped for judgment {judgment_id} (skip_compliance=True)")
 
     # Step 2: Fetch case details if not provided
     if case_details is None:
@@ -540,9 +528,7 @@ async def dispatch_service_of_process(
                     result["serve_job_id"] = str(row[0])
 
         except Exception as db_err:
-            logger.error(
-                f"Failed to record serve job for judgment {judgment_id}: {db_err}"
-            )
+            logger.error(f"Failed to record serve job for judgment {judgment_id}: {db_err}")
 
     result["success"] = True
     result["proof_job_id"] = proof_result.get("job_id")

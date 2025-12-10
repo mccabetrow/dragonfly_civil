@@ -59,7 +59,9 @@ def _fetch_case_snapshot(client: Any, case_id: str) -> Dict[str, Any]:
     try:
         response = (
             client.table("v_collectability_snapshot")
-            .select("case_id, case_number, judgment_amount, judgment_date, age_days, collectability_tier")
+            .select(
+                "case_id, case_number, judgment_amount, judgment_date, age_days, collectability_tier"
+            )
             .eq("case_id", case_id)
             .limit(1)
             .execute()
@@ -88,7 +90,9 @@ def run_enrichment_bundle(case_id: str, payload: Dict[str, Any]) -> Dict[str, An
             raise RuntimeError("force_error flag present for enrichment job")
 
         snapshot = _fetch_case_snapshot(client, case_id)
-        stub: StubEnrichmentResult = build_stub_enrichment(case_id, snapshot, job_payload=raw_payload)
+        stub: StubEnrichmentResult = build_stub_enrichment(
+            case_id, snapshot, job_payload=raw_payload
+        )
 
         summary_text = stub.summary or summary_hint
 

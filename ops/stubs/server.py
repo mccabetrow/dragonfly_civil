@@ -32,4 +32,3 @@ async def stub_twilio(request: Request, payload: Dict[str, Any]) -> Dict[str, An
 @app.post("/postmark")
 async def stub_postmark(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
     return await _echo_response(request, payload)
-

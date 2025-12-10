@@ -2,14 +2,12 @@ from __future__ import annotations
 
 """Deterministic enforcement task planner + Supabase RPC integration."""
 
+import argparse
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Sequence
 
-import argparse
-
 from src.supabase_client import SupabaseEnv, create_supabase_client, get_supabase_env
-
 
 UTC = timezone.utc
 
@@ -138,9 +136,7 @@ class EnforcementPlanner:
     def __init__(self, *, now_fn: Callable[[], datetime] | None = None) -> None:
         self._now_fn = now_fn or _utcnow
 
-    def plan(
-        self, existing_task_codes: Iterable[str] | None = None
-    ) -> list[PlannedTask]:
+    def plan(self, existing_task_codes: Iterable[str] | None = None) -> list[PlannedTask]:
         existing = {code for code in (existing_task_codes or []) if code}
         planned_at = self._now_fn()
         planned: list[PlannedTask] = []
@@ -185,9 +181,7 @@ class PlannerService:
         plan = self.planner.plan(existing_task_codes=existing)
         if not commit or not plan:
             return existing, plan, []
-        response = self.client.rpc(
-            "generate_enforcement_tasks", {"case_id": case_id}
-        ).execute()
+        response = self.client.rpc("generate_enforcement_tasks", {"case_id": case_id}).execute()
         error = getattr(response, "error", None)
         if error:
             raise RuntimeError(f"Supabase RPC error: {error}")
@@ -226,18 +220,14 @@ def main(argv: list[str] | None = None) -> int:
     env = args.env or get_supabase_env()
     service = PlannerService(env)
     overall_mode = "COMMIT" if args.commit else "DRY-RUN"
-    print(
-        f"[enforcement_planner] env={env} mode={overall_mode} cases={len(args.case_id)}"
-    )
+    print(f"[enforcement_planner] env={env} mode={overall_mode} cases={len(args.case_id)}")
 
     total_planned = 0
     total_inserted = 0
 
     for case_id in args.case_id:
         try:
-            existing, planned, inserted = service.run_for_case(
-                case_id, commit=args.commit
-            )
+            existing, planned, inserted = service.run_for_case(case_id, commit=args.commit)
         except Exception as exc:  # pragma: no cover - runtime safety for CLI
             print(f"  - case={case_id} ERROR: {exc}")
             continue

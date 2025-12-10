@@ -20,9 +20,7 @@ _REST_PATH = "/rest/v1"
 
 def _require(value: str, name: str) -> str:
     if not value:
-        raise RuntimeError(
-            f"Environment variable {name} is required for Supabase connectivity."
-        )
+        raise RuntimeError(f"Environment variable {name} is required for Supabase connectivity.")
     return value
 
 
@@ -102,6 +100,4 @@ if __name__ == "__main__":  # pragma: no cover - manual smoke test
             print(json.dumps(response.json(), indent=2))
     except Exception as exc:  # noqa: BLE001 - simple demonstration
         print("Supabase example request failed:", exc)
-        print(
-            "Ensure Supabase environment variables are configured before running this module."
-        )
+        print("Ensure Supabase environment variables are configured before running this module.")

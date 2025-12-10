@@ -62,9 +62,7 @@ def _serialize_ts(value: Any) -> str | None:
     return str(value)
 
 
-def _fetch_failed_imports(
-    conn: psycopg.Connection[Any], since: datetime
-) -> List[Dict[str, Any]]:
+def _fetch_failed_imports(conn: psycopg.Connection[Any], since: datetime) -> List[Dict[str, Any]]:
     sql = """
         SELECT id::text,
                import_kind,
@@ -114,9 +112,7 @@ def _fetch_failed_imports(
     return failures
 
 
-def _fetch_stale_call_task_count(
-    conn: psycopg.Connection[Any], threshold: datetime
-) -> int:
+def _fetch_stale_call_task_count(conn: psycopg.Connection[Any], threshold: datetime) -> int:
     sql = """
         SELECT COUNT(*)
         FROM public.plaintiff_tasks
@@ -213,9 +209,7 @@ def export_command(
 
 
 @app.get("/alerts")
-def get_alerts(
-    env: str | None = None, stale_days: int = DEFAULT_STALE_DAYS
-) -> Dict[str, Any]:
+def get_alerts(env: str | None = None, stale_days: int = DEFAULT_STALE_DAYS) -> Dict[str, Any]:
     try:
         return build_alert_summary(env=env, stale_days=stale_days)
     except ValueError as exc:

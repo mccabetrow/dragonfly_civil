@@ -57,9 +57,7 @@ class EventDTO(BaseModel):
     id: str = Field(..., description="Event UUID")
     event_type: str = Field(..., description="Type of event")
     created_at: datetime = Field(..., description="When the event occurred")
-    payload: dict[str, Any] = Field(
-        default_factory=dict, description="Event-specific data"
-    )
+    payload: dict[str, Any] = Field(default_factory=dict, description="Event-specific data")
 
 
 # =============================================================================
@@ -166,9 +164,7 @@ async def get_timeline_for_entity(
     try:
         conn = await get_pool()
         if conn is None:
-            logger.warning(
-                "Database connection not available - returning empty timeline"
-            )
+            logger.warning("Database connection not available - returning empty timeline")
             return []
 
         async with conn.cursor() as cur:

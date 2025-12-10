@@ -79,8 +79,7 @@ def _print_rows(rows: list[dict[str, Any]]) -> None:
 
     for row in rows:
         line = " | ".join(
-            f"{_format_value(row.get(column)):<{widths[column]}}"
-            for column in DISPLAY_COLUMNS
+            f"{_format_value(row.get(column)):<{widths[column]}}" for column in DISPLAY_COLUMNS
         )
         print(line)
 

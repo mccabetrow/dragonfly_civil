@@ -319,18 +319,12 @@ def test_import_simplicity_batch_inserts_rows(
     expected_contacts = _expected_contact_channels(simplicity_sample_rows)
 
     counts_before = _collect_counts(db_conn, TEST_SOURCE_SYSTEM)
-    import_simplicity_batch(
-        str(simplicity_sample_path), source_system=TEST_SOURCE_SYSTEM
-    )
+    import_simplicity_batch(str(simplicity_sample_path), source_system=TEST_SOURCE_SYSTEM)
     counts_after = _collect_counts(db_conn, TEST_SOURCE_SYSTEM)
 
-    assert (
-        counts_after["plaintiffs"] == counts_before["plaintiffs"] + expected_row_count
-    )
+    assert counts_after["plaintiffs"] == counts_before["plaintiffs"] + expected_row_count
     assert counts_after["cases"] == counts_before["cases"] + len(expected_case_numbers)
-    assert counts_after["judgments"] == counts_before["judgments"] + len(
-        expected_judgment_numbers
-    )
+    assert counts_after["judgments"] == counts_before["judgments"] + len(expected_judgment_numbers)
     assert counts_after["contacts"] == counts_before["contacts"] + expected_contacts
 
     plaintiffs = _fetch_rows(
@@ -349,10 +343,7 @@ def test_import_simplicity_batch_inserts_rows(
     )
     assert cases, "Cases should be created for imported rows"
     case_ids = [row["case_id"] for row in cases if row.get("case_id")]
-    assert (
-        set(filter(None, (row.get("case_number") for row in cases)))
-        == expected_case_numbers
-    )
+    assert set(filter(None, (row.get("case_number") for row in cases))) == expected_case_numbers
 
     judgments = _fetch_rows(
         db_conn,
@@ -400,9 +391,7 @@ def test_import_simplicity_batch_is_idempotent(
     )
     expected_row_count = len(simplicity_sample_rows)
 
-    import_simplicity_batch(
-        str(simplicity_sample_path), source_system=TEST_SOURCE_SYSTEM
-    )
+    import_simplicity_batch(str(simplicity_sample_path), source_system=TEST_SOURCE_SYSTEM)
     first_counts = _collect_counts(db_conn, TEST_SOURCE_SYSTEM)
     runs_after_first = _fetch_rows(
         db_conn,
@@ -411,9 +400,7 @@ def test_import_simplicity_batch_is_idempotent(
         filters={"source_system": TEST_SOURCE_SYSTEM},
     )
 
-    import_simplicity_batch(
-        str(simplicity_sample_path), source_system=TEST_SOURCE_SYSTEM
-    )
+    import_simplicity_batch(str(simplicity_sample_path), source_system=TEST_SOURCE_SYSTEM)
     second_counts = _collect_counts(db_conn, TEST_SOURCE_SYSTEM)
     runs_after_second = _fetch_rows(
         db_conn,

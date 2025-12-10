@@ -28,7 +28,7 @@ def run(cmd: List[str], cwd: Path | None = None, check: bool = True) -> Tuple[in
         text=True,
         shell=False,
     )
-    combined = (proc.stdout or "")
+    combined = proc.stdout or ""
     if proc.stderr:
         combined += "\n" + proc.stderr
     if check and proc.returncode != 0:
@@ -52,13 +52,17 @@ def write_log() -> None:
     print(f"[OK] Wrote {LOG}")
 
 
-def append_audit(passed: int, failed: int, rows_exported: int, inserted: int, updated: int, errors: int) -> None:
+def append_audit(
+    passed: int, failed: int, rows_exported: int, inserted: int, updated: int, errors: int
+) -> None:
     AUDIT.parent.mkdir(parents=True, exist_ok=True)
     wrote_header = not AUDIT.exists()
     with AUDIT.open("a", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         if wrote_header:
-            writer.writerow(["timestamp", "passed", "failed", "rows_exported", "inserted", "updated", "errors"])
+            writer.writerow(
+                ["timestamp", "passed", "failed", "rows_exported", "inserted", "updated", "errors"]
+            )
         writer.writerow(
             [
                 datetime.utcnow().isoformat(),
@@ -101,7 +105,9 @@ def main() -> int:
 
         # Stage: export
         out_csv = DATA / "simplicity_status_export.csv"
-        rc, out = run([PY, "-m", "etl.sync_simplicity", "export", "--out", str(out_csv)], check=False)
+        rc, out = run(
+            [PY, "-m", "etl.sync_simplicity", "export", "--out", str(out_csv)], check=False
+        )
         header_ok = False
         row_count_ok = False
         if out_csv.exists():
@@ -116,8 +122,12 @@ def main() -> int:
         mark("export", rc == 0 and header_ok and row_count_ok, f"file={out_csv}")
 
         # Stage: mapping
-        rc1, out1 = run([PY, "-m", "etl.sync_simplicity", "map-status", "Enforcement Pending"], check=False)
-        rc2, out2 = run([PY, "-m", "etl.sync_simplicity", "map-status", "in_progress", "--reverse"], check=False)
+        rc1, out1 = run(
+            [PY, "-m", "etl.sync_simplicity", "map-status", "Enforcement Pending"], check=False
+        )
+        rc2, out2 = run(
+            [PY, "-m", "etl.sync_simplicity", "map-status", "in_progress", "--reverse"], check=False
+        )
         map_ok = (
             rc1 == 0
             and rc2 == 0

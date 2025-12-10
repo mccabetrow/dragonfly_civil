@@ -20,9 +20,7 @@ class Contact(BaseModel):
 
     def to_jsonb(self) -> dict[str, object]:
         """Return a JSON-compatible payload for the contacts array."""
-        data = self.model_dump(  # type: ignore[attr-defined]
-            mode="json", exclude_none=True
-        )
+        data = self.model_dump(mode="json", exclude_none=True)  # type: ignore[attr-defined]
         data["entity_id"] = str(self.entity_id)
         return data
 
@@ -46,9 +44,7 @@ class Asset(BaseModel):
 
     def to_jsonb(self) -> dict[str, object]:
         """Return a JSON-compatible payload for the assets array."""
-        data = self.model_dump(  # type: ignore[attr-defined]
-            mode="json", exclude_none=True
-        )
+        data = self.model_dump(mode="json", exclude_none=True)  # type: ignore[attr-defined]
         data["entity_id"] = str(self.entity_id)
         return data
 

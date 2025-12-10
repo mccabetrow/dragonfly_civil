@@ -4,9 +4,10 @@ import logging
 from collections.abc import Iterable, Iterator
 from typing import Dict, List, Tuple, TypeVar
 
+from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
+
 from .logging_setup import configure_logging
 from .supabase_client import create_supabase_client
-from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -57,7 +58,9 @@ def _resolve_status_code(response, data):
     if request is not None:
         request_status = getattr(request, "status_code", None)
         if request_status is not None:
-            logger.debug("Resolved status_code from response._request.status_code=%s", request_status)
+            logger.debug(
+                "Resolved status_code from response._request.status_code=%s", request_status
+            )
             return request_status
         request_response = getattr(request, "response", None)
         if request_response is not None:
@@ -113,8 +116,7 @@ def upsert_public_judgments(rows: List[Dict]) -> Tuple[int, List[Dict], int]:
     client = create_supabase_client()
 
     response = (
-        client
-        .table("judgments")
+        client.table("judgments")
         .upsert(
             normalized_rows,
             on_conflict="case_number",

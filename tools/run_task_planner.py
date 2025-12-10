@@ -67,15 +67,11 @@ def _build_tier_targets(raw_targets: Sequence[str]) -> Dict[str, int]:
         key, value = raw.split("=", 1)
         key = normalize_tier(key)
         if not key:
-            raise argparse.ArgumentTypeError(
-                f"Invalid tier name in --tier-target '{raw}'."
-            )
+            raise argparse.ArgumentTypeError(f"Invalid tier name in --tier-target '{raw}'.")
         try:
             tier_targets[key] = int(value)
         except ValueError as exc:  # pragma: no cover - defensive parsing
-            raise argparse.ArgumentTypeError(
-                f"Invalid integer in --tier-target '{raw}'."
-            ) from exc
+            raise argparse.ArgumentTypeError(f"Invalid integer in --tier-target '{raw}'.") from exc
     return tier_targets
 
 

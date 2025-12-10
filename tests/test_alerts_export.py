@@ -13,9 +13,7 @@ class _DummyConnection:
     def __enter__(self) -> "_DummyConnection":
         return self
 
-    def __exit__(
-        self, exc_type, exc, tb
-    ) -> None:  # noqa: ANN001 - standard ctx signature
+    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001 - standard ctx signature
         return None
 
 

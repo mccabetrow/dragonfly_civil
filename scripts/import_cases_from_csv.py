@@ -220,16 +220,12 @@ def _classify_status(data: Any) -> str:
     return "inserted"
 
 
-def _queue_enrich(
-    client: Any, case_number: str, case_id: str | None, source: str
-) -> None:
+def _queue_enrich(client: Any, case_number: str, case_id: str | None, source: str) -> None:
     envelope = {
         "payload": {
             "kind": "enrich",
             "payload": {
-                k: v
-                for k, v in {"case_number": case_number, "case_id": case_id}.items()
-                if v
+                k: v for k, v in {"case_number": case_number, "case_id": case_id}.items() if v
             },
             "idempotency_key": f"{source}:{case_number}",
         }
@@ -244,15 +240,10 @@ def _normalize_headers(fieldnames: list[str] | None) -> list[str] | None:
 
 
 def _normalize_row(row: dict[str, Any]) -> dict[str, str]:
-    return {
-        (_clean(key).lower() if key else ""): (value or "")
-        for key, value in row.items()
-    }
+    return {(_clean(key).lower() if key else ""): (value or "") for key, value in row.items()}
 
 
-def import_cases(
-    config: ImportConfig, env: str, *, client: Any | None = None
-) -> ImportSummary:
+def import_cases(config: ImportConfig, env: str, *, client: Any | None = None) -> ImportSummary:
     summary = ImportSummary()
 
     if not config.csv_path.exists():
@@ -298,9 +289,7 @@ def import_cases(
                 continue
 
             try:
-                response = supabase.rpc(
-                    "insert_or_get_case", {"payload": payload}
-                ).execute()
+                response = supabase.rpc("insert_or_get_case", {"payload": payload}).execute()
                 data = getattr(response, "data", None)
                 case_id = _extract_case_id(data)
                 status = _classify_status(data)
@@ -328,13 +317,9 @@ def import_cases(
                         )
                     except Exception as exc:  # pragma: no cover - queue RPC issues
                         summary.errors += 1
-                        logger.warning(
-                            "enrich_queue_failed case=%s error=%s", case_number, exc
-                        )
+                        logger.warning("enrich_queue_failed case=%s error=%s", case_number, exc)
             except Exception as exc:  # pragma: no cover - Supabase/network errors
-                logger.error(
-                    "row_failed row=%d case=%s error=%s", row_number, case_number, exc
-                )
+                logger.error("row_failed row=%d case=%s error=%s", row_number, case_number, exc)
                 summary.errors += 1
 
     summary.log(env)

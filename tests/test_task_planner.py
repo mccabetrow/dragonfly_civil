@@ -126,9 +126,7 @@ def test_assignment_overrides_apply_when_committing() -> None:
     repo = _FakeRepo()
     repo.stale_count = 0
     repo.reassign_result[("mom", "ops")] = 5
-    config = task_planner.PlannerConfig(
-        tier_targets={}, assignment_overrides={"mom": "ops"}
-    )
+    config = task_planner.PlannerConfig(tier_targets={}, assignment_overrides={"mom": "ops"})
     planner = task_planner.TaskPlanner(
         repo=repo,
         config=config,

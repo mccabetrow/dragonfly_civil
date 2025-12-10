@@ -128,9 +128,7 @@ def _map_simplicity_row(row: Mapping[str, Any]) -> Optional[Dict[str, str]]:
     return payload
 
 
-def map_vendor_row_to_plaintiff(
-    row: Mapping[str, Any], vendor: str
-) -> Optional[Dict[str, str]]:
+def map_vendor_row_to_plaintiff(row: Mapping[str, Any], vendor: str) -> Optional[Dict[str, str]]:
     """Transform a vendor CSV row into the canonical plaintiff representation.
 
     Parameters
@@ -223,9 +221,10 @@ def _run_cli(argv: Optional[Sequence[str]]) -> int:
     skipped = 0
 
     try:
-        with input_path.open(
-            "r", encoding="utf-8-sig", newline=""
-        ) as source, output_path.open("w", encoding="utf-8", newline="") as sink:
+        with (
+            input_path.open("r", encoding="utf-8-sig", newline="") as source,
+            output_path.open("w", encoding="utf-8", newline="") as sink,
+        ):
             reader = csv.DictReader(source)
             if reader.fieldnames is None:
                 logger.error("CSV file is missing a header row")
@@ -239,9 +238,7 @@ def _run_cli(argv: Optional[Sequence[str]]) -> int:
                 if result is None:
                     skipped += 1
                     continue
-                writer.writerow(
-                    {header: result.get(header, "") for header in CANONICAL_HEADERS}
-                )
+                writer.writerow({header: result.get(header, "") for header in CANONICAL_HEADERS})
                 mapped += 1
     except Exception as exc:
         logger.error("Adapter run failed: %s", exc)
@@ -256,9 +253,7 @@ def _run_cli(argv: Optional[Sequence[str]]) -> int:
         )
         return 1
 
-    logger.info(
-        "Converted %d/%d rows to canonical schema; skipped %d", mapped, total, skipped
-    )
+    logger.info("Converted %d/%d rows to canonical schema; skipped %d", mapped, total, skipped)
     logger.info("Canonical CSV written to %s", output_path)
     return 0
 

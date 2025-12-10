@@ -9,15 +9,11 @@ import time
 from typing import Any, Dict, List, Tuple
 from uuid import UUID, uuid4
 
-from dotenv import load_dotenv
 import requests  # type: ignore[import-not-found]
+from dotenv import load_dotenv
+from playwright.sync_api import Error as PlaywrightError  # type: ignore[import-not-found]
+from playwright.sync_api import TimeoutError, sync_playwright
 from requests import Response  # type: ignore[import-not-found]
-
-from playwright.sync_api import (  # type: ignore[import-not-found]
-    Error as PlaywrightError,
-    TimeoutError,
-    sync_playwright,
-)
 
 from .auth.session_manager import (
     attach_cookies_to_playwright,
@@ -75,9 +71,7 @@ def _navigate_authenticated_page(cookies: List[dict], *, run_id: UUID) -> List[d
                         AUTHENTICATED_SELECTOR,
                     )
                     if attempt == 2:
-                        raise RuntimeError(
-                            "Authenticated selector missing after session refresh"
-                        )
+                        raise RuntimeError("Authenticated selector missing after session refresh")
                     attempt_cookies = ensure_session(refresh_if_invalid=True, run_id=run_id)
                     continue
 
@@ -221,7 +215,9 @@ def _call_supabase_composite(payload: Dict[str, Any]) -> Dict[str, Any]:
         "Accept": "application/json",
         "Prefer": "return=representation",
     }
-    response = requests.post(rpc_url, headers=headers, json={"payload": payload}, timeout=SUPABASE_TIMEOUT)
+    response = requests.post(
+        rpc_url, headers=headers, json={"payload": payload}, timeout=SUPABASE_TIMEOUT
+    )
     try:
         response.raise_for_status()
     except requests.HTTPError as exc:  # pragma: no cover - network guard
@@ -252,13 +248,22 @@ def _emit_scrape_event(
 
 def _run(case_number: str, *, run_id: UUID, dry_run: bool) -> Dict[str, Any]:
     started = time.perf_counter()
-    _emit_scrape_event("scrape_start", case_number=case_number, run_id=run_id, started_at=started, reason=None, ok=True)
+    _emit_scrape_event(
+        "scrape_start",
+        case_number=case_number,
+        run_id=run_id,
+        started_at=started,
+        reason=None,
+        ok=True,
+    )
 
     try:
         cookies = ensure_session(run_id=run_id)
         cookies = _navigate_authenticated_page(cookies, run_id=run_id)
         session = get_requests_session_with_cookies(cookies)
-        session, response = _fetch_authenticated_page(session, get_settings().authenticated_url, run_id=run_id)
+        session, response = _fetch_authenticated_page(
+            session, get_settings().authenticated_url, run_id=run_id
+        )
         payload = _build_composite_payload(case_number, response)
         if dry_run:
             _LOG.info("Dry-run mode: skipping Supabase RPC for case_number=%s", case_number)
@@ -289,7 +294,14 @@ def _run(case_number: str, *, run_id: UUID, dry_run: bool) -> Dict[str, Any]:
             len(entity_ids),
         )
 
-    _emit_scrape_event("scrape_ok", case_number=case_number, run_id=run_id, started_at=started, reason=None, ok=True)
+    _emit_scrape_event(
+        "scrape_ok",
+        case_number=case_number,
+        run_id=run_id,
+        started_at=started,
+        reason=None,
+        ok=True,
+    )
     return result
 
 
@@ -308,9 +320,15 @@ def main(args: argparse.Namespace) -> int:
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Collector v2 WebCivil scraper")
-    parser.add_argument("--composite", action="store_true", help="Retained for CLI compatibility (unused)")
-    parser.add_argument("--entity", action="store_true", help="Retained for CLI compatibility (unused)")
-    parser.add_argument("--force-insert", action="store_true", help="Retained for CLI compatibility (unused)")
+    parser.add_argument(
+        "--composite", action="store_true", help="Retained for CLI compatibility (unused)"
+    )
+    parser.add_argument(
+        "--entity", action="store_true", help="Retained for CLI compatibility (unused)"
+    )
+    parser.add_argument(
+        "--force-insert", action="store_true", help="Retained for CLI compatibility (unused)"
+    )
     parser.add_argument("--case-id", dest="case_id", help="Existing case_id reference (unused)")
     parser.add_argument(
         "--case-number",

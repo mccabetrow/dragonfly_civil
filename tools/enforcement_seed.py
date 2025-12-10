@@ -53,14 +53,10 @@ def main(limit_: int) -> None:
         raise SystemExit(2)
 
     if updated_count == 0:
-        click.echo(
-            "[enforcement_seed] No eligible judgments found. No changes applied."
-        )
+        click.echo("[enforcement_seed] No eligible judgments found. No changes applied.")
         raise SystemExit(0)
 
-    stage_summary = ", ".join(
-        f"{stage}: {count}" for stage, count in stage_counts.items()
-    )
+    stage_summary = ", ".join(f"{stage}: {count}" for stage, count in stage_counts.items())
     click.echo(
         f"[enforcement_seed] Updated {updated_count} judgments across stages: {stage_summary}"
     )

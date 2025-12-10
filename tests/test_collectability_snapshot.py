@@ -14,9 +14,7 @@ def _resolve_db_url() -> str:
         return explicit
     project_ref = os.environ["SUPABASE_PROJECT_REF"]
     password = os.environ["SUPABASE_DB_PASSWORD"]
-    return (
-        f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
-    )
+    return f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
 
 
 def _ensure_collectability_view(db_url: str) -> None:
@@ -140,9 +138,7 @@ def test_collectability_snapshot_view_returns_latest_enrichment() -> None:
                     "judgment_date": judgment_date.isoformat(),
                     "amount_awarded": str(spec["amount"]),
                 }
-                cur.execute(
-                    "select public.insert_case(%s::jsonb)", (Json(insert_payload),)
-                )
+                cur.execute("select public.insert_case(%s::jsonb)", (Json(insert_payload),))
                 case_row = cur.fetchone()
                 assert case_row is not None
                 (case_id,) = case_row

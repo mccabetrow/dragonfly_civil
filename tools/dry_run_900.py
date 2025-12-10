@@ -89,9 +89,7 @@ def _maybe_limit_csv(csv_path: Path, count: int) -> tuple[Path, Optional[Path]]:
     return tmp_file, tmp_file
 
 
-def _collect_inserted_ids(
-    result: Dict[str, Any], env: str, batch_name: str
-) -> DryRunContext:
+def _collect_inserted_ids(result: Dict[str, Any], env: str, batch_name: str) -> DryRunContext:
     metadata = result.get("metadata") or {}
     row_ops = metadata.get("row_operations") or []
     plaintiffs: List[str] = []
@@ -122,9 +120,7 @@ def _write_state(ctx: DryRunContext) -> None:
         "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(
-        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    STATE_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _load_state(env: str) -> Optional[DryRunContext]:
@@ -344,9 +340,7 @@ def _simulate_foil(
     return {"foil_responses": inserted}
 
 
-def _simulate_call_outcomes(
-    conn: psycopg.Connection, ctx: DryRunContext
-) -> Dict[str, Any]:
+def _simulate_call_outcomes(conn: psycopg.Connection, ctx: DryRunContext) -> Dict[str, Any]:
     if not ctx.plaintiff_ids:
         return {"total": 0}
 
@@ -373,13 +367,9 @@ def _simulate_call_outcomes(
                 ["reached", "voicemail", "do_not_call"],
                 weights=[0.5, 0.35, 0.15],
             )[0]
-            interest = (
-                random.choice(["hot", "warm", "cold"]) if outcome == "reached" else None
-            )
+            interest = random.choice(["hot", "warm", "cold"]) if outcome == "reached" else None
             follow_up = (
-                now + timedelta(days=random.randint(2, 10))
-                if outcome == "reached"
-                else None
+                now + timedelta(days=random.randint(2, 10)) if outcome == "reached" else None
             )
             note = f"Dry run simulated outcome: {outcome}"
             cur.execute(
@@ -457,9 +447,7 @@ def _count_csv_rows(csv_path: Path) -> int:
         return sum(1 for _ in reader)
 
 
-def _prepare_report_sample(
-    csv_path: Path, count: int
-) -> tuple[Path, Optional[Path], int, int]:
+def _prepare_report_sample(csv_path: Path, count: int) -> tuple[Path, Optional[Path], int, int]:
     total_rows = _count_csv_rows(csv_path)
     limited_csv, temp_csv = _maybe_limit_csv(csv_path, count)
     sample_rows = min(count, total_rows) if total_rows else 0
@@ -508,9 +496,7 @@ def _build_report_diagnostics(metadata: Dict[str, Any]) -> List[Dict[str, str]]:
         row_number = str(operation.get("row_number") or "-")
         case_number = str(operation.get("case_number") or "-")
         judgment_number = str(operation.get("judgment_number") or "-")
-        case_issues = _identifier_issue_list(
-            None if case_number == "-" else case_number
-        )
+        case_issues = _identifier_issue_list(None if case_number == "-" else case_number)
         judgment_issues = _identifier_issue_list(
             None if judgment_number == "-" else judgment_number
         )
@@ -541,9 +527,7 @@ def _build_report_diagnostics(metadata: Dict[str, Any]) -> List[Dict[str, str]]:
             }
         )
 
-    diagnostics.sort(
-        key=lambda item: int(item["row"]) if item["row"].isdigit() else 10**9
-    )
+    diagnostics.sort(key=lambda item: int(item["row"]) if item["row"].isdigit() else 10**9)
     return diagnostics
 
 
@@ -553,15 +537,12 @@ def _build_report_summary(
     row_operations = metadata.get("row_operations") or []
     parse_errors = metadata.get("parse_errors") or []
     summary_block = metadata.get("summary") or {}
-    row_count = int(
-        summary_block.get("row_count") or (len(row_operations) + len(parse_errors))
-    )
+    row_count = int(summary_block.get("row_count") or (len(row_operations) + len(parse_errors)))
 
     potential_inserts = sum(
         1
         for op in row_operations
-        if op.get("status") == "planned"
-        and op.get("action") == "create_plaintiff_and_judgment"
+        if op.get("status") == "planned" and op.get("action") == "create_plaintiff_and_judgment"
     )
     potential_updates = sum(
         1
@@ -570,9 +551,7 @@ def _build_report_summary(
         and op.get("action") == "attach_judgment_to_existing_plaintiff"
     )
     skipped_rows = sum(1 for op in row_operations if op.get("status") == "skipped")
-    error_rows = sum(1 for op in row_operations if op.get("status") == "error") + len(
-        parse_errors
-    )
+    error_rows = sum(1 for op in row_operations if op.get("status") == "error") + len(parse_errors)
     identifier_warnings = sum(1 for row in diagnostics if row["issues"] != "-")
 
     return {
@@ -592,9 +571,7 @@ def _shorten(text: str, width: int) -> str:
     return textwrap.shorten(text, width=width, placeholder="…")
 
 
-def _render_table(
-    title: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]
-) -> None:
+def _render_table(title: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
     click.echo()
     click.echo(title)
     if not rows:
@@ -607,16 +584,12 @@ def _render_table(
         for idx, cell in enumerate(row):
             widths[idx] = max(widths[idx], len(cell))
 
-    header = "  " + "  ".join(
-        columns[idx].ljust(widths[idx]) for idx in range(len(columns))
-    )
+    header = "  " + "  ".join(columns[idx].ljust(widths[idx]) for idx in range(len(columns)))
     divider = "  " + "  ".join("-" * widths[idx] for idx in range(len(columns)))
     click.echo(header)
     click.echo(divider)
     for row in string_rows:
-        line = "  " + "  ".join(
-            row[idx].ljust(widths[idx]) for idx in range(len(columns))
-        )
+        line = "  " + "  ".join(row[idx].ljust(widths[idx]) for idx in range(len(columns)))
         click.echo(line)
 
 
@@ -634,9 +607,7 @@ def _run_report(
     limited_csv: Path
     temp_csv: Optional[Path] = None
     try:
-        limited_csv, temp_csv, total_rows, sample_rows = _prepare_report_sample(
-            csv_path, count
-        )
+        limited_csv, temp_csv, total_rows, sample_rows = _prepare_report_sample(csv_path, count)
         if temp_csv:
             logger.info(
                 "Using sampled CSV subset",
@@ -653,12 +624,9 @@ def _run_report(
             )
 
         batch = (
-            batch_name
-            or f"dry_run_report_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+            batch_name or f"dry_run_report_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
         )
-        logger.info(
-            "Running dry-run Simplicity import", extra={"batch": batch, "env": env}
-        )
+        logger.info("Running dry-run Simplicity import", extra={"batch": batch, "env": env})
         result = run_simplicity_import(
             str(limited_csv),
             batch_name=batch,
@@ -756,9 +724,7 @@ def _run_report(
     is_flag=True,
     help="Remove the previously recorded dry run cohort before seeding",
 )
-@click.option(
-    "--reset-only", is_flag=True, help="Only perform the cleanup step and exit"
-)
+@click.option("--reset-only", is_flag=True, help="Only perform the cleanup step and exit")
 @click.option(
     "--report",
     is_flag=True,
@@ -796,9 +762,7 @@ def main(
 
     if report:
         if reset or reset_only:
-            raise click.ClickException(
-                "--report cannot be combined with --reset or --reset-only"
-            )
+            raise click.ClickException("--report cannot be combined with --reset or --reset-only")
         _run_report(
             csv_path=csv_path,
             count=count,
@@ -836,9 +800,7 @@ def main(
             conn.commit()
 
             if not ctx.judgment_ids:
-                click.echo(
-                    "[warn] Import produced no new judgments; aborting simulation"
-                )
+                click.echo("[warn] Import produced no new judgments; aborting simulation")
                 return
 
             judgments = _fetch_judgments(conn, ctx.judgment_ids)

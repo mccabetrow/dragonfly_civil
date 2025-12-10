@@ -171,9 +171,7 @@ class ImportResult:
             "updated_plaintiffs": self.updated_plaintiffs,
             "skipped_duplicates": self.skipped_duplicates,
             "failed_count": len(self.failed_rows),
-            "quarantine_file": (
-                str(self.quarantine_file) if self.quarantine_file else None
-            ),
+            "quarantine_file": (str(self.quarantine_file) if self.quarantine_file else None),
             "committed": self.committed,
             "success": self.success,
         }
@@ -279,9 +277,7 @@ def _extract_field(
     return None
 
 
-def _parse_row(
-    raw_row: Dict[str, str], header_map: Dict[str, str], row_number: int
-) -> ParsedRow:
+def _parse_row(raw_row: Dict[str, str], header_map: Dict[str, str], row_number: int) -> ParsedRow:
     """Parse a raw CSV row into a typed ParsedRow structure."""
     plaintiff_name = _extract_field(
         raw_row, header_map, "plaintiffname", "plaintiff_name", "plaintiff"
@@ -307,25 +303,17 @@ def _parse_row(
         lead_id=_extract_field(raw_row, header_map, "leadid", "lead_id"),
         plaintiff_name=plaintiff_name,
         judgment_number=judgment_number,
-        case_number=_extract_field(
-            raw_row, header_map, "casenumber", "case_number", "indexnumber"
-        ),
-        docket_number=_extract_field(
-            raw_row, header_map, "docketnumber", "docket_number"
-        ),
+        case_number=_extract_field(raw_row, header_map, "casenumber", "case_number", "indexnumber"),
+        docket_number=_extract_field(raw_row, header_map, "docketnumber", "docket_number"),
         court=_extract_field(raw_row, header_map, "court", "court_name"),
         county=_extract_field(raw_row, header_map, "county"),
         state=_extract_field(raw_row, header_map, "state", "plaintiff_state"),
         judgment_date=_parse_date(
             _extract_field(raw_row, header_map, "judgmentdate", "judgment_date")
         ),
-        filing_date=_parse_date(
-            _extract_field(raw_row, header_map, "filingdate", "filing_date")
-        ),
+        filing_date=_parse_date(_extract_field(raw_row, header_map, "filingdate", "filing_date")),
         judgment_amount=_parse_amount(
-            _extract_field(
-                raw_row, header_map, "judgmentamount", "judgment_amount", "amount"
-            )
+            _extract_field(raw_row, header_map, "judgmentamount", "judgment_amount", "amount")
         ),
         plaintiff_address=_extract_field(
             raw_row, header_map, "plaintiffaddress", "plaintiff_address", "address"
@@ -524,11 +512,7 @@ def _upsert_plaintiff(
             updates["email"] = parsed.get("email")
         if parsed.get("phone") and not existing.get("phone"):
             updates["phone"] = _normalize_phone(parsed.get("phone"))
-        if (
-            has_external_id
-            and parsed.get("lead_id")
-            and not existing.get("external_id")
-        ):
+        if has_external_id and parsed.get("lead_id") and not existing.get("external_id"):
             updates["external_id"] = parsed.get("lead_id")
 
         if updates:
@@ -561,9 +545,9 @@ def _upsert_plaintiff(
 
     cols_sql = sql.SQL(", ").join(sql.Identifier(c) for c in insert_cols)
     vals_sql = sql.SQL(", ").join(sql.Placeholder() for _ in insert_cols)
-    insert_query = sql.SQL(
-        "INSERT INTO public.plaintiffs ({}) VALUES ({}) RETURNING id"
-    ).format(cols_sql, vals_sql)
+    insert_query = sql.SQL("INSERT INTO public.plaintiffs ({}) VALUES ({}) RETURNING id").format(
+        cols_sql, vals_sql
+    )
 
     with conn.cursor() as cur:
         cur.execute(insert_query, insert_vals)
@@ -610,9 +594,9 @@ def _insert_judgment(
 
     cols_sql = sql.SQL(", ").join(sql.Identifier(c) for c in insert_cols)
     vals_sql = sql.SQL(", ").join(sql.Placeholder() for _ in insert_cols)
-    insert_query = sql.SQL(
-        "INSERT INTO public.judgments ({}) VALUES ({}) RETURNING id"
-    ).format(cols_sql, vals_sql)
+    insert_query = sql.SQL("INSERT INTO public.judgments ({}) VALUES ({}) RETURNING id").format(
+        cols_sql, vals_sql
+    )
 
     with conn.cursor() as cur:
         cur.execute(insert_query, insert_vals)
@@ -622,9 +606,7 @@ def _insert_judgment(
         return str(row[0])
 
 
-def _insert_status_history(
-    conn: Connection, plaintiff_id: str, batch_name: str
-) -> None:
+def _insert_status_history(conn: Connection, plaintiff_id: str, batch_name: str) -> None:
     """Record initial status history entry."""
     with conn.cursor() as cur:
         cur.execute(
@@ -638,9 +620,7 @@ def _insert_status_history(
         )
 
 
-def _insert_contact(
-    conn: Connection, plaintiff_id: str, parsed: ParsedRow
-) -> Optional[int]:
+def _insert_contact(conn: Connection, plaintiff_id: str, parsed: ParsedRow) -> Optional[int]:
     """Insert contact record if contact info is present."""
     email = parsed.get("email")
     phone = _normalize_phone(parsed.get("phone"))
@@ -792,9 +772,7 @@ def run_import(config: ImportConfig) -> ImportResult:
         raise FileNotFoundError(f"Batch file not found: {config.batch_file}")
 
     # Parse CSV
-    logger.info(
-        "[orchestrator] Parsing %s (run_id=%s)", config.batch_file, config.run_id
-    )
+    logger.info("[orchestrator] Parsing %s (run_id=%s)", config.batch_file, config.run_id)
     parsed_rows, parse_failures = _read_csv(config.batch_file)
     result.total_rows = len(parsed_rows) + len(parse_failures)
     result.failed_rows.extend(parse_failures)
@@ -831,22 +809,16 @@ def run_import(config: ImportConfig) -> ImportResult:
 
             try:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        sql.SQL("SAVEPOINT {}").format(sql.Identifier(savepoint_name))
-                    )
+                    cur.execute(sql.SQL("SAVEPOINT {}").format(sql.Identifier(savepoint_name)))
 
                 # Check for duplicate judgment
                 if _check_judgment_exists(conn, parsed):
                     result.skipped_duplicates += 1
                     result.processed_rows += 1
-                    logger.debug(
-                        "[orchestrator] row %d: skipped (judgment exists)", row_num
-                    )
+                    logger.debug("[orchestrator] row %d: skipped (judgment exists)", row_num)
                     with conn.cursor() as cur:
                         cur.execute(
-                            sql.SQL("RELEASE SAVEPOINT {}").format(
-                                sql.Identifier(savepoint_name)
-                            )
+                            sql.SQL("RELEASE SAVEPOINT {}").format(sql.Identifier(savepoint_name))
                         )
                     continue
 
@@ -863,9 +835,7 @@ def run_import(config: ImportConfig) -> ImportResult:
                     result.updated_plaintiffs += 1
 
                 # Insert judgment
-                judgment_id = _insert_judgment(
-                    conn, parsed, plaintiff_id, judgment_columns
-                )
+                judgment_id = _insert_judgment(conn, parsed, plaintiff_id, judgment_columns)
 
                 # Insert contact (idempotent)
                 _insert_contact(conn, plaintiff_id, parsed)
@@ -878,9 +848,7 @@ def run_import(config: ImportConfig) -> ImportResult:
                 # Release savepoint on success
                 with conn.cursor() as cur:
                     cur.execute(
-                        sql.SQL("RELEASE SAVEPOINT {}").format(
-                            sql.Identifier(savepoint_name)
-                        )
+                        sql.SQL("RELEASE SAVEPOINT {}").format(sql.Identifier(savepoint_name))
                     )
 
                 logger.debug(
@@ -895,14 +863,10 @@ def run_import(config: ImportConfig) -> ImportResult:
                 # Rollback savepoint and record failure
                 with conn.cursor() as cur:
                     cur.execute(
-                        sql.SQL("ROLLBACK TO SAVEPOINT {}").format(
-                            sql.Identifier(savepoint_name)
-                        )
+                        sql.SQL("ROLLBACK TO SAVEPOINT {}").format(sql.Identifier(savepoint_name))
                     )
                     cur.execute(
-                        sql.SQL("RELEASE SAVEPOINT {}").format(
-                            sql.Identifier(savepoint_name)
-                        )
+                        sql.SQL("RELEASE SAVEPOINT {}").format(sql.Identifier(savepoint_name))
                     )
 
                 result.failed_rows.append(
@@ -998,9 +962,7 @@ Examples:
         action="store_true",
         help="Skip queuing downstream enrichment/enforcement jobs",
     )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable debug logging"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     parser.add_argument(
         "--json",
         action="store_true",
@@ -1057,9 +1019,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result.committed,
         )
         if result.quarantine_file:
-            logger.info(
-                "[orchestrator] Failures written to: %s", result.quarantine_file
-            )
+            logger.info("[orchestrator] Failures written to: %s", result.quarantine_file)
 
     # Exit code
     if result.has_failures:

@@ -11,10 +11,10 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from src.api.app import require_api_key, _normalize_env, _get_supabase_client_cached
+from src.api.app import _get_supabase_client_cached, _normalize_env, require_api_key
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,15 +24,9 @@ router = APIRouter(prefix="/api/enforcement", tags=["enforcement"])
 class MarkSignedRequest(BaseModel):
     """Request to mark an enforcement action as signed."""
 
-    action_id: str = Field(
-        ..., min_length=1, description="UUID of the enforcement_action"
-    )
-    notes: Optional[str] = Field(
-        default=None, description="Optional notes about the signature"
-    )
-    signed_at: Optional[datetime] = Field(
-        default=None, description="When the document was signed"
-    )
+    action_id: str = Field(..., min_length=1, description="UUID of the enforcement_action")
+    notes: Optional[str] = Field(default=None, description="Optional notes about the signature")
+    signed_at: Optional[datetime] = Field(default=None, description="When the document was signed")
 
 
 class MarkSignedResponse(BaseModel):
@@ -48,9 +42,7 @@ class LogCallOutcomeRequest(BaseModel):
 
     plaintiff_id: str = Field(..., min_length=1)
     task_id: str = Field(..., min_length=1)
-    outcome: str = Field(
-        ..., description="reached|left_voicemail|no_answer|bad_number|do_not_call"
-    )
+    outcome: str = Field(..., description="reached|left_voicemail|no_answer|bad_number|do_not_call")
     interest: Optional[str] = Field(default="none", description="hot|warm|cold|none")
     notes: Optional[str] = Field(default=None)
     follow_up_at: Optional[datetime] = Field(default=None)
@@ -158,16 +150,12 @@ async def log_call_outcome(
                 "_outcome": body.outcome,
                 "_interest": body.interest or "none",
                 "_notes": body.notes,
-                "_follow_up_at": (
-                    body.follow_up_at.isoformat() if body.follow_up_at else None
-                ),
+                "_follow_up_at": (body.follow_up_at.isoformat() if body.follow_up_at else None),
             },
         ).execute()
 
         if result.data is None:
-            LOGGER.warning(
-                "log_call_outcome returned no data for task %s", body.task_id
-            )
+            LOGGER.warning("log_call_outcome returned no data for task %s", body.task_id)
 
         return LogCallOutcomeResponse(
             task_id=body.task_id,
@@ -229,9 +217,7 @@ async def create_enforcement_action(
     except HTTPException:
         raise
     except Exception as exc:
-        LOGGER.exception(
-            "Failed to create enforcement action for judgment %s", body.judgment_id
-        )
+        LOGGER.exception("Failed to create enforcement action for judgment %s", body.judgment_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create enforcement action: {exc}",
@@ -288,12 +274,7 @@ async def get_pipeline_status(
     client = _get_supabase_client_cached(env)
 
     try:
-        result = (
-            client.table("v_enforcement_pipeline_status")
-            .select("*")
-            .limit(limit)
-            .execute()
-        )
+        result = client.table("v_enforcement_pipeline_status").select("*").limit(limit).execute()
 
         rows = result.data or []
 

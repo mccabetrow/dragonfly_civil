@@ -41,8 +41,7 @@ class MockSupabaseClient:
         if self.role == "service_role":
             return True
         return any(
-            r in self.user_roles
-            for r in ["admin", "ops", "ceo", "enrichment_bot", "outreach_bot"]
+            r in self.user_roles for r in ["admin", "ops", "ceo", "enrichment_bot", "outreach_bot"]
         )
 
 
@@ -101,17 +100,13 @@ class TestOpsRoleRestrictions:
 
     def test_ops_can_read_judgments(self):
         """Ops users CAN read judgment data."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="ops-user-1", roles=["ops"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="ops-user-1", roles=["ops"])
 
         assert client._can_read()
 
     def test_ops_can_update_operational_fields(self):
         """Ops users CAN update operational fields via RPC."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="ops-user-1", roles=["ops"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="ops-user-1", roles=["ops"])
 
         # ops_update_judgment RPC allows: enforcement_stage, priority_level
         assert client._has_role("ops")
@@ -131,9 +126,7 @@ class TestOpsRoleRestrictions:
 
     def test_ops_cannot_delete_judgments(self):
         """Ops users CANNOT delete judgment records."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="ops-user-1", roles=["ops"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="ops-user-1", roles=["ops"])
 
         # DELETE policy only allows admin or service_role
         assert not client._has_role("admin")
@@ -200,26 +193,20 @@ class TestCeoRoleRestrictions:
 
     def test_ceo_can_read_all_data(self):
         """CEO CAN read all financial and case data."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="ceo-user", roles=["ceo"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="ceo-user", roles=["ceo"])
 
         assert client._can_read()
 
     def test_ceo_cannot_update_operational_fields(self):
         """CEO CANNOT update operational fields."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="ceo-user", roles=["ceo"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="ceo-user", roles=["ceo"])
 
         # CEO doesn't have ops role
         assert not client._has_role("ops")
 
     def test_ceo_cannot_update_judgments(self):
         """CEO CANNOT update judgment records."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="ceo-user", roles=["ceo"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="ceo-user", roles=["ceo"])
 
         # No UPDATE policy for ceo role
         assert not client._has_role("ops")
@@ -227,9 +214,7 @@ class TestCeoRoleRestrictions:
 
     def test_ceo_cannot_delete_anything(self):
         """CEO CANNOT delete any records."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="ceo-user", roles=["ceo"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="ceo-user", roles=["ceo"])
 
         # DELETE only allowed for admin/service_role
         assert not client._has_role("admin")
@@ -241,18 +226,14 @@ class TestAdminRoleAccess:
 
     def test_admin_can_read_all(self):
         """Admin CAN read all data."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="admin-user", roles=["admin"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="admin-user", roles=["admin"])
 
         assert client._can_read()
         assert client._has_role("admin")
 
     def test_admin_can_update_all(self):
         """Admin CAN update any fields."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="admin-user", roles=["admin"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="admin-user", roles=["admin"])
 
         # Admin role grants all other roles implicitly
         assert client._has_role("ops")
@@ -262,9 +243,7 @@ class TestAdminRoleAccess:
 
     def test_admin_can_delete(self):
         """Admin CAN delete records."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="admin-user", roles=["admin"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="admin-user", roles=["admin"])
 
         assert client._has_role("admin")
 
@@ -299,9 +278,7 @@ class TestRoleMappingTable:
 
     def test_non_admin_cannot_modify_roles(self):
         """Non-admin users CANNOT modify role mappings."""
-        client = MockSupabaseClient(
-            role="authenticated", user_id="regular-user", roles=["ops"]
-        )
+        client = MockSupabaseClient(role="authenticated", user_id="regular-user", roles=["ops"])
 
         # Only admin can modify role mappings
         assert not client._has_role("admin") or "admin" in client.user_roles
@@ -339,9 +316,7 @@ def create_test_role_mapping(supabase_admin, user_id: str, role: str):
 def cleanup_test_role_mappings(supabase_admin, user_ids: list):
     """Helper to clean up test role mappings."""
     for user_id in user_ids:
-        supabase_admin.table("dragonfly_role_mappings").delete().eq(
-            "user_id", user_id
-        ).execute()
+        supabase_admin.table("dragonfly_role_mappings").delete().eq("user_id", user_id).execute()
 
 
 if __name__ == "__main__":

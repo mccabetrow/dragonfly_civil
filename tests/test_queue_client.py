@@ -28,7 +28,9 @@ def make_http_error(status_code: int, path: str) -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError(f"{status_code} error", request=request, response=response)
 
 
-def build_response(*, status_code: int = 200, json_data=None, content: bytes = b"", error: Exception | None = None):
+def build_response(
+    *, status_code: int = 200, json_data=None, content: bytes = b"", error: Exception | None = None
+):
     class DummyResponse:
         def __init__(self) -> None:
             self.status_code = status_code

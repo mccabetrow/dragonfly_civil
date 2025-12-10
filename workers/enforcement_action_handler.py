@@ -276,9 +276,7 @@ async def handle_enforcement_action(job: Dict[str, Any]) -> bool:
             .execute()
         )
 
-        existing_action_types = {
-            row.get("action_type") for row in (existing_response.data or [])
-        }
+        existing_action_types = {row.get("action_type") for row in (existing_response.data or [])}
 
         if existing_action_types:
             logger.info(

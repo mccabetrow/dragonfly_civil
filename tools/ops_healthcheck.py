@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Operations healthcheck helpers for daily monitoring runs."""
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Mapping, cast
-import json
 
 import click
 import psycopg
@@ -107,16 +107,13 @@ class OpsHealthcheck:
             "WHERE c.id IS NULL "
             "ORDER BY p.created_at DESC LIMIT %(limit)s"
         )
-        return self._run_check(
-            "plaintiffs_missing_contacts", count_sql, sample_sql, params
-        )
+        return self._run_check("plaintiffs_missing_contacts", count_sql, sample_sql, params)
 
     def _cases_missing_judgments(self) -> CheckResult:
         status_params = self._dismissed_status_params()
         status_placeholders = ", ".join(f"%({key})s" for key in status_params)
         case_filter = (
-            "COALESCE(NULLIF(lower(ec.status), ''), 'active') NOT IN ("
-            f"{status_placeholders})"
+            "COALESCE(NULLIF(lower(ec.status), ''), 'active') NOT IN (" f"{status_placeholders})"
         )
         count_sql = (
             "SELECT COUNT(*) FROM public.enforcement_cases ec "
@@ -137,8 +134,7 @@ class OpsHealthcheck:
         status_params = self._dismissed_status_params()
         status_placeholders = ", ".join(f"%({key})s" for key in status_params)
         case_filter = (
-            "COALESCE(NULLIF(lower(ec.status), ''), 'active') NOT IN ("
-            f"{status_placeholders})"
+            "COALESCE(NULLIF(lower(ec.status), ''), 'active') NOT IN (" f"{status_placeholders})"
         )
         count_sql = (
             "SELECT COUNT(*) FROM public.enforcement_cases ec "
@@ -176,9 +172,7 @@ class OpsHealthcheck:
             row = cur.fetchone()
             return int(row[0]) if row else 0
 
-    def _fetch_rows(
-        self, sql: str, params: Mapping[str, Any]
-    ) -> list[Mapping[str, Any]]:
+    def _fetch_rows(self, sql: str, params: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(cast(Query, sql), params)
             rows = cur.fetchall()
@@ -189,8 +183,7 @@ class OpsHealthcheck:
 
     def _dismissed_status_params(self) -> Dict[str, Any]:
         return {
-            f"status_{idx}": status
-            for idx, status in enumerate(sorted(DISMISSED_CASE_STATUSES))
+            f"status_{idx}": status for idx, status in enumerate(sorted(DISMISSED_CASE_STATUSES))
         }
 
 
@@ -226,9 +219,7 @@ def _print_report(report: Dict[str, CheckResult]) -> None:
     default=None,
     help="Optional Supabase environment override.",
 )
-@click.option(
-    "--sample-limit", default=DEFAULT_SAMPLE_LIMIT, show_default=True, type=int
-)
+@click.option("--sample-limit", default=DEFAULT_SAMPLE_LIMIT, show_default=True, type=int)
 @click.option(
     "--stuck-task-days",
     default=DEFAULT_STUCK_TASK_DAYS,

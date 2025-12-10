@@ -12,6 +12,7 @@ from src.supabase_client import create_supabase_client
 
 _LOG = logging.getLogger(__name__)
 
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -43,7 +44,11 @@ def _upsert_run(payload: dict[str, Any]) -> None:
     except Exception as exc:  # pragma: no cover - telemetry must be best-effort
         _LOG.warning("Failed to persist run telemetry: %s", exc)
         if "406" in str(exc) or "PGRST106" in str(exc):
-            _LOG.debug("Supabase responded 406 when calling /rest/v1/runs; payload=%s", payload, exc_info=True)
+            _LOG.debug(
+                "Supabase responded 406 when calling /rest/v1/runs; payload=%s",
+                payload,
+                exc_info=True,
+            )
         else:
             _LOG.debug("Run telemetry payload skipped: %s", payload, exc_info=True)
 
@@ -55,7 +60,11 @@ def _insert_event(payload: dict[str, Any]) -> None:
     except Exception as exc:  # pragma: no cover - telemetry must be best-effort
         _LOG.warning("Failed to persist run event telemetry: %s", exc)
         if "406" in str(exc) or "PGRST106" in str(exc):
-            _LOG.debug("Supabase responded 406 when calling /rest/v1/events; payload=%s", payload, exc_info=True)
+            _LOG.debug(
+                "Supabase responded 406 when calling /rest/v1/events; payload=%s",
+                payload,
+                exc_info=True,
+            )
         else:
             _LOG.debug("Run event payload skipped: %s", payload, exc_info=True)
 

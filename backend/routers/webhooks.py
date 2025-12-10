@@ -102,9 +102,7 @@ def verify_proof_signature(
         True if signature is valid or verification is disabled
     """
     if not secret:
-        logger.warning(
-            "PROOF_WEBHOOK_SECRET not configured - skipping signature verification"
-        )
+        logger.warning("PROOF_WEBHOOK_SECRET not configured - skipping signature verification")
         return True
 
     if not signature:
@@ -159,9 +157,7 @@ async def proof_webhook(
     webhook_secret = os.getenv("PROOF_WEBHOOK_SECRET")
 
     # Verify signature
-    if not verify_proof_signature(
-        body, x_proof_signature, x_proof_timestamp, webhook_secret
-    ):
+    if not verify_proof_signature(body, x_proof_signature, x_proof_timestamp, webhook_secret):
         logger.error("Invalid Proof.com webhook signature")
         raise HTTPException(status_code=401, detail="Invalid signature")
 

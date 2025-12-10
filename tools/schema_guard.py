@@ -47,10 +47,7 @@ class SchemaDiff:
 
     def is_clean(self) -> bool:
         return not (
-            self.missing_relations
-            or self.extra_relations
-            or self.missing_rpcs
-            or self.extra_rpcs
+            self.missing_relations or self.extra_relations or self.missing_rpcs or self.extra_rpcs
         )
 
 
@@ -115,9 +112,7 @@ def normalize_freeze(raw: Mapping[str, object]) -> SchemaCatalog:
             continue
         bucket = _empty_schema_bucket()
         for category in RELATION_CATEGORIES:
-            names = (
-                categories.get(category, []) if isinstance(categories, Mapping) else []
-            )
+            names = categories.get(category, []) if isinstance(categories, Mapping) else []
             if isinstance(names, Sequence):
                 bucket[category] = _normalize_names(names)
         schemas[schema_name] = bucket
@@ -127,11 +122,7 @@ def normalize_freeze(raw: Mapping[str, object]) -> SchemaCatalog:
     if isinstance(rpcs_raw, Mapping):
         for schema_name, names in rpcs_raw.items():
             if isinstance(schema_name, str) and isinstance(names, Sequence):
-                filtered = {
-                    value
-                    for value in _normalize_names(names)
-                    if is_trackable_rpc(value)
-                }
+                filtered = {value for value in _normalize_names(names) if is_trackable_rpc(value)}
                 rpcs[schema_name] = filtered
 
     return SchemaCatalog(schemas=schemas, rpcs=rpcs)
@@ -196,8 +187,7 @@ def catalog_to_snapshot(catalog: SchemaCatalog) -> dict[str, object]:
     return {
         "schemas": {
             schema: {
-                category: sorted(bucket.get(category, set()))
-                for category in RELATION_CATEGORIES
+                category: sorted(bucket.get(category, set())) for category in RELATION_CATEGORIES
             }
             for schema, bucket in catalog.schemas.items()
         },
@@ -206,9 +196,7 @@ def catalog_to_snapshot(catalog: SchemaCatalog) -> dict[str, object]:
 
 
 def compute_snapshot_hash(snapshot: Mapping[str, object]) -> str:
-    return hashlib.sha256(
-        json.dumps(snapshot, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def diff_catalog(expected: SchemaCatalog, actual: SchemaCatalog) -> SchemaDiff:
@@ -223,12 +211,10 @@ def diff_catalog(expected: SchemaCatalog, actual: SchemaCatalog) -> SchemaDiff:
             expected_names = expected_bucket.get(category, set())
             actual_names = actual_bucket.get(category, set())
             missing_relations.extend(
-                f"{schema}.{name} ({category})"
-                for name in sorted(expected_names - actual_names)
+                f"{schema}.{name} ({category})" for name in sorted(expected_names - actual_names)
             )
             extra_relations.extend(
-                f"{schema}.{name} ({category})"
-                for name in sorted(actual_names - expected_names)
+                f"{schema}.{name} ({category})" for name in sorted(actual_names - expected_names)
             )
 
     missing_rpcs: list[str] = []
@@ -238,15 +224,9 @@ def diff_catalog(expected: SchemaCatalog, actual: SchemaCatalog) -> SchemaDiff:
         expected_names = {
             name for name in expected.rpcs.get(schema, set()) if is_trackable_rpc(name)
         }
-        actual_names = {
-            name for name in actual.rpcs.get(schema, set()) if is_trackable_rpc(name)
-        }
-        missing_rpcs.extend(
-            f"{schema}.{name}" for name in sorted(expected_names - actual_names)
-        )
-        extra_rpcs.extend(
-            f"{schema}.{name}" for name in sorted(actual_names - expected_names)
-        )
+        actual_names = {name for name in actual.rpcs.get(schema, set()) if is_trackable_rpc(name)}
+        missing_rpcs.extend(f"{schema}.{name}" for name in sorted(expected_names - actual_names))
+        extra_rpcs.extend(f"{schema}.{name}" for name in sorted(actual_names - expected_names))
 
     return SchemaDiff(
         missing_relations=missing_relations,

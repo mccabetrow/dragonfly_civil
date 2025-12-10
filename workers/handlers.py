@@ -72,9 +72,7 @@ def extract_template_code(job: Dict[str, Any]) -> Optional[str]:
 
 def update_case_status(case_number: str, status: str) -> None:
     client = _get_supabase_client()
-    client.table("judgments").update({"status": status}).eq(
-        "case_number", case_number
-    ).execute()
+    client.table("judgments").update({"status": status}).eq("case_number", case_number).execute()
 
 
 async def handle_enrich(job: Dict[str, Any]) -> bool:

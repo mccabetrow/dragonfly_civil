@@ -21,7 +21,7 @@ Queue Kind: call_queue_sync
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from src.supabase_client import create_supabase_client
@@ -95,9 +95,7 @@ def fetch_plaintiffs_needing_calls(client) -> List[Dict[str, Any]]:
         .execute()
     )
 
-    plaintiffs_with_tasks = {
-        row["plaintiff_id"] for row in (existing_response.data or [])
-    }
+    plaintiffs_with_tasks = {row["plaintiff_id"] for row in (existing_response.data or [])}
 
     # Then, get active plaintiffs who may need call tasks
     # Status values that warrant outreach calls
@@ -135,10 +133,7 @@ def fetch_plaintiffs_needing_calls(client) -> List[Dict[str, Any]]:
 def fetch_single_plaintiff(client, plaintiff_id: str) -> Optional[Dict[str, Any]]:
     """Fetch a single plaintiff by ID."""
     response = (
-        client.table("plaintiffs")
-        .select("id, name, status")
-        .eq("id", plaintiff_id)
-        .execute()
+        client.table("plaintiffs").select("id, name, status").eq("id", plaintiff_id).execute()
     )
 
     if not response.data:
@@ -166,9 +161,7 @@ def upsert_call_task(
     if due_at is None:
         # Default to tomorrow at 9 AM
         tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
-        due_at = tomorrow.replace(
-            hour=14, minute=0, second=0, microsecond=0
-        )  # 9 AM EST = 14 UTC
+        due_at = tomorrow.replace(hour=14, minute=0, second=0, microsecond=0)  # 9 AM EST = 14 UTC
 
     rpc_params = {
         "p_plaintiff_id": plaintiff_id,
@@ -180,11 +173,7 @@ def upsert_call_task(
 
     try:
         response = client.rpc("upsert_plaintiff_task", rpc_params).execute()
-        return (
-            response.data
-            if response.data
-            else {"success": False, "error": "empty_response"}
-        )
+        return response.data if response.data else {"success": False, "error": "empty_response"}
     except Exception as e:
         logger.error(
             "upsert_call_task_rpc_failed plaintiff_id=%s error=%s",

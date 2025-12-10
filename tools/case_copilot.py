@@ -40,9 +40,7 @@ def summarize_case(
 @app.command("summarize")
 def summarize_command(
     case_id: UUID = typer.Option(..., "--case-id", help="Enforcement case UUID"),
-    env: str | None = typer.Option(
-        None, "--env", help="Override Supabase env (dev/prod)."
-    ),
+    env: str | None = typer.Option(None, "--env", help="Override Supabase env (dev/prod)."),
     model: str = typer.Option(
         DEFAULT_CASE_COPILOT_MODEL,
         "--model",
@@ -63,16 +61,10 @@ def summarize_command(
                     "enforcement_suggestions": [
                         s.to_payload() for s in result.enforcement_suggestions
                     ],
-                    "draft_documents": [
-                        doc.to_payload() for doc in result.draft_documents
-                    ],
+                    "draft_documents": [doc.to_payload() for doc in result.draft_documents],
                     "risk": result.risk.to_payload(),
-                    "timeline_analysis": [
-                        ti.to_payload() for ti in result.timeline_analysis
-                    ],
-                    "contact_strategy": [
-                        cs.to_payload() for cs in result.contact_strategy
-                    ],
+                    "timeline_analysis": [ti.to_payload() for ti in result.timeline_analysis],
+                    "contact_strategy": [cs.to_payload() for cs in result.contact_strategy],
                     "model": result.model,
                 },
                 indent=2,

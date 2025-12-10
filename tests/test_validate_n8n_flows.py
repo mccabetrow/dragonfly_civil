@@ -15,9 +15,7 @@ def test_detects_missing_rpc(tmp_path):
     missing = [ref for ref, exists in findings if not exists]
 
     assert any(ref.name == "missing_rpc" for ref in missing)
-    assert any(
-        ref.normalized_name == "demo_table" and exists for ref, exists in findings
-    )
+    assert any(ref.normalized_name == "demo_table" and exists for ref, exists in findings)
 
 
 def test_public_schema_relations_normalize_to_table_name():

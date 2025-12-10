@@ -61,7 +61,9 @@ def test_reuse_session_fast(isolated_session_path: Path, monkeypatch: pytest.Mon
 
 
 @pytest.mark.skipif(SKIP_DESTRUCTIVE, reason="Skipping destructive auth tests per environment flag")
-def test_validate_session_refresh(isolated_session_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_session_refresh(
+    isolated_session_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     stale_cookies: List[dict] = [
         {"name": "JSESSIONID", "value": "stale", "domain": "example.com", "path": "/"},
     ]
@@ -83,7 +85,9 @@ def test_validate_session_refresh(isolated_session_path: Path, monkeypatch: pyte
         {"name": "JSESSIONID", "value": "fresh", "domain": "example.com", "path": "/"},
     ]
 
-    with mock.patch("etl.src.auth.login.run_login", return_value=refreshed_cookies) as run_login_mock:
+    with mock.patch(
+        "etl.src.auth.login.run_login", return_value=refreshed_cookies
+    ) as run_login_mock:
         cookies = session_manager.ensure_session(refresh_if_invalid=True)
 
     assert cookies == refreshed_cookies

@@ -391,9 +391,7 @@ def ingest_judgments(config: IngestConfig) -> IngestSummary:
         logger.warning("No valid records to insert")
         return summary
 
-    logger.info(
-        "Transformed %d valid records (%d warnings)", len(records), summary.warnings
-    )
+    logger.info("Transformed %d valid records (%d warnings)", len(records), summary.warnings)
 
     # --- Connect to Supabase ---
     if not config.dry_run:

@@ -100,9 +100,7 @@ def smoke_test() -> int:
     logger.info("-" * 40)
     test_plaintiff_id = None
     try:
-        response = (
-            client.table("plaintiffs").select("id, name, status").limit(1).execute()
-        )
+        response = client.table("plaintiffs").select("id, name, status").limit(1).execute()
         if response.data:
             test_plaintiff_id = response.data[0]["id"]
             logger.info(
@@ -207,9 +205,9 @@ def smoke_test() -> int:
     logger.info("-" * 40)
     try:
         from workers.call_queue_sync_handler import (
+            fetch_plaintiffs_needing_calls,
             handle_call_queue_sync,
             sync_all_call_tasks,
-            fetch_plaintiffs_needing_calls,
             upsert_call_task,
         )
 
@@ -217,9 +215,7 @@ def smoke_test() -> int:
 
         # Quick test of fetch function
         plaintiffs = fetch_plaintiffs_needing_calls(client)
-        logger.info(
-            "✓ fetch_plaintiffs_needing_calls returned %d plaintiffs", len(plaintiffs)
-        )
+        logger.info("✓ fetch_plaintiffs_needing_calls returned %d plaintiffs", len(plaintiffs))
 
     except Exception as e:
         logger.error("✗ Handler import failed: %s", e)

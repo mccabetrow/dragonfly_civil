@@ -19,14 +19,15 @@ except ImportError:  # pragma: no cover
     class InvalidToken(Exception):
         """Fallback InvalidToken definition when cryptography is unavailable."""
 
+
 from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
 
 from etl.src.alerts.discord import post_simple as post_to_discord
 from etl.src.auth.login import run_login
-from etl.src.telemetry.auth import record_auth_event
 from etl.src.settings import get_settings as get_etl_settings
-from src.settings import ensure_parent_dir, get_settings as get_app_settings
-
+from etl.src.telemetry.auth import record_auth_event
+from src.settings import ensure_parent_dir
+from src.settings import get_settings as get_app_settings
 
 log = logging.getLogger(__name__)
 logger = log
@@ -98,6 +99,7 @@ def _normalise_session_payload(raw: Any) -> Dict[str, Any]:
     meta.setdefault("saved_at", int(time.time()))
     payload["meta"] = meta
     return payload
+
 
 CB_MAX_FAILURES = 3
 CB_WINDOW_SEC = 600
@@ -190,7 +192,9 @@ def _encrypt_bytes(data: bytes) -> bytes:
     key = _kms_key()
     if key:
         if Fernet is None:
-            log.error("SESSION_KMS_KEY provided but cryptography is not installed; storing plaintext")
+            log.error(
+                "SESSION_KMS_KEY provided but cryptography is not installed; storing plaintext"
+            )
             return data
         try:
             return Fernet(key.encode("utf-8")).encrypt(data)
@@ -217,7 +221,9 @@ def _decrypt_bytes(data: bytes) -> bytes:
     key = _kms_key()
     if key:
         if Fernet is None:
-            log.error("SESSION_KMS_KEY provided but cryptography is not installed; returning raw bytes")
+            log.error(
+                "SESSION_KMS_KEY provided but cryptography is not installed; returning raw bytes"
+            )
             return data
         try:
             return Fernet(key.encode("utf-8")).decrypt(data)
@@ -266,7 +272,9 @@ def _check_session_file_permissions(path: Path) -> None:
         log.debug("Skipping session file permission check on Windows hosts.")
 
 
-def load_session(path_override: Optional[os.PathLike[str] | str] = None) -> Optional[Dict[str, Any]]:
+def load_session(
+    path_override: Optional[os.PathLike[str] | str] = None,
+) -> Optional[Dict[str, Any]]:
     """Load and decrypt cached session payload, returning None when unavailable."""
     path = _session_path(path_override)
     _check_session_file_permissions(path)
@@ -410,7 +418,9 @@ async def validate_session(
             reason = f"redirect_or_status_{status}"
             raise SessionValidationError(reason)
 
-        selector = getattr(settings, "post_login_selector", getattr(settings, "POST_LOGIN_SELECTOR", None))
+        selector = getattr(
+            settings, "post_login_selector", getattr(settings, "POST_LOGIN_SELECTOR", None)
+        )
         selector_present = False
         if selector:
             try:
@@ -436,7 +446,9 @@ async def validate_session(
         raise SessionValidationError(reason) from exc
     finally:
         latency_ms = int((time.monotonic() - start) * 1000)
-        record_auth_event("validate", ok=is_valid, latency_ms=latency_ms, reason=reason, run_id=run_id)
+        record_auth_event(
+            "validate", ok=is_valid, latency_ms=latency_ms, reason=reason, run_id=run_id
+        )
         if page is not None:
             try:
                 await page.close()
@@ -452,9 +464,7 @@ def _check_circuit_breaker() -> None:
     try:
         now = time.time()
         timestamps = [
-            float(line.strip())
-            for line in cb_path.read_text().splitlines()
-            if line.strip()
+            float(line.strip()) for line in cb_path.read_text().splitlines() if line.strip()
         ]
         recent = [stamp for stamp in timestamps if now - stamp < CB_WINDOW_SEC]
         if len(recent) >= CB_MAX_FAILURES:
@@ -558,7 +568,9 @@ async def ensure_session_async(
         log.error("Session refresh failed: %s", exc, exc_info=True)
         _record_circuit_breaker_failure()
         latency_ms = int((time.monotonic() - start) * 1000)
-        record_auth_event("refresh", ok=False, latency_ms=latency_ms, reason=str(exc), run_id=run_id)
+        record_auth_event(
+            "refresh", ok=False, latency_ms=latency_ms, reason=str(exc), run_id=run_id
+        )
         hostname = os.environ.get("HOSTNAME", socket.gethostname())
         post_to_discord(
             f"AUTH refresh failed on host {hostname}: {exc}",

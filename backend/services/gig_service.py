@@ -239,16 +239,12 @@ async def detect_gig_activity(judgment_id: int) -> list[GigDetection]:
     # Scan each field
     all_detections: list[GigDetection] = []
 
-    all_detections.extend(
-        match_text_against_platforms(employer_name, platforms, "employer_name")
-    )
+    all_detections.extend(match_text_against_platforms(employer_name, platforms, "employer_name"))
     all_detections.extend(
         match_text_against_platforms(employer_address, platforms, "employer_address")
     )
     all_detections.extend(match_text_against_platforms(notes, platforms, "notes"))
-    all_detections.extend(
-        match_text_against_platforms(bank_name, platforms, "bank_name")
-    )
+    all_detections.extend(match_text_against_platforms(bank_name, platforms, "bank_name"))
 
     # Deduplicate by platform
     seen_platforms: set[int] = set()
@@ -258,9 +254,7 @@ async def detect_gig_activity(judgment_id: int) -> list[GigDetection]:
             seen_platforms.add(detection.platform.id)
             unique_detections.append(detection)
 
-    logger.info(
-        f"Judgment {judgment_id}: detected {len(unique_detections)} gig platforms"
-    )
+    logger.info(f"Judgment {judgment_id}: detected {len(unique_detections)} gig platforms")
     return unique_detections
 
 
@@ -318,9 +312,7 @@ async def detect_gig_activity_for_plaintiff(
     # Scan each field
     all_detections: list[GigDetection] = []
 
-    all_detections.extend(
-        match_text_against_platforms(employer_name, platforms, "employer_name")
-    )
+    all_detections.extend(match_text_against_platforms(employer_name, platforms, "employer_name"))
     all_detections.extend(match_text_against_platforms(notes, platforms, "notes"))
 
     # Deduplicate by platform
@@ -331,9 +323,7 @@ async def detect_gig_activity_for_plaintiff(
             seen_platforms.add(detection.platform.id)
             unique_detections.append(detection)
 
-    logger.info(
-        f"Plaintiff {plaintiff_id}: detected {len(unique_detections)} gig platforms"
-    )
+    logger.info(f"Plaintiff {plaintiff_id}: detected {len(unique_detections)} gig platforms")
     return unique_detections
 
 
@@ -423,11 +413,7 @@ async def generate_gig_subpoena(
         GigServiceError: If generation fails
     """
     # Import here to avoid circular imports
-    from backend.services.packet_service import (
-        PacketError,
-        generate_packet,
-        load_judgment_context,
-    )
+    from backend.services.packet_service import PacketError, generate_packet, load_judgment_context
 
     # Find the platform
     platforms = await load_gig_platforms()
@@ -516,9 +502,7 @@ async def dispatch_gig_subpoena(
         raise GigServiceError("Proof.com integration not configured")
 
     try:
-        result = await client.create_serve_job(
-            case_details=case_details, document_url=document_url
-        )
+        result = await client.create_serve_job(case_details=case_details, document_url=document_url)
     except ProofServiceError as e:
         raise GigServiceError(f"Failed to dispatch subpoena: {e}") from e
 
@@ -560,9 +544,7 @@ async def process_judgment_for_gig_garnishment(judgment_id: int) -> list[dict]:
     for detection in detections:
         try:
             # Log the detection
-            detection_id = await log_gig_detection(
-                detection=detection, judgment_id=judgment_id
-            )
+            detection_id = await log_gig_detection(detection=detection, judgment_id=judgment_id)
 
             # Generate subpoena
             subpoena_result = await generate_gig_subpoena(

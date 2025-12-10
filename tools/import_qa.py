@@ -167,9 +167,7 @@ def _cohort_params(config: ImportQAConfig, batch_name: str) -> Dict[str, Any]:
     }
 
 
-def _fetch_duplicates(
-    conn: psycopg.Connection, params: Dict[str, Any]
-) -> List[Dict[str, Any]]:
+def _fetch_duplicates(conn: psycopg.Connection, params: Dict[str, Any]) -> List[Dict[str, Any]]:
     with conn.cursor() as cur:
         cur.execute(_DUPLICATE_SQL, params)
         rows = cur.fetchall()
@@ -208,23 +206,15 @@ def _collect_metrics(
     }
     plaintiff_counts.update(
         {
-            "missing_phone_pct": _pct(
-                plaintiff_counts["missing_phone"], total_plaintiffs
-            ),
-            "missing_email_pct": _pct(
-                plaintiff_counts["missing_email"], total_plaintiffs
-            ),
-            "missing_both_pct": _pct(
-                plaintiff_counts["missing_both"], total_plaintiffs
-            ),
+            "missing_phone_pct": _pct(plaintiff_counts["missing_phone"], total_plaintiffs),
+            "missing_email_pct": _pct(plaintiff_counts["missing_email"], total_plaintiffs),
+            "missing_both_pct": _pct(plaintiff_counts["missing_both"], total_plaintiffs),
         }
     )
     judgment_counts = {
         "total": total_judgments,
         "non_positive": base.get("non_positive_judgments", 0),
-        "non_positive_pct": _pct(
-            base.get("non_positive_judgments", 0), total_judgments
-        ),
+        "non_positive_pct": _pct(base.get("non_positive_judgments", 0), total_judgments),
     }
     task_counts = {
         "without_tasks": base.get("plaintiffs_without_tasks", 0),
@@ -234,9 +224,7 @@ def _collect_metrics(
     task_counts.update(
         {
             "without_tasks_pct": _pct(task_counts["without_tasks"], total_plaintiffs),
-            "multi_open_calls_pct": _pct(
-                task_counts["multi_open_calls"], total_plaintiffs
-            ),
+            "multi_open_calls_pct": _pct(task_counts["multi_open_calls"], total_plaintiffs),
         }
     )
     return {
@@ -356,9 +344,7 @@ def check_simplicity_batch(
     env: SupabaseEnv | None = None,
     attach_metadata: bool = False,
 ) -> Dict[str, Any]:
-    return _run_import_qa(
-        batch_name, SIMPLICITY_CONFIG, env=env, attach_metadata=attach_metadata
-    )
+    return _run_import_qa(batch_name, SIMPLICITY_CONFIG, env=env, attach_metadata=attach_metadata)
 
 
 def check_jbi_900_batch(
@@ -367,9 +353,7 @@ def check_jbi_900_batch(
     env: SupabaseEnv | None = None,
     attach_metadata: bool = False,
 ) -> Dict[str, Any]:
-    return _run_import_qa(
-        batch_name, JBI_CONFIG, env=env, attach_metadata=attach_metadata
-    )
+    return _run_import_qa(batch_name, JBI_CONFIG, env=env, attach_metadata=attach_metadata)
 
 
 def _emit(metrics: Dict[str, Any], json_output: bool) -> None:
@@ -381,18 +365,12 @@ def _emit(metrics: Dict[str, Any], json_output: bool) -> None:
 
 @app.command("simplicity")
 def cli_simplicity(
-    batch_name: str = typer.Argument(
-        ..., help="Batch label recorded in import_runs metadata"
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Emit JSON instead of text summary"
-    ),
+    batch_name: str = typer.Argument(..., help="Batch label recorded in import_runs metadata"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text summary"),
     attach: bool = typer.Option(
         False, "--attach", help="Persist QA metrics back to import_runs.metadata"
     ),
-    env: SupabaseEnv | None = typer.Option(
-        None, "--env", help="Override SUPABASE_MODE"
-    ),
+    env: SupabaseEnv | None = typer.Option(None, "--env", help="Override SUPABASE_MODE"),
 ) -> None:
     metrics = check_simplicity_batch(batch_name, env=env, attach_metadata=attach)
     _emit(metrics, json_output)
@@ -400,18 +378,12 @@ def cli_simplicity(
 
 @app.command("jbi900")
 def cli_jbi(
-    batch_name: str = typer.Argument(
-        ..., help="Batch label recorded in import_runs metadata"
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Emit JSON instead of text summary"
-    ),
+    batch_name: str = typer.Argument(..., help="Batch label recorded in import_runs metadata"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text summary"),
     attach: bool = typer.Option(
         False, "--attach", help="Persist QA metrics back to import_runs.metadata"
     ),
-    env: SupabaseEnv | None = typer.Option(
-        None, "--env", help="Override SUPABASE_MODE"
-    ),
+    env: SupabaseEnv | None = typer.Option(None, "--env", help="Override SUPABASE_MODE"),
 ) -> None:
     metrics = check_jbi_900_batch(batch_name, env=env, attach_metadata=attach)
     _emit(metrics, json_output)

@@ -63,9 +63,7 @@ class PlannerConfig:
     tier_targets: Dict[str, int] = field(default_factory=dict)
     enable_followups: Optional[bool] = None
     followup_threshold_days: int = 14
-    follow_up_note_template: str = (
-        "Follow-up auto-scheduled after {days} days without new status"
-    )
+    follow_up_note_template: str = "Follow-up auto-scheduled after {days} days without new status"
     research_note_template: str = "Research task queued because status is {status}"
     call_note_template: str = "Auto-call scheduled to keep tier {tier} fresh"
     research_statuses: tuple[str, ...] = ("qualified", "sent_agreement", "signed")
@@ -112,9 +110,7 @@ def merge_config(base: PlannerConfig, overrides: Mapping[str, object]) -> Planne
             try:
                 tier_targets[normalize_tier(str(key))] = int(value)
             except (TypeError, ValueError):
-                logger.warning(
-                    "[task_planner] Ignoring invalid tier target override for %s", key
-                )
+                logger.warning("[task_planner] Ignoring invalid tier target override for %s", key)
 
     assignment_overrides = dict(base.assignment_overrides)
     raw_assign = overrides.get("assignment_overrides")
@@ -127,13 +123,9 @@ def merge_config(base: PlannerConfig, overrides: Mapping[str, object]) -> Planne
 
     research_statuses = base.research_statuses
     raw_statuses = overrides.get("research_statuses")
-    if isinstance(raw_statuses, Sequence) and not isinstance(
-        raw_statuses, (str, bytes)
-    ):
+    if isinstance(raw_statuses, Sequence) and not isinstance(raw_statuses, (str, bytes)):
         research_statuses = tuple(
-            str(status).strip().lower()
-            for status in raw_statuses
-            if str(status).strip()
+            str(status).strip().lower() for status in raw_statuses if str(status).strip()
         )
 
     return replace(
@@ -149,9 +141,7 @@ def merge_config(base: PlannerConfig, overrides: Mapping[str, object]) -> Planne
             else base.enable_followups
         ),
         followup_threshold_days=_coerce_int(
-            overrides.get(
-                "followup_threshold_days", overrides.get("stale_contact_days")
-            ),
+            overrides.get("followup_threshold_days", overrides.get("stale_contact_days")),
             base.followup_threshold_days,
         ),
         follow_up_note_template=str(
@@ -163,17 +153,13 @@ def merge_config(base: PlannerConfig, overrides: Mapping[str, object]) -> Planne
             or base.research_note_template
         ),
         call_note_template=str(
-            overrides.get("call_note_template", base.call_note_template)
-            or base.call_note_template
+            overrides.get("call_note_template", base.call_note_template) or base.call_note_template
         ),
         research_statuses=research_statuses,
         default_assignee=str(
-            overrides.get("default_assignee", base.default_assignee)
-            or base.default_assignee
+            overrides.get("default_assignee", base.default_assignee) or base.default_assignee
         ),
-        max_candidates=_coerce_int(
-            overrides.get("max_candidates"), base.max_candidates
-        ),
+        max_candidates=_coerce_int(overrides.get("max_candidates"), base.max_candidates),
         backlog_warning_threshold=_coerce_int(
             overrides.get("backlog_warning_threshold"),
             base.backlog_warning_threshold,
@@ -411,17 +397,13 @@ class DatabaseTaskPlannerRepository(TaskPlannerRepository):
             for row in cur.fetchall():
                 raw_kinds = row[6]
                 if isinstance(raw_kinds, list):
-                    kinds = frozenset(
-                        str(item) for item in raw_kinds if isinstance(item, str)
-                    )
+                    kinds = frozenset(str(item) for item in raw_kinds if isinstance(item, str))
                 elif isinstance(raw_kinds, str):
                     try:
                         parsed = json.loads(raw_kinds)
                     except Exception:  # pragma: no cover - defensive parsing
                         parsed = []
-                    kinds = frozenset(
-                        str(item) for item in parsed if isinstance(item, str)
-                    )
+                    kinds = frozenset(str(item) for item in parsed if isinstance(item, str))
                 else:
                     kinds = frozenset()
                 snapshots.append(
@@ -533,9 +515,7 @@ class TaskPlanner:
         planned_tasks: list[PlannedTask] = []
 
         planned_tasks.extend(
-            self._plan_call_deficits(
-                candidates, tier_targets, tier_counts, planned_keys, now
-            )
+            self._plan_call_deficits(candidates, tier_targets, tier_counts, planned_keys, now)
         )
         if self._enable_followups_effective:
             planned_tasks.extend(self._plan_followups(candidates, planned_keys, now))
@@ -549,9 +529,7 @@ class TaskPlanner:
                     f"Tier '{tier}' still needs {deficit} open call tasks (target {target})."
                 )
 
-        backlog = self.repo.count_stale_open_call_tasks(
-            self.config.stale_task_warning_days
-        )
+        backlog = self.repo.count_stale_open_call_tasks(self.config.stale_task_warning_days)
         if backlog > self.config.backlog_warning_threshold:
             warnings.append(
                 f"{backlog} open call tasks are older than {self.config.stale_task_warning_days} days."
@@ -735,24 +713,18 @@ class TaskPlanner:
         delta = now - timestamp
         return delta.total_seconds() / 86400
 
-    def _apply_assignment_overrides(
-        self, warnings: list[str]
-    ) -> list[AssignmentResult]:
+    def _apply_assignment_overrides(self, warnings: list[str]) -> list[AssignmentResult]:
         if not self.config.assignment_overrides:
             return []
         if self.dry_run:
-            warnings.append(
-                "Assignment overrides configured but skipped during dry-run."
-            )
+            warnings.append("Assignment overrides configured but skipped during dry-run.")
             return []
         results: list[AssignmentResult] = []
         for source, target in self.config.assignment_overrides.items():
             if not source or not target or source == target:
                 continue
             updated = self.repo.reassign_open_tasks(source=source, target=target)
-            results.append(
-                AssignmentResult(source=source, target=target, updated=updated)
-            )
+            results.append(AssignmentResult(source=source, target=target, updated=updated))
         return results
 
 
@@ -773,9 +745,7 @@ def _parse_tier_overrides(values: Sequence[str]) -> Dict[str, int]:
         try:
             overrides[name_key] = int(raw_value)
         except ValueError as exc:  # pragma: no cover - click handles validation
-            raise click.BadParameter(
-                f"Invalid integer for tier target '{item}'."
-            ) from exc
+            raise click.BadParameter(f"Invalid integer for tier target '{item}'.") from exc
     return overrides
 
 
@@ -879,9 +849,7 @@ def run_command(
 ) -> None:
     env = requested_env or get_supabase_env()
     config = load_config(config_path)
-    tier_overrides = (
-        _parse_tier_overrides(tier_target_overrides) if tier_target_overrides else None
-    )
+    tier_overrides = _parse_tier_overrides(tier_target_overrides) if tier_target_overrides else None
     config = _apply_cli_overrides(
         config,
         tier_overrides=tier_overrides,
@@ -898,9 +866,7 @@ def run_command(
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s")
     cli(obj={})
 
 

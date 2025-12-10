@@ -12,13 +12,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, cast
 
 import pandas as pd
-from pandas import errors as pd_errors
 import psycopg2
-from psycopg2 import OperationalError
-from psycopg2.extras import Json
 import typer
 from dotenv import load_dotenv
 from loguru import logger
+from pandas import errors as pd_errors
+from psycopg2 import OperationalError
+from psycopg2.extras import Json
 from pydantic import BaseModel, Field, validator
 
 from . import transforms
@@ -129,7 +129,9 @@ def load_env() -> None:
 def get_pg_url() -> str:
     pg_url = os.getenv("PG_URL") or os.getenv("DATABASE_URL")
     if not pg_url:
-        raise typer.BadParameter("PG_URL (or DATABASE_URL) must be set in the environment or .env file")
+        raise typer.BadParameter(
+            "PG_URL (or DATABASE_URL) must be set in the environment or .env file"
+        )
     return pg_url
 
 
@@ -142,7 +144,7 @@ def get_conn(pg_url: str) -> psycopg2.extensions.connection:
             return conn
         except OperationalError as exc:
             last_exc = exc
-            wait_seconds = min(2 ** attempt, 10)
+            wait_seconds = min(2**attempt, 10)
             logger.warning(
                 "Database connection attempt %s/%s failed: %s — retrying in %ss",
                 attempt,
@@ -223,7 +225,9 @@ def _to_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
-def build_payloads(row: Mapping[str, Any], rules: Sequence[MappingRule]) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+def build_payloads(
+    row: Mapping[str, Any], rules: Sequence[MappingRule]
+) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     payloads: Dict[str, Dict[str, Any]] = defaultdict(dict)
     required_fields: Dict[str, List[str]] = defaultdict(list)
 
@@ -259,7 +263,11 @@ def prepare_case_payload(data: Dict[str, Any], run_id: Optional[str]) -> Dict[st
         "county": (data.get("county") or "").strip(),
         "state": (data.get("state") or "CA").strip().upper(),
         "case_type": data.get("case_type"),
-        "filing_date": data.get("filing_date") if isinstance(data.get("filing_date"), date) else transforms.to_date(str(data.get("filing_date", ""))),
+        "filing_date": (
+            data.get("filing_date")
+            if isinstance(data.get("filing_date"), date)
+            else transforms.to_date(str(data.get("filing_date", "")))
+        ),
         "case_status": data.get("case_status"),
         "case_url": data.get("case_url"),
         "metadata": data.get("metadata"),
@@ -268,20 +276,34 @@ def prepare_case_payload(data: Dict[str, Any], run_id: Optional[str]) -> Dict[st
     return payload
 
 
-def prepare_judgment_payload(data: Dict[str, Any], case_id: str, run_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def prepare_judgment_payload(
+    data: Dict[str, Any], case_id: str, run_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
     if not data:
         return None
     payload = {
         "case_id": case_id,
         "judgment_number": data.get("judgment_number"),
-        "judgment_date": data.get("judgment_date") if isinstance(data.get("judgment_date"), date) else transforms.to_date(str(data.get("judgment_date", ""))),
+        "judgment_date": (
+            data.get("judgment_date")
+            if isinstance(data.get("judgment_date"), date)
+            else transforms.to_date(str(data.get("judgment_date", "")))
+        ),
         "amount_awarded": _to_decimal(data.get("amount_awarded")),
         "amount_remaining": _to_decimal(data.get("amount_remaining")),
         "interest_rate": _to_decimal(data.get("interest_rate")),
         "judgment_type": data.get("judgment_type"),
         "judgment_status": data.get("judgment_status"),
-        "renewal_date": data.get("renewal_date") if isinstance(data.get("renewal_date"), date) else transforms.to_date(str(data.get("renewal_date", ""))),
-        "expiration_date": data.get("expiration_date") if isinstance(data.get("expiration_date"), date) else transforms.to_date(str(data.get("expiration_date", ""))),
+        "renewal_date": (
+            data.get("renewal_date")
+            if isinstance(data.get("renewal_date"), date)
+            else transforms.to_date(str(data.get("renewal_date", "")))
+        ),
+        "expiration_date": (
+            data.get("expiration_date")
+            if isinstance(data.get("expiration_date"), date)
+            else transforms.to_date(str(data.get("expiration_date", "")))
+        ),
         "notes": data.get("notes"),
         "metadata": data.get("metadata"),
         "ingestion_run_id": run_id,
@@ -289,7 +311,9 @@ def prepare_judgment_payload(data: Dict[str, Any], case_id: str, run_id: Optiona
     return payload
 
 
-def prepare_party_payload(data: Dict[str, Any], case_id: str, run_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def prepare_party_payload(
+    data: Dict[str, Any], case_id: str, run_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
     if not data:
         return None
     payload = {
@@ -317,7 +341,9 @@ def prepare_party_payload(data: Dict[str, Any], case_id: str, run_id: Optional[s
     return payload
 
 
-def prepare_contact_payload(data: Dict[str, Any], party_id: str, run_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def prepare_contact_payload(
+    data: Dict[str, Any], party_id: str, run_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
     if not data:
         return None
     contact_value = str(data.get("contact_value") or "").strip()
@@ -356,7 +382,12 @@ def create_ingestion_run(
             VALUES (%s, %s, %s, %s)
             RETURNING id;
             """,
-            (run_key, SOURCE_NAME, "running", Json({"file": str(file_path), "mapping": str(mapping_path)})),
+            (
+                run_key,
+                SOURCE_NAME,
+                "running",
+                Json({"file": str(file_path), "mapping": str(mapping_path)}),
+            ),
         )
         row = cur.fetchone()
         if not row:
@@ -445,14 +476,18 @@ def run_pipeline(
                 case_id, case_inserted = upsert_case(conn, case_payload)
                 stats.entities["cases"].record(case_inserted)
 
-                judgment_payload = prepare_judgment_payload(payloads.get("judgment", {}), case_id, ingestion_run_id)
+                judgment_payload = prepare_judgment_payload(
+                    payloads.get("judgment", {}), case_id, ingestion_run_id
+                )
                 if judgment_payload:
                     _, inserted = upsert_judgment(conn, judgment_payload)
                     stats.entities["judgments"].record(inserted)
                 else:
                     stats.entities["judgments"].record(None)
 
-                party_payload = prepare_party_payload(payloads.get("party", {}), case_id, ingestion_run_id)
+                party_payload = prepare_party_payload(
+                    payloads.get("party", {}), case_id, ingestion_run_id
+                )
                 party_id: Optional[str] = None
                 if party_payload:
                     party_id, inserted = upsert_party(conn, party_payload)
@@ -462,7 +497,9 @@ def run_pipeline(
 
                 contact_payload = None
                 if party_id:
-                    contact_payload = prepare_contact_payload(payloads.get("contact", {}), party_id, ingestion_run_id)
+                    contact_payload = prepare_contact_payload(
+                        payloads.get("contact", {}), party_id, ingestion_run_id
+                    )
                 if contact_payload:
                     _, inserted = upsert_contact(conn, contact_payload)
                     stats.entities["contacts"].record(inserted)
@@ -487,7 +524,9 @@ def run_pipeline(
             conn.rollback()
         else:
             conn.commit()
-            status = "completed" if stats.row_errors == 0 and stats.validation_errors == 0 else "partial"
+            status = (
+                "completed" if stats.row_errors == 0 and stats.validation_errors == 0 else "partial"
+            )
             finalize_ingestion_run(conn, ingestion_run_id or "", status, stats, row_errors)
     finally:
         conn.close()
@@ -522,12 +561,20 @@ def print_summary(stats: RunStats, *, dry_run: bool, file_path: Path, limit: Opt
 @app.command()
 def main(
     file: Path = typer.Option(..., "--file", "-f", help="Path to JBI export CSV"),
-    mapping: Optional[Path] = typer.Option(None, "--mapping", help="Override default column mapping"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Process data without committing changes"),
-    limit: Optional[int] = typer.Option(None, "--limit", help="Limit number of rows for quick testing"),
+    mapping: Optional[Path] = typer.Option(
+        None, "--mapping", help="Override default column mapping"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Process data without committing changes"
+    ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", help="Limit number of rows for quick testing"
+    ),
 ) -> None:
     try:
-        mapping_path = mapping or Path(__file__).resolve().parents[1] / "data" / DEFAULT_MAPPING_FILENAME
+        mapping_path = (
+            mapping or Path(__file__).resolve().parents[1] / "data" / DEFAULT_MAPPING_FILENAME
+        )
         stats = run_pipeline(file, mapping_path, dry_run=dry_run, limit=limit)
         print_summary(stats, dry_run=dry_run, file_path=file, limit=limit)
     except typer.BadParameter as exc:

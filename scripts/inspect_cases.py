@@ -36,9 +36,7 @@ def _format_created_at(value: object) -> str:
     return str(value)
 
 
-def _print_table(
-    rows: Iterable[dict[str, object]], *, columns: Sequence[tuple[str, str]]
-) -> None:
+def _print_table(rows: Iterable[dict[str, object]], *, columns: Sequence[tuple[str, str]]) -> None:
     headers = [title for _, title in columns]
     extracted_rows = []
     for row in rows:

@@ -8,11 +8,7 @@ import time
 from typing import Any, Dict
 
 from src.db.supabase_client import COMMON, postgrest
-from src.transforms.models_enrichment import (
-    Asset,
-    Contact,
-    EnrichmentBundle,
-)
+from src.transforms.models_enrichment import Asset, Contact, EnrichmentBundle
 
 _MAX_RETRIES = 5
 
@@ -31,7 +27,7 @@ def send_bundle(bundle: EnrichmentBundle) -> Dict[str, Any]:
             response.raise_for_status()
         if attempt == _MAX_RETRIES:
             response.raise_for_status()
-        sleep_for = min(2 ** attempt, 30) + random.uniform(0, 1)
+        sleep_for = min(2**attempt, 30) + random.uniform(0, 1)
         time.sleep(sleep_for)
     raise RuntimeError("RPC call failed after retries")
 

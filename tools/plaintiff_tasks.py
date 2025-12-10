@@ -134,11 +134,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _fetch_plaintiff_id(client, task_id: str) -> str | None:
     response = (
-        client.table("plaintiff_tasks")
-        .select("plaintiff_id")
-        .eq("id", task_id)
-        .limit(1)
-        .execute()
+        client.table("plaintiff_tasks").select("plaintiff_id").eq("id", task_id).limit(1).execute()
     )
     data = getattr(response, "data", None) or []
     if isinstance(data, list) and data:

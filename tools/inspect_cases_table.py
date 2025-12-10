@@ -1,9 +1,13 @@
 import os
+
 import psycopg
 
 project_ref = os.environ.get("SUPABASE_PROJECT_REF", "ejiddanxtqcleyswqvkc")
 db_password = os.environ.get("SUPABASE_DB_PASSWORD", "Norwaykmt99!!")
-DB_URL = os.environ.get("SUPABASE_DB_URL") or f"postgresql://postgres:{db_password}@db.{project_ref}.supabase.co:5432/postgres"
+DB_URL = (
+    os.environ.get("SUPABASE_DB_URL")
+    or f"postgresql://postgres:{db_password}@db.{project_ref}.supabase.co:5432/postgres"
+)
 
 with psycopg.connect(DB_URL) as conn:
     with conn.cursor() as cur:

@@ -93,9 +93,7 @@ def _ensure_case(client: Any, case_number: str, *, amount_cents: int) -> Dict[st
 
 
 def _trigger_enrichment(case_number: str, case_id: str) -> int:
-    LOGGER.info(
-        "Queueing enrichment job case_number=%s case_id=%s", case_number, case_id
-    )
+    LOGGER.info("Queueing enrichment job case_number=%s case_id=%s", case_number, case_id)
     try:
         with QueueClient() as queue:
             msg_id = queue.enqueue(
@@ -115,9 +113,7 @@ def _trigger_enrichment(case_number: str, case_id: str) -> int:
 def _fetch_collectability_snapshot(client: Any, case_id: str) -> Dict[str, Any]:
     response = (
         client.table("v_collectability_snapshot")
-        .select(
-            "case_id,case_number,judgment_amount,judgment_date,age_days,collectability_tier"
-        )
+        .select("case_id,case_number,judgment_amount,judgment_date,age_days,collectability_tier")
         .eq("case_id", case_id)
         .limit(1)
         .execute()
@@ -371,9 +367,7 @@ def _collect_employers(assets: List[Dict[str, Any]]) -> List[str]:
     return sorted(set(employers))
 
 
-def run_pipeline(
-    case_number: str, *, timeout_seconds: int, env: Optional[str]
-) -> Dict[str, Any]:
+def run_pipeline(case_number: str, *, timeout_seconds: int, env: Optional[str]) -> Dict[str, Any]:
     _configure_logging()
     normalized = _normalize_case_number(case_number)
     if not normalized:
@@ -415,18 +409,14 @@ def run_pipeline(
             try:
                 raw_payload = json.loads(raw_payload)
             except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    "Enrichment run raw payload is not valid JSON"
-                ) from exc
+                raise RuntimeError("Enrichment run raw payload is not valid JSON") from exc
         if not isinstance(raw_payload, dict):
             raw_payload = {}
         summary_text = latest_run.get("summary", "")
 
     entities = _fetch_entities(client, case_id)
     defendants = [
-        entity
-        for entity in entities
-        if (entity.get("role") or "").lower() == "defendant"
+        entity for entity in entities if (entity.get("role") or "").lower() == "defendant"
     ]
     stub_contacts, stub_assets = _generate_stub_contacts_assets(defendants, normalized)
     contacts = _coerce_dict_list(raw_payload.get("contacts")) or stub_contacts

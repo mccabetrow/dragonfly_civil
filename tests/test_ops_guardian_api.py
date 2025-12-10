@@ -39,8 +39,8 @@ class TestOpsGuardianRunEndpoint:
     @pytest.fixture
     def auth_client(self) -> TestClient:
         """Create a test client with auth bypassed."""
-        from backend.main import create_app
         from backend.core.security import get_current_user
+        from backend.main import create_app
 
         app = create_app()
 
@@ -75,9 +75,7 @@ class TestOpsGuardianRunEndpoint:
         """POST /api/v1/ops/guardian/run should return 200 with counters."""
         mock_result = GuardianResult(checked=3, marked_failed=1, errors=[])
 
-        with patch(
-            "backend.routers.ops_guardian.get_intake_guardian"
-        ) as mock_get_guardian:
+        with patch("backend.routers.ops_guardian.get_intake_guardian") as mock_get_guardian:
             mock_guardian = AsyncMock()
             mock_guardian.check_stuck_batches.return_value = mock_result
             mock_get_guardian.return_value = mock_guardian
@@ -99,9 +97,7 @@ class TestOpsGuardianRunEndpoint:
             errors=["Failed to connect to Discord"],
         )
 
-        with patch(
-            "backend.routers.ops_guardian.get_intake_guardian"
-        ) as mock_get_guardian:
+        with patch("backend.routers.ops_guardian.get_intake_guardian") as mock_get_guardian:
             mock_guardian = AsyncMock()
             mock_guardian.check_stuck_batches.return_value = mock_result
             mock_get_guardian.return_value = mock_guardian
@@ -120,8 +116,8 @@ class TestOpsGuardianStatusEndpoint:
     @pytest.fixture
     def auth_client(self) -> TestClient:
         """Create a test client with auth bypassed."""
-        from backend.main import create_app
         from backend.core.security import get_current_user
+        from backend.main import create_app
 
         app = create_app()
 

@@ -87,9 +87,7 @@ from backend.services import enrichment_service
         ),
     ],
 )
-def test_calculate_collectability_score(
-    enriched: Dict[str, Any], jd: date | None, expected: int
-):
+def test_calculate_collectability_score(enriched: Dict[str, Any], jd: date | None, expected: int):
     """Validate collectability scoring logic against known inputs."""
     score = enrichment_service.calculate_collectability_score(enriched, jd)
     assert score == expected
@@ -384,9 +382,7 @@ def test_compute_score_breakdown_total_matches_sum():
     }
     breakdown = compute_score_breakdown(enriched, date.today())
 
-    expected_sum = (
-        breakdown.employment + breakdown.assets + breakdown.recency + breakdown.banking
-    )
+    expected_sum = breakdown.employment + breakdown.assets + breakdown.recency + breakdown.banking
     assert breakdown.total == expected_sum
 
 

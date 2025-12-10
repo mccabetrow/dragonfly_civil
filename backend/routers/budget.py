@@ -197,8 +197,7 @@ async def reject_budget(
     Requires authentication.
     """
     logger.info(
-        f"Budget rejection requested by {auth.via}: "
-        f"case_id={request.case_id}, reason={reason}"
+        f"Budget rejection requested by {auth.via}: " f"case_id={request.case_id}, reason={reason}"
     )
 
     return BudgetApprovalResponse(

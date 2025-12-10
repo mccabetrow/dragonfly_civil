@@ -38,9 +38,7 @@ class EscalationSignals:
         return max(0.0, float(self.collectability_score))
 
     def normalized_age(self) -> int | None:
-        return (
-            int(self.judgment_age_days) if self.judgment_age_days is not None else None
-        )
+        return int(self.judgment_age_days) if self.judgment_age_days is not None else None
 
 
 @dataclass(frozen=True)
@@ -89,24 +87,18 @@ class EscalationEngine:
         if collectability >= self.high_collectability:
             scores["garnishment"] += 3.0
             scores["levy"] += 1.0
-            reasons["garnishment"].append(
-                "High collectability score favors garnishment"
-            )
+            reasons["garnishment"].append("High collectability score favors garnishment")
         elif collectability >= self.medium_collectability:
             scores["levy"] += 2.0
             scores["garnishment"] += 0.5
             reasons["levy"].append("Mid-tier collectability supports levy prep")
         else:
             scores["skiptrace_refresh"] += 1.5
-            reasons["skiptrace_refresh"].append(
-                "Low collectability suggests refreshing intel"
-            )
+            reasons["skiptrace_refresh"].append("Low collectability suggests refreshing intel")
 
         if evidence >= self.evidence_confident:
             scores["garnishment"] += 1.5
-            reasons["garnishment"].append(
-                "Sufficient evidence packages ready for court"
-            )
+            reasons["garnishment"].append("Sufficient evidence packages ready for court")
         elif evidence == 0:
             scores["skiptrace_refresh"] += 1.0
             reasons["skiptrace_refresh"].append("No evidence stored yet")
@@ -120,9 +112,7 @@ class EscalationEngine:
                 reasons["attorney_review"].append("Activity stale >45 days")
                 if attempts >= 5:
                     scores["attorney_review"] += 1.0
-                    reasons["attorney_review"].append(
-                        "Repeated attempts need attorney input"
-                    )
+                    reasons["attorney_review"].append("Repeated attempts need attorney input")
             elif days_since <= 14 and attempts >= 4:
                 scores["garnishment"] += 0.5
                 scores["levy"] += 0.5
@@ -133,9 +123,7 @@ class EscalationEngine:
 
         if attempts >= 7:
             scores["attorney_review"] += 1.0
-            reasons["attorney_review"].append(
-                "High attempt count triggers legal review"
-            )
+            reasons["attorney_review"].append("High attempt count triggers legal review")
         elif attempts <= 1 and (days_since or 0) > 0:
             scores["skiptrace_refresh"] += 0.5
             reasons["skiptrace_refresh"].append("Minimal attempts recorded")
@@ -150,9 +138,7 @@ class EscalationEngine:
                 reasons["levy"].append("Judgment older than three years")
             elif age_days <= 365 and collectability >= self.medium_collectability:
                 scores["garnishment"] += 1.0
-                reasons["garnishment"].append(
-                    "Fresh judgment with strong collectability"
-                )
+                reasons["garnishment"].append("Fresh judgment with strong collectability")
         else:
             scores["attorney_review"] += 0.5
             reasons["attorney_review"].append("Missing judgment age triggers review")
@@ -172,7 +158,5 @@ class EscalationEngine:
             reasons=tuple(winner_reasons),
         )
 
-    def evaluate_many(
-        self, payloads: Sequence[EscalationSignals]
-    ) -> List[EscalationDecision]:
+    def evaluate_many(self, payloads: Sequence[EscalationSignals]) -> List[EscalationDecision]:
         return [self.evaluate(signals) for signals in payloads]

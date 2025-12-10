@@ -31,7 +31,6 @@ from workers.tier_assignment_handler import (
     handle_tier_assignment,
 )
 
-
 # =============================================================================
 # Tests for _extract_judgment_id
 # =============================================================================
@@ -255,9 +254,7 @@ class TestComputeTier:
 
     def test_tier_3_very_high_score(self):
         """Very high score -> Tier 3."""
-        tier, reason = compute_tier(
-            95, Decimal("100000"), {"employer_name": "Big Corp"}
-        )
+        tier, reason = compute_tier(95, Decimal("100000"), {"employer_name": "Big Corp"})
         assert tier == 3
 
     def test_tier_3_large_balance_with_multiple_assets(self):
@@ -340,9 +337,7 @@ class FakeTable:
                 {"filters": self._query_filters.copy(), "data": self._pending_update}
             )
             self._pending_update = None
-            return SimpleNamespace(
-                data=[{"id": self._query_filters.get("id", "updated")}]
-            )
+            return SimpleNamespace(data=[{"id": self._query_filters.get("id", "updated")}])
 
         # Return data based on table and filters
         if self.name in self._data_store:
@@ -419,9 +414,7 @@ async def test_handler_assigns_tier_to_active_judgment(mock_supabase):
         "payload": {"payload": {"judgment_id": "judgment-active-123"}},
     }
 
-    with patch(
-        "workers.tier_assignment_handler.create_supabase_client", return_value=client
-    ):
+    with patch("workers.tier_assignment_handler.create_supabase_client", return_value=client):
         result = await handle_tier_assignment(job)
 
     assert result is True
@@ -445,9 +438,7 @@ async def test_handler_skips_satisfied_judgment(mock_supabase):
         "payload": {"payload": {"judgment_id": "judgment-satisfied-456"}},
     }
 
-    with patch(
-        "workers.tier_assignment_handler.create_supabase_client", return_value=client
-    ):
+    with patch("workers.tier_assignment_handler.create_supabase_client", return_value=client):
         result = await handle_tier_assignment(job)
 
     assert result is True
@@ -466,9 +457,7 @@ async def test_handler_assigns_tier_0_for_low_score(mock_supabase):
         "payload": {"payload": {"judgment_id": "judgment-low-score-789"}},
     }
 
-    with patch(
-        "workers.tier_assignment_handler.create_supabase_client", return_value=client
-    ):
+    with patch("workers.tier_assignment_handler.create_supabase_client", return_value=client):
         result = await handle_tier_assignment(job)
 
     assert result is True
@@ -488,9 +477,7 @@ async def test_handler_returns_true_for_missing_judgment(mock_supabase):
         "payload": {"payload": {"judgment_id": "non-existent-judgment"}},
     }
 
-    with patch(
-        "workers.tier_assignment_handler.create_supabase_client", return_value=client
-    ):
+    with patch("workers.tier_assignment_handler.create_supabase_client", return_value=client):
         result = await handle_tier_assignment(job)
 
     # Should return True (don't retry for missing data)

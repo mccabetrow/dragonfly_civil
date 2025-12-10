@@ -34,9 +34,7 @@ class DiscordService:
         if webhook_url is None:
             settings = get_settings()
             webhook_url = (
-                str(settings.discord_webhook_url)
-                if settings.discord_webhook_url
-                else None
+                str(settings.discord_webhook_url) if settings.discord_webhook_url else None
             )
 
         self.webhook_url = webhook_url
@@ -176,9 +174,7 @@ class DiscordService:
                 fields.append(
                     {
                         "name": key,
-                        "value": (
-                            f"```{value}```" if isinstance(value, str) else str(value)
-                        ),
+                        "value": (f"```{value}```" if isinstance(value, str) else str(value)),
                         "inline": True,
                     }
                 )

@@ -29,9 +29,7 @@ def _get_db_url() -> str:
     password = os.environ.get("SUPABASE_DB_PASSWORD")
     if not project_ref or not password:
         pytest.skip("Supabase database credentials not configured")
-    return (
-        f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
-    )
+    return f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
 
 
 @pytest.fixture(scope="module")
@@ -211,11 +209,7 @@ class TestOfferStatsAPI:
         assert "total_offers" in data
         assert isinstance(data["total_offers"], int)
         # These fields may be named differently in the actual response
-        assert (
-            "accepted" in data
-            or "offers_by_status" in data
-            or "conversion_rate" in data
-        )
+        assert "accepted" in data or "offers_by_status" in data or "conversion_rate" in data
 
     def test_get_stats_with_date_filters(
         self,

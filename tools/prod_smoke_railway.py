@@ -117,9 +117,7 @@ def smoke_test(base_url: str) -> bool:
             print(f"   ✅ Intake subsystem OK: {data.get('subsystem', 'unknown')}")
             checks_passed += 1
         elif resp.status_code == 401 and not api_key:
-            print(
-                "   ⚠️  HTTP 401 (set DRAGONFLY_API_KEY to test authenticated endpoints)"
-            )
+            print("   ⚠️  HTTP 401 (set DRAGONFLY_API_KEY to test authenticated endpoints)")
         else:
             print(f"   ⚠️  HTTP {resp.status_code} (intake may not be deployed)")
             # Don't fail on intake - it might not be enabled

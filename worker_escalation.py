@@ -7,15 +7,10 @@ import logging
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 
-from brain.escalation_engine import (
-    EscalationDecision,
-    EscalationEngine,
-    EscalationSignals,
-)
+from brain.escalation_engine import EscalationDecision, EscalationEngine, EscalationSignals
+from src.supabase_client import create_supabase_client
 from workers.handlers import extract_case_id
 from workers.runner import worker_loop
-
-from src.supabase_client import create_supabase_client
 
 logger = logging.getLogger(__name__)
 _ENGINE: Optional[EscalationEngine] = None
@@ -71,9 +66,7 @@ def _fetch_signals(case_id: str) -> EscalationSignals:
     else:
         row = None
     if not isinstance(row, dict):
-        raise RuntimeError(
-            f"evaluate_enforcement_path returned no data for case {case_id}"
-        )
+        raise RuntimeError(f"evaluate_enforcement_path returned no data for case {case_id}")
     return _normalize_row(row)
 
 

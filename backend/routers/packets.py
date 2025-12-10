@@ -26,9 +26,7 @@ router = APIRouter(prefix="/v1/packets", tags=["Packets"])
 class PacketGenerateRequest(BaseModel):
     """Request body for generating a legal packet."""
 
-    judgment_id: int = Field(
-        ..., description="ID of the judgment to generate packet for"
-    )
+    judgment_id: int = Field(..., description="ID of the judgment to generate packet for")
     type: Literal["income_execution_ny", "info_subpoena_ny"] = Field(
         ...,
         description="Type of packet: income_execution_ny (wage garnishment) or info_subpoena_ny (discovery)",

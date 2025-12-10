@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 import httpx
 
 from src.supabase_client import create_supabase_client
+
 from .settings import get_worker_settings
 
 API_PREFIX = "/rest/v1/rpc"
@@ -14,6 +15,7 @@ API_PREFIX = "/rest/v1/rpc"
 
 class QueueRpcNotFound(RuntimeError):
     """Raised when Supabase RPC endpoints are missing."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,9 @@ class QueueClient:
     def rpc_base_url(self) -> str:
         return self._rpc_base_url
 
-    def enqueue(self, kind: str, payload: Dict[str, Any], idempotency_key: Optional[str] = None) -> int:
+    def enqueue(
+        self, kind: str, payload: Dict[str, Any], idempotency_key: Optional[str] = None
+    ) -> int:
         envelope = {
             "idempotency_key": idempotency_key,
             "kind": kind,

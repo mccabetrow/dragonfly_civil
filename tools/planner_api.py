@@ -66,11 +66,13 @@ def _run_planner(env: Literal["dev", "prod"]) -> PlannerResponse:
     planned_total = len(outcome.planned_tasks)
     planned_call = kind_counts.get("call", 0)
     planned_follow_up = kind_counts.get("follow_up", 0)
-    summary = "Planned {total} tasks (call={call}, follow_up={followup}); backlog now {backlog}.".format(
-        total=planned_total,
-        call=planned_call,
-        followup=planned_follow_up,
-        backlog=outcome.backlog_count,
+    summary = (
+        "Planned {total} tasks (call={call}, follow_up={followup}); backlog now {backlog}.".format(
+            total=planned_total,
+            call=planned_call,
+            followup=planned_follow_up,
+            backlog=outcome.backlog_count,
+        )
     )
 
     return PlannerResponse(

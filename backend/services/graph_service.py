@@ -242,9 +242,7 @@ async def create_relationship(
     return None
 
 
-async def build_judgment_graph(
-    judgment_id: int, conn: "psycopg.AsyncConnection"
-) -> bool:
+async def build_judgment_graph(judgment_id: int, conn: "psycopg.AsyncConnection") -> bool:
     """
     Build graph entities and relationships for a single judgment.
 
@@ -289,12 +287,8 @@ async def build_judgment_graph(
                     court_name = parts[0]
 
             # Determine entity types using heuristics
-            plaintiff_type = (
-                infer_entity_type(plaintiff_name) if plaintiff_name else "person"
-            )
-            defendant_type = (
-                infer_entity_type(defendant_name) if defendant_name else "person"
-            )
+            plaintiff_type = infer_entity_type(plaintiff_name) if plaintiff_name else "person"
+            defendant_type = infer_entity_type(defendant_name) if defendant_name else "person"
 
             # Create entities
             plaintiff_entity_id = None

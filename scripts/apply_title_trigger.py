@@ -5,8 +5,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.supabase_client import get_supabase_db_url
 import psycopg
+
+from src.supabase_client import get_supabase_db_url
 
 
 def main():
@@ -34,9 +35,7 @@ def main():
             print("Created trigger function")
 
             # Drop and create trigger
-            cur.execute(
-                "DROP TRIGGER IF EXISTS trg_cases_default_title ON judgments.cases;"
-            )
+            cur.execute("DROP TRIGGER IF EXISTS trg_cases_default_title ON judgments.cases;")
             cur.execute(
                 """
                 CREATE TRIGGER trg_cases_default_title

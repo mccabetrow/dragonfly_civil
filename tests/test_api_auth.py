@@ -73,9 +73,7 @@ class TestApiKeyAuth:
         # Should not be 401 - may be 200 or 500 (if DB not available)
         assert response.status_code != 401
 
-    def test_legacy_header_x_api_key_accepted(
-        self, client: TestClient, api_key: str
-    ) -> None:
+    def test_legacy_header_x_api_key_accepted(self, client: TestClient, api_key: str) -> None:
         """X-API-Key header should authenticate successfully (backward compat)."""
         response = client.get(
             "/api/v1/intake/batches",
@@ -85,9 +83,7 @@ class TestApiKeyAuth:
         # Should not be 401 - may be 200 or 500 (if DB not available)
         assert response.status_code != 401
 
-    def test_primary_header_takes_precedence(
-        self, client: TestClient, api_key: str
-    ) -> None:
+    def test_primary_header_takes_precedence(self, client: TestClient, api_key: str) -> None:
         """When both headers present, X-DRAGONFLY-API-KEY should be used."""
         response = client.get(
             "/api/v1/intake/batches",
@@ -161,9 +157,7 @@ class TestProtectedEndpoints:
     ]
 
     @pytest.mark.parametrize("method,path", PROTECTED_ENDPOINTS)
-    def test_endpoint_requires_auth(
-        self, client: TestClient, method: str, path: str
-    ) -> None:
+    def test_endpoint_requires_auth(self, client: TestClient, method: str, path: str) -> None:
         """Protected endpoints should return 401 without auth."""
         if method == "GET":
             response = client.get(path)
@@ -194,9 +188,7 @@ class TestProtectedEndpoints:
             pytest.fail(f"Unknown method: {method}")
 
         # Should NOT be 401 - may be 200, 422 (validation), or 500 (DB)
-        assert (
-            response.status_code != 401
-        ), f"{method} {path} returned 401 even with valid API key"
+        assert response.status_code != 401, f"{method} {path} returned 401 even with valid API key"
 
 
 class TestCORSConfiguration:
@@ -261,8 +253,7 @@ class TestCORSConfiguration:
         )
 
         assert response.status_code == 200, (
-            f"Preflight failed with {response.status_code}. "
-            f"Headers: {dict(response.headers)}"
+            f"Preflight failed with {response.status_code}. " f"Headers: {dict(response.headers)}"
         )
         assert response.headers.get("Access-Control-Allow-Origin") == self.PROD_ORIGIN
 
@@ -280,13 +271,9 @@ class TestCORSConfiguration:
         assert (
             response.status_code == 200
         ), f"Preflight for git preview origin failed with {response.status_code}"
-        assert (
-            response.headers.get("Access-Control-Allow-Origin") == self.PROD_ORIGIN_GIT
-        )
+        assert response.headers.get("Access-Control-Allow-Origin") == self.PROD_ORIGIN_GIT
 
-    def test_cors_preflight_vercel_preview_origin(
-        self, cors_client: TestClient
-    ) -> None:
+    def test_cors_preflight_vercel_preview_origin(self, cors_client: TestClient) -> None:
         """OPTIONS preflight with Vercel preview deployment origin returns 200.
 
         This tests the allow_origin_regex pattern that matches:
@@ -306,9 +293,7 @@ class TestCORSConfiguration:
             f"Headers: {dict(response.headers)}. "
             f"Origin {self.PREVIEW_ORIGIN} should match regex pattern."
         )
-        assert (
-            response.headers.get("Access-Control-Allow-Origin") == self.PREVIEW_ORIGIN
-        )
+        assert response.headers.get("Access-Control-Allow-Origin") == self.PREVIEW_ORIGIN
 
     def test_cors_allows_credentials(self, cors_client: TestClient) -> None:
         """CORS must allow credentials for cross-origin requests."""
@@ -356,9 +341,7 @@ class TestCORSConfiguration:
 
         allow_methods = response.headers.get("Access-Control-Allow-Methods", "")
         # Must include POST for mutations
-        assert (
-            "POST" in allow_methods
-        ), f"CORS must allow POST method, got: {allow_methods}"
+        assert "POST" in allow_methods, f"CORS must allow POST method, got: {allow_methods}"
 
     def test_cors_rejects_unknown_origin(self, cors_client: TestClient) -> None:
         """CORS should not set Allow-Origin for untrusted origins."""
@@ -373,6 +356,4 @@ class TestCORSConfiguration:
         # Starlette CORS returns 400 for disallowed origins
         # OR returns 200 but without Allow-Origin header
         allow_origin = response.headers.get("Access-Control-Allow-Origin")
-        assert (
-            allow_origin != "https://evil.com"
-        ), f"CORS allowed untrusted origin: {allow_origin}"
+        assert allow_origin != "https://evil.com", f"CORS allowed untrusted origin: {allow_origin}"

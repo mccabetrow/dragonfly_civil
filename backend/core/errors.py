@@ -92,9 +92,7 @@ def create_error_response(
     )
 
 
-async def http_exception_handler(
-    request: Request, exc: StarletteHTTPException
-) -> JSONResponse:
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """
     Handle FastAPI/Starlette HTTP exceptions.
 

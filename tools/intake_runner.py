@@ -139,9 +139,7 @@ class IntakeRunner:
         once: bool,
         interval_seconds: int,
         path_overrides: Mapping[str, str] | None = None,
-        repo_factory: (
-            Callable[[str], ContextManager[DatabaseIntakeRepository]] | None
-        ) = None,
+        repo_factory: Callable[[str], ContextManager[DatabaseIntakeRepository]] | None = None,
         now_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self.env = target_env
@@ -214,12 +212,8 @@ class IntakeRunner:
         error_message: str | None = None
         try:
             result = spec.importer(str(file_path), batch_name, False)
-            import_run_value = (
-                result.get("import_run_id") if isinstance(result, dict) else None
-            )
-            import_run_id = (
-                str(import_run_value) if isinstance(import_run_value, str) else None
-            )
+            import_run_value = result.get("import_run_id") if isinstance(result, dict) else None
+            import_run_id = str(import_run_value) if isinstance(import_run_value, str) else None
             summary = None
             counts: Dict[str, object | None] = {
                 "row_count": None,
@@ -252,9 +246,7 @@ class IntakeRunner:
             )
 
 
-def derive_batch_name(
-    source: str, file_name: str, *, now: datetime | None = None
-) -> str:
+def derive_batch_name(source: str, file_name: str, *, now: datetime | None = None) -> str:
     timestamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%d%H%M")
     stem = BATCH_SAFE_RE.sub("-", Path(file_name).stem).strip("-") or "intake"
     batch = f"{timestamp}-{source}-{stem}"[:80]
@@ -344,9 +336,7 @@ def run_command(
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s")
     cli(obj={})
 
 

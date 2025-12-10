@@ -67,9 +67,7 @@ class _FakeRepo(case_copilot.CaseContextRepository):
         model: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        self.logged.append(
-            {"case_id": case_id, "model": model, "metadata": dict(metadata or {})}
-        )
+        self.logged.append({"case_id": case_id, "model": model, "metadata": dict(metadata or {})})
 
 
 class _FakeAI(case_copilot.AIClient):

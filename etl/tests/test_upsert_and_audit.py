@@ -54,7 +54,9 @@ def _call_insert_or_get(case_number: str) -> str:
     else:
         if not isinstance(data, dict):
             raise AssertionError(f"Unexpected RPC response: {data!r}")
-        value = data.get("insert_or_get_case") or data.get("case_id") or next(iter(data.values()), None)
+        value = (
+            data.get("insert_or_get_case") or data.get("case_id") or next(iter(data.values()), None)
+        )
     if not value:
         raise AssertionError(f"Missing case id in response: {data!r}")
     return str(value)

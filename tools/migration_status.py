@@ -112,9 +112,7 @@ def get_credentials(env: Literal["dev", "prod"]) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def fetch_migration_status(
-    url: str, key: str, limit: int = 200
-) -> list[MigrationRecord]:
+def fetch_migration_status(url: str, key: str, limit: int = 200) -> list[MigrationRecord]:
     """
     Fetch migration status from the v_migration_status view via REST.
 

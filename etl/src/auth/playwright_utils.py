@@ -13,7 +13,12 @@ from ..utils.log import get_logger
 _LOG = get_logger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from playwright.sync_api import Browser, BrowserContext, Page, Playwright  # type: ignore[import-not-found]
+    from playwright.sync_api import (  # type: ignore[import-not-found]
+        Browser,
+        BrowserContext,
+        Page,
+        Playwright,
+    )
 
 __all__ = [
     "PlaywrightConfig",
@@ -28,6 +33,7 @@ _USER_AGENT_DEFAULT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/120.0.0.0 Safari/537.36"
 )
+
 
 def _parse_viewport(raw: Optional[str]) -> Dict[str, int]:
     candidate = (raw or "1280x800").strip()
@@ -163,7 +169,9 @@ def stealth_delay(enabled: bool) -> None:
     time.sleep(random.uniform(0.05, 0.25))
 
 
-def create_browser_and_context(playwright: "Playwright") -> Tuple["Browser", "BrowserContext", PlaywrightConfig]:
+def create_browser_and_context(
+    playwright: "Playwright",
+) -> Tuple["Browser", "BrowserContext", PlaywrightConfig]:
     cfg = resolve_playwright_config()
     browser = playwright.chromium.launch(**_launch_options(cfg))
     context = browser.new_context(**_context_options(cfg))

@@ -16,11 +16,7 @@ from uuid import uuid4
 
 import pytest
 
-from backend.services.intake_guardian import (
-    GuardianResult,
-    IntakeGuardian,
-    get_intake_guardian,
-)
+from backend.services.intake_guardian import GuardianResult, IntakeGuardian, get_intake_guardian
 
 
 class TestIntakeGuardianUnit:
@@ -41,9 +37,7 @@ class TestIntakeGuardianUnit:
         return mock
 
     @pytest.mark.asyncio
-    async def test_no_stuck_batches(
-        self, guardian: IntakeGuardian, mock_conn: MagicMock
-    ) -> None:
+    async def test_no_stuck_batches(self, guardian: IntakeGuardian, mock_conn: MagicMock) -> None:
         """Test that guardian handles no stuck batches gracefully."""
         mock_conn.fetch.return_value = []
 
@@ -81,14 +75,10 @@ class TestIntakeGuardianUnit:
             mock_get_conn.return_value.__aenter__.return_value = mock_conn
 
             # Mock Discord to prevent actual calls
-            with patch(
-                "backend.services.intake_guardian.DiscordService"
-            ) as mock_discord:
+            with patch("backend.services.intake_guardian.DiscordService") as mock_discord:
                 mock_discord_instance = AsyncMock()
                 mock_discord_instance.send_message = AsyncMock(return_value=True)
-                mock_discord.return_value.__aenter__.return_value = (
-                    mock_discord_instance
-                )
+                mock_discord.return_value.__aenter__.return_value = mock_discord_instance
                 mock_discord.return_value.__aexit__.return_value = None
 
                 result = await guardian.check_stuck_batches()
@@ -123,9 +113,7 @@ class TestIntakeGuardianUnit:
     async def test_guardian_handles_db_error(self, guardian: IntakeGuardian) -> None:
         """Test that guardian catches and logs DB errors without crashing."""
         with patch("backend.services.intake_guardian.get_connection") as mock_get_conn:
-            mock_get_conn.return_value.__aenter__.side_effect = Exception(
-                "DB connection failed"
-            )
+            mock_get_conn.return_value.__aenter__.side_effect = Exception("DB connection failed")
 
             result = await guardian.check_stuck_batches()
 

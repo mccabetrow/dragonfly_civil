@@ -338,17 +338,12 @@ class TestGeneratePacket:
                                 Path(tmpdir),
                             ):
                                 # Create a dummy template file
-                                dummy_template = (
-                                    Path(tmpdir) / "income_execution_ny.docx"
-                                )
+                                dummy_template = Path(tmpdir) / "income_execution_ny.docx"
                                 dummy_template.touch()
 
                                 url = await generate_packet(1, "income_execution_ny")
 
-                                assert (
-                                    url
-                                    == "https://storage.example.com/signed/test.docx"
-                                )
+                                assert url == "https://storage.example.com/signed/test.docx"
                                 mock_doc.render.assert_called_once()
                                 mock_storage.upload.assert_called_once()
 

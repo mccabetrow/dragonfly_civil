@@ -29,8 +29,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from uuid import uuid4
 from typing import Any, Optional
+from uuid import uuid4
 
 import psycopg
 from psycopg import sql
@@ -186,9 +186,7 @@ class NormalizedPlaintiff(BaseModel):
     tier: str | None = "unknown"
 
     @classmethod
-    def from_raw(
-        cls, raw: RawSimplicityRow, *, source_system: str
-    ) -> "NormalizedPlaintiff":
+    def from_raw(cls, raw: RawSimplicityRow, *, source_system: str) -> "NormalizedPlaintiff":
         name = _clean_or_none(raw.plaintiff_name) or _clean_or_none(raw.case_title)
         if not name:
             identifier = raw.index_number or raw.lead_id
@@ -322,18 +320,14 @@ class NormalizedContact(BaseModel):
     value: str | None = None
 
     @classmethod
-    def from_raw(
-        cls, raw: RawSimplicityRow, *, channel: str
-    ) -> Optional["NormalizedContact"]:
+    def from_raw(cls, raw: RawSimplicityRow, *, channel: str) -> Optional["NormalizedContact"]:
         contact_name = _clean_or_none(raw.plaintiff_name) or "Simplicity Contact"
         role = _clean_or_none(raw.best_contact_method)
         if channel == "email":
             email = _clean_or_none(raw.email)
             if not email:
                 return None
-            return cls(
-                name=contact_name, email=email, role=role, kind="email", value=email
-            )
+            return cls(name=contact_name, email=email, role=role, kind="email", value=email)
         if channel == "phone":
             normalized_phone = _normalize_phone(raw.phone)
             if not normalized_phone:
@@ -390,9 +384,7 @@ def _normalize_row(
     list[NormalizedContact],
 ]:
     plaintiff = NormalizedPlaintiff.from_raw(raw, source_system=source_system)
-    case = NormalizedCase.from_raw(
-        raw, source_system=source_system, default_source=default_source
-    )
+    case = NormalizedCase.from_raw(raw, source_system=source_system, default_source=default_source)
     judgment = NormalizedJudgment.from_raw(raw, source_system=source_system)
     contacts = _build_contacts(raw)
     return plaintiff, case, judgment, contacts
@@ -770,9 +762,7 @@ def _select_judgment_id_sql(
     return row[0] if row else None
 
 
-def _judgment_metadata(
-    judgment: NormalizedJudgment, raw: RawSimplicityRow
-) -> dict[str, Any]:
+def _judgment_metadata(judgment: NormalizedJudgment, raw: RawSimplicityRow) -> dict[str, Any]:
     payload = judgment.model_dump(mode="json", exclude_none=True)
     payload.setdefault("simplicity", raw.as_metadata())
     payload["judgment_number"] = judgment.judgment_number
@@ -972,9 +962,7 @@ def _process_row(
     source_system: str,
 ) -> RowOutcome:
     source_reference = _resolve_source_reference(raw)
-    plaintiff, case, judgment, contacts = _normalize_row(
-        raw, source_system=source_system
-    )
+    plaintiff, case, judgment, contacts = _normalize_row(raw, source_system=source_system)
 
     plaintiff_id, plaintiff_inserted = _upsert_plaintiff(
         conn,
@@ -1053,9 +1041,7 @@ def import_simplicity_batch(
                     else:
                         stats["update_count"] += 1
                         stats["updated_rows"] += 1
-                except (
-                    Exception
-                ) as row_exc:  # pragma: no cover - defensive transactional guard
+                except Exception as row_exc:  # pragma: no cover - defensive transactional guard
                     stats["error_count"] += 1
                     stats["skipped_rows"] += 1
                     error_entry = {"row": index, "error": str(row_exc)}

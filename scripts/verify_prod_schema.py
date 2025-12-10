@@ -54,9 +54,7 @@ def main() -> int:
                     missing.append(name)
 
             if missing:
-                print(
-                    f"\n[WARN] {len(missing)} view(s) still missing: {', '.join(missing)}"
-                )
+                print(f"\n[WARN] {len(missing)} view(s) still missing: {', '.join(missing)}")
                 return 1
             else:
                 print("\n[OK] All critical views exist in prod")

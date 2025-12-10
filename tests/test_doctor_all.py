@@ -8,19 +8,13 @@ from click.testing import CliRunner
 from tools import doctor_all
 
 
-def _patch_common_success(
-    monkeypatch, env: str = "dev", patch_config: bool = True
-) -> None:
+def _patch_common_success(monkeypatch, env: str = "dev", patch_config: bool = True) -> None:
     monkeypatch.setattr(doctor_all, "_bootstrap_env", lambda requested: env)
     if patch_config:
-        monkeypatch.setattr(
-            doctor_all, "_config_check_runner", lambda env: (lambda: None)
-        )
+        monkeypatch.setattr(doctor_all, "_config_check_runner", lambda env: (lambda: None))
     monkeypatch.setattr(doctor_all, "_doctor_runner", lambda env: lambda: None)
     monkeypatch.setattr(doctor_all, "_n8n_validator_runner", lambda env: (lambda: None))
-    monkeypatch.setattr(
-        doctor_all, "_security_audit_runner", lambda env: (lambda: None)
-    )
+    monkeypatch.setattr(doctor_all, "_security_audit_runner", lambda env: (lambda: None))
     monkeypatch.setattr(doctor_all.smoke_plaintiffs, "main", lambda: None)
     monkeypatch.setattr(doctor_all.smoke_enforcement, "main", lambda: None)
 
@@ -168,15 +162,9 @@ def test_doctor_all_dev_warns_missing_keys(monkeypatch):
 
     def _fake_check_environment(requested_env: str | None = None):
         assert requested_env == "dev"
-        return [
-            doctor_all.config_check.CheckResult(
-                "OPENAI_API_KEY", "WARN", "dev optional"
-            )
-        ]
+        return [doctor_all.config_check.CheckResult("OPENAI_API_KEY", "WARN", "dev optional")]
 
-    monkeypatch.setattr(
-        doctor_all.config_check, "check_environment", _fake_check_environment
-    )
+    monkeypatch.setattr(doctor_all.config_check, "check_environment", _fake_check_environment)
     monkeypatch.setattr(
         doctor_all.config_check,
         "has_failures",
@@ -200,13 +188,9 @@ def test_doctor_all_prod_missing_keys_fails(monkeypatch):
 
     def _fake_check_environment(requested_env: str | None = None):
         assert requested_env == "prod"
-        return [
-            doctor_all.config_check.CheckResult("OPENAI_API_KEY", "FAIL", "missing")
-        ]
+        return [doctor_all.config_check.CheckResult("OPENAI_API_KEY", "FAIL", "missing")]
 
-    monkeypatch.setattr(
-        doctor_all.config_check, "check_environment", _fake_check_environment
-    )
+    monkeypatch.setattr(doctor_all.config_check, "check_environment", _fake_check_environment)
     monkeypatch.setattr(
         doctor_all.config_check,
         "has_failures",

@@ -18,11 +18,7 @@ import click
 import psycopg
 from psycopg.types.json import Jsonb
 
-from src.supabase_client import (
-    describe_db_url,
-    get_supabase_db_url,
-    get_supabase_env,
-)
+from src.supabase_client import describe_db_url, get_supabase_db_url, get_supabase_env
 
 SEED_AUTHOR = "demo_plaintiff_seed"
 DEMO_SOURCE_SYSTEM = "demo_seed"
@@ -165,9 +161,7 @@ def _demo_specs(now: datetime) -> list[PlaintiffSpec]:
                 )
             ],
             statuses=[
-                StatusSpec(
-                    status="new", days_ago=21, note="Webinar attendee (Outreach 101)."
-                ),
+                StatusSpec(status="new", days_ago=21, note="Webinar attendee (Outreach 101)."),
                 StatusSpec(
                     status="contacted",
                     days_ago=4,
@@ -231,12 +225,8 @@ def _demo_specs(now: datetime) -> list[PlaintiffSpec]:
                 ),
             ],
             statuses=[
-                StatusSpec(
-                    status="new", days_ago=40, note="Met at NACM chapter meeting."
-                ),
-                StatusSpec(
-                    status="contacted", days_ago=28, note="Shared pricing deck."
-                ),
+                StatusSpec(status="new", days_ago=40, note="Met at NACM chapter meeting."),
+                StatusSpec(status="contacted", days_ago=28, note="Shared pricing deck."),
                 StatusSpec(
                     status="qualified",
                     days_ago=9,
@@ -281,9 +271,7 @@ def _demo_specs(now: datetime) -> list[PlaintiffSpec]:
     ]
 
 
-def _reset_demo_rows(
-    conn: psycopg.Connection, specs: Sequence[PlaintiffSpec]
-) -> Dict[str, int]:
+def _reset_demo_rows(conn: psycopg.Connection, specs: Sequence[PlaintiffSpec]) -> Dict[str, int]:
     removed = {
         "plaintiffs": 0,
         "contacts": 0,
@@ -292,9 +280,7 @@ def _reset_demo_rows(
         "judgments": 0,
     }
     names = [spec.name for spec in specs]
-    case_numbers = [
-        judgment.case_number for spec in specs for judgment in spec.judgments
-    ]
+    case_numbers = [judgment.case_number for spec in specs for judgment in spec.judgments]
 
     with conn.cursor() as cur:
         if case_numbers:
@@ -575,9 +561,7 @@ def _seed_dataset(
             plaintiff_id, _ = _upsert_plaintiff(cur, spec)
             summary.plaintiffs += 1
             summary.contacts += _replace_contacts(cur, plaintiff_id, spec.contacts)
-            summary.statuses += _replace_status_history(
-                cur, plaintiff_id, spec.statuses, now
-            )
+            summary.statuses += _replace_status_history(cur, plaintiff_id, spec.statuses, now)
             summary.tasks += _replace_tasks(cur, plaintiff_id, spec.tasks, now)
             summary.judgments += _upsert_judgments(
                 cur, plaintiff_id, spec.name, spec.judgments, now
@@ -625,9 +609,7 @@ def main(reset: bool, reset_only: bool) -> None:
                     f"judgments={removed['judgments']}"
                 )
                 if reset_only:
-                    click.echo(
-                        "[seed_demo_plaintiffs] reset-only complete; no inserts run."
-                    )
+                    click.echo("[seed_demo_plaintiffs] reset-only complete; no inserts run.")
                     return
 
             summary = _seed_dataset(conn, specs, _now())

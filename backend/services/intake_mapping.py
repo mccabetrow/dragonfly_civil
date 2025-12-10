@@ -10,8 +10,8 @@ column header variations that may appear in vendor CSVs.
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -189,9 +189,7 @@ def normalize_row(
             missing_fields.append(field)
 
     if missing_fields:
-        raise ValueError(
-            f"Missing required fields: {', '.join(sorted(missing_fields))}"
-        )
+        raise ValueError(f"Missing required fields: {', '.join(sorted(missing_fields))}")
 
     return result
 
@@ -215,8 +213,6 @@ def get_mapping_for_source(source: str) -> dict[str, list[str]]:
     }
 
     if source not in mappings:
-        raise ValueError(
-            f"Unknown source: {source}. Known sources: {list(mappings.keys())}"
-        )
+        raise ValueError(f"Unknown source: {source}. Known sources: {list(mappings.keys())}")
 
     return mappings[source]

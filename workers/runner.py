@@ -60,9 +60,7 @@ async def worker_loop(kind: str, handler: JobHandler, poll_interval: float = 1.0
 
                 attempts = failure_counts.get(msg_id, 0) + 1
                 failure_counts[msg_id] = attempts
-                logger.warning(
-                    "Job %s on queue %s attempt %s failed", msg_id, kind, attempts
-                )
+                logger.warning("Job %s on queue %s attempt %s failed", msg_id, kind, attempts)
 
                 if attempts >= 5:
                     logger.error(

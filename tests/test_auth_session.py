@@ -8,7 +8,12 @@ def test_session_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("SESSION_PATH", str(session_path))
     monkeypatch.setenv("ENCRYPT_SESSIONS", "false")
 
-    from etl.src.auth import ensure_session, get_requests_session_with_cookies, load_session, save_session
+    from etl.src.auth import (
+        ensure_session,
+        get_requests_session_with_cookies,
+        load_session,
+        save_session,
+    )
 
     payload = {"k": "v", "cookies": {"a": "b"}}
     save_session(payload)

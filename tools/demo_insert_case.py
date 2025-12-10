@@ -150,8 +150,7 @@ def upsert_case(
         str(
             case_bundle.get(
                 "case_number",
-                case_number_hint_normalized
-                or (case_section or {}).get("case_number", ""),
+                case_number_hint_normalized or (case_section or {}).get("case_number", ""),
             )
         )
         .strip()
@@ -183,9 +182,7 @@ def upsert_case(
 
     if not entity_ids:
         entity_ids = [
-            str(entity.get("entity_id"))
-            for entity in entities_detail
-            if entity.get("entity_id")
+            str(entity.get("entity_id")) for entity in entities_detail if entity.get("entity_id")
         ]
 
     entity_ids = [str(entity_id) for entity_id in entity_ids if entity_id]

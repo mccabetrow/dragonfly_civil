@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import typer
-from supabase import Client
 
 from src.supabase_client import create_supabase_client
+from supabase import Client
 
 logger = logging.getLogger(__name__)
 app = typer.Typer(add_completion=False, help="Collector Intelligence scoring utilities")
@@ -127,15 +127,11 @@ class CollectorIntelEngine:
             signals=context["signals"],
         )
 
-    def score_case(
-        self, case_id: str, plaintiff_id: Optional[str] = None
-    ) -> CollectorScore:
+    def score_case(self, case_id: str, plaintiff_id: Optional[str] = None) -> CollectorScore:
         mapping = self._resolve_case_mapping(case_id, plaintiff_id)
         context = self._gather_plaintiff_context(mapping["plaintiff_id"])
         canonical_case_id = mapping.get("canonical_case_id") or mapping["case_id"]
-        case_number = mapping.get("case_number") or context.get(
-            "representative_case_number"
-        )
+        case_number = mapping.get("case_number") or context.get("representative_case_number")
         return self._build_score(
             plaintiff_id=mapping["plaintiff_id"],
             case_id=canonical_case_id,
@@ -167,9 +163,7 @@ class CollectorIntelEngine:
                 .execute()
             )
         except Exception as exc:  # pragma: no cover - defensive logging
-            self._logger.warning(
-                "judgments.cases update failed for %s: %s", case_id, exc
-            )
+            self._logger.warning("judgments.cases update failed for %s: %s", case_id, exc)
             raise
 
     # ------------------------------------------------------------------
@@ -190,11 +184,7 @@ class CollectorIntelEngine:
         )
         total = min(
             100.0,
-            address_score
-            + phone_score
-            + employer_score
-            + bank_score
-            + enforcement_score,
+            address_score + phone_score + employer_score + bank_score + enforcement_score,
         )
         return {
             "address_quality": address_score,
@@ -210,11 +200,7 @@ class CollectorIntelEngine:
     # ------------------------------------------------------------------
     def _gather_plaintiff_context(self, plaintiff_id: str) -> Dict[str, Any]:
         plaintiff = self._require_single(
-            self._client.table("plaintiffs")
-            .select("*")
-            .eq("id", plaintiff_id)
-            .limit(1)
-            .execute(),
+            self._client.table("plaintiffs").select("*").eq("id", plaintiff_id).limit(1).execute(),
             "plaintiffs",
         )
 
@@ -249,11 +235,7 @@ class CollectorIntelEngine:
             )
             if representative_case_number is None:
                 representative_case_number = next(
-                    (
-                        row.get("case_number")
-                        for row in enforcement_cases
-                        if row.get("case_number")
-                    ),
+                    (row.get("case_number") for row in enforcement_cases if row.get("case_number")),
                     None,
                 )
 
@@ -281,19 +263,13 @@ class CollectorIntelEngine:
         enforcement_indicators: List[str] = []
 
         for row in events:
-            employer_indicators.extend(
-                self._collect_fragments(row, ("event_type", "notes"))
-            )
-            bank_indicators.extend(
-                self._collect_fragments(row, ("event_type", "notes"))
-            )
+            employer_indicators.extend(self._collect_fragments(row, ("event_type", "notes")))
+            bank_indicators.extend(self._collect_fragments(row, ("event_type", "notes")))
             employer_indicators.extend(self._metadata_strings(row.get("metadata")))
             bank_indicators.extend(self._metadata_strings(row.get("metadata")))
 
         for row in history:
-            enforcement_indicators.extend(
-                self._collect_fragments(row, ("stage", "note"))
-            )
+            enforcement_indicators.extend(self._collect_fragments(row, ("stage", "note")))
             employer_indicators.extend(self._collect_fragments(row, ("stage", "note")))
             bank_indicators.extend(self._collect_fragments(row, ("stage", "note")))
 
@@ -316,9 +292,7 @@ class CollectorIntelEngine:
             "case_id": str(case_id),
             "canonical_case_id": None,
             "case_number": None,
-            "plaintiff_id": (
-                plaintiff_id.strip() if isinstance(plaintiff_id, str) else None
-            ),
+            "plaintiff_id": (plaintiff_id.strip() if isinstance(plaintiff_id, str) else None),
         }
 
         # Public cases table (if synced)
@@ -353,12 +327,8 @@ class CollectorIntelEngine:
             mapping["case_number"] = row.get("case_number")
             judgment_id = row.get("judgment_id")
             if judgment_id and not mapping["plaintiff_id"]:
-                mapping["plaintiff_id"] = self._lookup_plaintiff_by_judgment(
-                    judgment_id
-                )
-            mapping["canonical_case_id"] = self._lookup_case_id_by_number(
-                mapping["case_number"]
-            )
+                mapping["plaintiff_id"] = self._lookup_plaintiff_by_judgment(judgment_id)
+            mapping["canonical_case_id"] = self._lookup_case_id_by_number(mapping["case_number"])
             return mapping
 
         # judgments.cases fallback
@@ -383,18 +353,12 @@ class CollectorIntelEngine:
             return mapping
 
         if not mapping["plaintiff_id"]:
-            raise ValueError(
-                f"Unable to resolve collectability context for case {case_id}"
-            )
+            raise ValueError(f"Unable to resolve collectability context for case {case_id}")
 
-        mapping["canonical_case_id"] = (
-            mapping.get("canonical_case_id") or mapping["case_id"]
-        )
+        mapping["canonical_case_id"] = mapping.get("canonical_case_id") or mapping["case_id"]
         return mapping
 
-    def _lookup_plaintiff_by_case_number(
-        self, case_number: Optional[str]
-    ) -> Optional[str]:
+    def _lookup_plaintiff_by_case_number(self, case_number: Optional[str]) -> Optional[str]:
         if not case_number:
             return None
         try:
@@ -496,9 +460,7 @@ class CollectorIntelEngine:
 
         for contact in contacts:
             kind = str(contact.get("kind") or contact.get("contact_type") or "").lower()
-            value = (
-                contact.get("value") or contact.get("address") or contact.get("phone")
-            )
+            value = contact.get("value") or contact.get("address") or contact.get("phone")
             if not value:
                 continue
             text = str(value).strip()

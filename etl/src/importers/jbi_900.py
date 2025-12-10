@@ -13,11 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import psycopg
 from pydantic import ValidationError
 
-from src.supabase_client import (
-    create_supabase_client,
-    get_supabase_db_url,
-    get_supabase_env,
-)
+from src.supabase_client import create_supabase_client, get_supabase_db_url, get_supabase_env
 
 from .core_judgment_bridge import CoreJudgmentBridge
 from .pipeline_support import (
@@ -121,9 +117,7 @@ def _build_header_map(raw_headers: Sequence[str]) -> Dict[str, str]:
     return header_map
 
 
-def _format_missing_headers_message(
-    missing: set[str], raw_headers: Sequence[str]
-) -> str:
+def _format_missing_headers_message(missing: set[str], raw_headers: Sequence[str]) -> str:
     provided = ", ".join(raw_headers) if raw_headers else "<none>"
     missing_list = ", ".join(sorted(missing))
     return (
@@ -258,9 +252,7 @@ def run_jbi_900_import(
     if requested_skip_rows:
         original_count = len(good_rows)
         good_rows = [
-            row
-            for row in good_rows
-            if (row.raw_row_number or 0) not in requested_skip_rows
+            row for row in good_rows if (row.raw_row_number or 0) not in requested_skip_rows
         ]
         resume_hint = {
             "requested_skip_rows": len(requested_skip_rows),
@@ -280,8 +272,7 @@ def run_jbi_900_import(
     if resume_hint:
         metadata["resume"] = resume_hint
     metadata["parse_errors"] = [
-        {"row_number": issue.row_number, "error": issue.error}
-        for issue in JBI_LAST_PARSE_ERRORS
+        {"row_number": issue.row_number, "error": issue.error} for issue in JBI_LAST_PARSE_ERRORS
     ]
     parse_errors = metadata["parse_errors"]
 
@@ -293,9 +284,7 @@ def run_jbi_900_import(
     metadata["core_judgments_bridge"] = {"enabled": enable_new_pipeline}
 
     if dry_run:
-        metadata["planned_storage_path"] = (
-            f"{JBI_STORAGE_PREFIX}/DRY_RUN/{Path(csv_path).name}"
-        )
+        metadata["planned_storage_path"] = f"{JBI_STORAGE_PREFIX}/DRY_RUN/{Path(csv_path).name}"
 
     row_count = len(good_rows) + len(parse_errors)
     insert_count = 0
@@ -345,9 +334,7 @@ def run_jbi_900_import(
         metadata["contact_inserts"] = dict(contact_totals)
         metadata["follow_up_tasks"] = dict(follow_up_totals)
         metadata["enforcement_initializations"] = enforcement_initializations
-        metadata["queued_jobs"] = (
-            queue_manager.summary() if queue_manager is not None else []
-        )
+        metadata["queued_jobs"] = queue_manager.summary() if queue_manager is not None else []
         metadata["raw_import_log"] = (
             raw_writer.summary() if raw_writer is not None else {"enabled": False}
         )
@@ -374,9 +361,7 @@ def run_jbi_900_import(
                 )
             db_conn.commit()
 
-            supabase_client = storage_client or create_supabase_client(
-                get_supabase_env()
-            )
+            supabase_client = storage_client or create_supabase_client(get_supabase_env())
             storage_path = f"{JBI_STORAGE_PREFIX}/{import_run_id}/{Path(csv_path).name}"
             try:
                 _upload_csv_to_storage(
@@ -556,9 +541,7 @@ def run_jbi_900_import(
                         core_judgments_stats["skipped"] += 1
                         operation["core_judgment_skipped"] = True
                         if core_judgment_result.judgment_id:
-                            operation["core_judgment_id"] = (
-                                core_judgment_result.judgment_id
-                            )
+                            operation["core_judgment_id"] = core_judgment_result.judgment_id
                     elif core_judgment_result.error:
                         core_judgments_stats["errors"] += 1
                         operation["core_judgment_error"] = core_judgment_result.error

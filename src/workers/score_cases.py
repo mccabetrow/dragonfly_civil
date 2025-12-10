@@ -223,7 +223,9 @@ def _recency_amount_score(case: dict) -> float:
     return _clamp(base + additional)
 
 
-def _total_score(identity: float, contact: float, assets: float, recency: float, adverse: float) -> float:
+def _total_score(
+    identity: float, contact: float, assets: float, recency: float, adverse: float
+) -> float:
     total = identity * 0.30 + contact * 0.25 + assets * 0.25 + recency * 0.10 - adverse
     return _clamp(total)
 
@@ -278,7 +280,9 @@ def _print_table(results: List[dict]) -> None:
 
 
 @app.command()
-def main(limit: Optional[int] = typer.Option(None, "--limit", help="Maximum cases to evaluate")) -> None:
+def main(
+    limit: Optional[int] = typer.Option(None, "--limit", help="Maximum cases to evaluate")
+) -> None:
     with postgrest() as client:
         cases = _fetch_cases(client, limit)
         if not cases:
@@ -292,10 +296,14 @@ def main(limit: Optional[int] = typer.Option(None, "--limit", help="Maximum case
         case_ids = [case["case_id"] for case in stale_cases]
         roles = _fetch_roles(client, case_ids)
         defendant_entities = {
-            case_id: [role["entity_id"] for role in roles.get(case_id, []) if role["role"] == "defendant"]
+            case_id: [
+                role["entity_id"] for role in roles.get(case_id, []) if role["role"] == "defendant"
+            ]
             for case_id in case_ids
         }
-        all_entity_ids = sorted({entity for entities in defendant_entities.values() for entity in entities})
+        all_entity_ids = sorted(
+            {entity for entities in defendant_entities.values() for entity in entities}
+        )
         entities = _fetch_entities(client, all_entity_ids)
         contacts = _fetch_contacts(client, all_entity_ids)
         assets = _fetch_assets(client, all_entity_ids)
@@ -309,7 +317,9 @@ def main(limit: Optional[int] = typer.Option(None, "--limit", help="Maximum case
             asset_score = _asset_score(entity_ids, assets)
             recency_score = _recency_amount_score(case)
             adverse_penalty = 0.0
-            total = _total_score(identity, contactability, asset_score, recency_score, adverse_penalty)
+            total = _total_score(
+                identity, contactability, asset_score, recency_score, adverse_penalty
+            )
             tier = _tier(total)
             payload = {
                 "case_id": case_id,

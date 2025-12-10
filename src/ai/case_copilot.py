@@ -15,7 +15,6 @@ from psycopg.types.json import Jsonb
 
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_CASE_COPILOT_MODEL = "gpt-4.1-mini"
@@ -122,18 +121,12 @@ class CaseCopilotResult:
 
     @property
     def recommended_actions(self) -> list[str]:
-        return [
-            suggestion.title
-            for suggestion in self.enforcement_suggestions
-            if suggestion.title
-        ]
+        return [suggestion.title for suggestion in self.enforcement_suggestions if suggestion.title]
 
     def to_log_metadata(self) -> dict[str, Any]:
         return {
             "summary": self.summary,
-            "enforcement_suggestions": [
-                s.to_payload() for s in self.enforcement_suggestions
-            ],
+            "enforcement_suggestions": [s.to_payload() for s in self.enforcement_suggestions],
             "draft_documents": [doc.to_payload() for doc in self.draft_documents],
             "risk": self.risk.to_payload(),
             "timeline_analysis": [ti.to_payload() for ti in self.timeline_analysis],
@@ -219,9 +212,7 @@ class DatabaseCaseContextRepository:
         model: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        with psycopg.connect(
-            self._db_url, autocommit=True
-        ) as conn, conn.cursor() as cur:
+        with psycopg.connect(self._db_url, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO public.case_copilot_logs (case_id, model, metadata)
@@ -256,9 +247,7 @@ class CaseCopilotService:
     ) -> CaseCopilotResult:
         case_id_str = str(case_id)
         context = self._repository.fetch_context(case_id_str)
-        context_json = json.dumps(
-            context.payload, indent=2, ensure_ascii=True, sort_keys=True
-        )
+        context_json = json.dumps(context.payload, indent=2, ensure_ascii=True, sort_keys=True)
         user_prompt = _build_user_prompt(context_json)
 
         metadata: dict[str, Any] = {
@@ -302,9 +291,7 @@ class CaseCopilotService:
                     metadata=status_meta,
                 )
             except Exception:  # pragma: no cover
-                logger.exception(
-                    "Failed to log Case Copilot error for case %s", case_id_str
-                )
+                logger.exception("Failed to log Case Copilot error for case %s", case_id_str)
             raise
 
 
@@ -371,23 +358,17 @@ def _coerce_suggestions(value: Any) -> list[EnforcementSuggestion]:
                 next_step = _optional_str(item.get("next_step"))
                 if title:
                     results.append(
-                        EnforcementSuggestion(
-                            title=title, rationale=rationale, next_step=next_step
-                        )
+                        EnforcementSuggestion(title=title, rationale=rationale, next_step=next_step)
                     )
             elif isinstance(item, str) and item.strip():
                 results.append(
-                    EnforcementSuggestion(
-                        title=item.strip(), rationale=None, next_step=None
-                    )
+                    EnforcementSuggestion(title=item.strip(), rationale=None, next_step=None)
                 )
     elif isinstance(value, str) and value.strip():
         for line in value.splitlines():
             line = line.strip()
             if line:
-                results.append(
-                    EnforcementSuggestion(title=line, rationale=None, next_step=None)
-                )
+                results.append(EnforcementSuggestion(title=line, rationale=None, next_step=None))
     if not results:
         raise RuntimeError("AI response missing enforcement_suggestions")
     return results
@@ -405,9 +386,7 @@ def _coerce_draft_documents(value: Any) -> list[DraftDocumentPlan]:
             objective = _optional_str(item.get("objective"))
             key_points = _coerce_string_list(item.get("key_points"))
             results.append(
-                DraftDocumentPlan(
-                    title=title, objective=objective, key_points=key_points
-                )
+                DraftDocumentPlan(title=title, objective=objective, key_points=key_points)
             )
     if not results:
         results.append(
@@ -472,9 +451,7 @@ def _coerce_contact_strategy(value: Any) -> list[ContactStrategy]:
             cadence = _optional_str(item.get("cadence"))
             notes = _optional_str(item.get("notes"))
             plays.append(
-                ContactStrategy(
-                    channel=channel, action=action, cadence=cadence, notes=notes
-                )
+                ContactStrategy(channel=channel, action=action, cadence=cadence, notes=notes)
             )
     return plays
 

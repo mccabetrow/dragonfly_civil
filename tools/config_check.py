@@ -129,9 +129,7 @@ def evaluate_env_requirements(
     return results
 
 
-def _db_credential_result(
-    target_env: SupabaseEnv, env_values: Mapping[str, str]
-) -> CheckResult:
+def _db_credential_result(target_env: SupabaseEnv, env_values: Mapping[str, str]) -> CheckResult:
     suffix = "_PROD" if target_env == "prod" else ""
     direct_url_name = f"SUPABASE_DB_URL_DIRECT{suffix}"
     url_name = f"SUPABASE_DB_URL{suffix}"

@@ -17,8 +17,8 @@ from src.supabase_client import describe_db_url, get_supabase_db_url, get_supaba
 from tools.schema_guard import (
     SCHEMA_FREEZE_PATH,
     SchemaDiff,
-    catalog_to_snapshot,
     capture_catalog,
+    catalog_to_snapshot,
     compute_snapshot_hash,
     diff_connection_against_freeze,
     format_drift,
@@ -483,9 +483,7 @@ def freeze_schema(env: str, output_path: Path = SCHEMA_FREEZE_PATH) -> Path:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2))
-    print(
-        f"[INFO] Schema freeze written to {output_path} (env={env}, hash={digest[:12]}...)"
-    )
+    print(f"[INFO] Schema freeze written to {output_path} (env={env}, hash={digest[:12]}...)")
     return output_path
 
 
@@ -508,9 +506,7 @@ def _format_hash(hash_value: str | None) -> str:
     return f"{hash_value[:12]}..."
 
 
-def _report_schema_freeze_result(
-    drift: SchemaDiff, *, freeze_hash: str | None
-) -> List[str]:
+def _report_schema_freeze_result(drift: SchemaDiff, *, freeze_hash: str | None) -> List[str]:
     if drift.is_clean():
         print(f"[OK] schema freeze: matches snapshot ({_format_hash(freeze_hash)})")
         return []
@@ -577,13 +573,9 @@ def _format_relation(expectation: RelationExpectation) -> str:
     return f"{expectation.schema}.{expectation.name}"
 
 
-def _check_expectation(
-    conn: psycopg.Connection, expectation: RelationExpectation
-) -> str | None:
+def _check_expectation(conn: psycopg.Connection, expectation: RelationExpectation) -> str | None:
     if expectation.object_type == "function":
-        signatures = _fetch_function_signatures(
-            conn, expectation.schema, expectation.name
-        )
+        signatures = _fetch_function_signatures(conn, expectation.schema, expectation.name)
         if not signatures:
             return f"{_format_function_signature(expectation.schema, expectation.name, expectation.function_arg_types or ())} is missing"
         if expectation.function_arg_types is None:

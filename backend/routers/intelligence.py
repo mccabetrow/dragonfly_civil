@@ -99,9 +99,7 @@ async def get_judgment_graph_endpoint(judgment_id: int) -> JudgmentGraphResponse
 
     except Exception as e:
         logger.error("Failed to get graph for judgment %s: %s", judgment_id, e)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to retrieve judgment graph: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve judgment graph: {str(e)}")
 
 
 @router.get(

@@ -26,11 +26,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.supabase_client import (
-    create_supabase_client,
-    get_supabase_db_url,
-    get_supabase_env,
-)
+from src.supabase_client import create_supabase_client, get_supabase_db_url, get_supabase_env
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +51,12 @@ def _ensure_demo_environment() -> None:
     demo_env = os.getenv("DEMO_ENV")
     if demo_env not in ALLOWED_DEMO_ENVS:
         raise RuntimeError(
-            "DEMO_ENV must be one of %s (got %r)"
-            % (sorted(ALLOWED_DEMO_ENVS), demo_env)
+            "DEMO_ENV must be one of %s (got %r)" % (sorted(ALLOWED_DEMO_ENVS), demo_env)
         )
 
     node_env = os.getenv("NODE_ENV")
     if node_env == PRODUCTION_NODE_ENV:
-        raise RuntimeError(
-            "NODE_ENV=production is not allowed for demo seed operations"
-        )
+        raise RuntimeError("NODE_ENV=production is not allowed for demo seed operations")
 
     supabase_env = get_supabase_env()
     if supabase_env == "prod":
@@ -179,9 +172,7 @@ def _verify_case_exists(
     columns = _table_columns(conn, "judgments", "cases")
     lookup_column = "case_id" if "case_id" in columns else "id"
 
-    case_expr = (
-        sql.SQL("case_id::text") if "case_id" in columns else sql.SQL("NULL::text")
-    )
+    case_expr = sql.SQL("case_id::text") if "case_id" in columns else sql.SQL("NULL::text")
     id_expr = sql.SQL("id::text") if "id" in columns else sql.SQL("NULL::text")
 
     query = sql.SQL(
@@ -517,9 +508,7 @@ def _resolve_case_fk_target(
     return target
 
 
-def _filter_existing_columns(
-    available: Iterable[str], payload: Dict[str, Any]
-) -> Dict[str, Any]:
+def _filter_existing_columns(available: Iterable[str], payload: Dict[str, Any]) -> Dict[str, Any]:
     available_set = set(available)
     return {key: value for key, value in payload.items() if key in available_set}
 
@@ -589,9 +578,7 @@ def _refresh_parties(
     inserted = 0
     with conn.cursor() as cur:
         # Demo-only cleanup: reset seeded parties before inserting fresh copies.
-        cur.execute(
-            "delete from judgments.parties where case_id = %s", (case_foreign_value,)
-        )
+        cur.execute("delete from judgments.parties where case_id = %s", (case_foreign_value,))
         deleted = cur.rowcount or 0
 
         for party in parties:
@@ -695,9 +682,7 @@ def _refresh_judgments(
     inserted = 0
     with conn.cursor() as cur:
         # Demo-only cleanup: remove existing synthetic judgments ahead of reseed.
-        cur.execute(
-            "delete from judgments.judgments where case_id = %s", (case_foreign_value,)
-        )
+        cur.execute("delete from judgments.judgments where case_id = %s", (case_foreign_value,))
         deleted = cur.rowcount or 0
 
         for entry in judgments:
@@ -726,9 +711,7 @@ def _refresh_judgments(
             )
 
             if not columns:
-                logger.debug(
-                    "No writable judgment columns detected for case=%s", case_number
-                )
+                logger.debug("No writable judgment columns detected for case=%s", case_number)
                 continue
 
             _execute_insert(cur, "judgments", "judgments", columns, values)
@@ -799,9 +782,7 @@ def _refresh_enrichment_runs(
             )
 
             if not columns:
-                logger.debug(
-                    "No writable enrichment columns detected for case=%s", case_number
-                )
+                logger.debug("No writable enrichment columns detected for case=%s", case_number)
                 continue
 
             _execute_insert(cur, "judgments", "enrichment_runs", columns, values)
@@ -1071,13 +1052,9 @@ def seed_demo_dataset(
             logger.info("demo_case_dry_run case=%s case_id=%s", case_number, case_id)
         else:
             if client is None:
-                raise RuntimeError(
-                    "Supabase client is required for non-dry-run seeding"
-                )
+                raise RuntimeError("Supabase client is required for non-dry-run seeding")
             case_payload = _build_case_payload(spec)
-            rpc_response = client.rpc(
-                "insert_or_get_case", {"payload": case_payload}
-            ).execute()
+            rpc_response = client.rpc("insert_or_get_case", {"payload": case_payload}).execute()
             rpc_case_id = _extract_case_id(getattr(rpc_response, "data", None))
             if not rpc_case_id:
                 raise RuntimeError(f"Unable to resolve case_id for {case_number}")
@@ -1094,9 +1071,7 @@ def seed_demo_dataset(
             )
 
         update_payload = _build_case_update_payload(spec)
-        _update_case_record(
-            conn, case_id, update_payload, case_number=case_number, dry_run=dry_run
-        )
+        _update_case_record(conn, case_id, update_payload, case_number=case_number, dry_run=dry_run)
 
         _refresh_parties(
             conn,

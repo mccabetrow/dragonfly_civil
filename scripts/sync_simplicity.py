@@ -177,9 +177,7 @@ def import_command(
                 typer.echo(f"HTTP error for case {case.index_number}: {exc}", err=True)
             except Exception as exc:  # noqa: BLE001
                 summary["errors"] += 1
-                typer.echo(
-                    f"Unexpected error for case {case.index_number}: {exc}", err=True
-                )
+                typer.echo(f"Unexpected error for case {case.index_number}: {exc}", err=True)
 
     typer.echo(json.dumps(summary, indent=2))
 

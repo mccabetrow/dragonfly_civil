@@ -80,8 +80,7 @@ def get_supabase_credentials(env: _EnvInput = None) -> tuple[str, str]:
         ]
         if missing:
             raise RuntimeError(
-                "Missing Supabase credential(s) for 'prod' environment: "
-                + ", ".join(missing)
+                "Missing Supabase credential(s) for 'prod' environment: " + ", ".join(missing)
             )
         return url, key
 
@@ -97,8 +96,7 @@ def get_supabase_credentials(env: _EnvInput = None) -> tuple[str, str]:
     ]
     if missing:
         raise RuntimeError(
-            "Missing Supabase credential(s) for 'dev' environment: "
-            + ", ".join(missing)
+            "Missing Supabase credential(s) for 'dev' environment: " + ", ".join(missing)
         )
     return url, key
 

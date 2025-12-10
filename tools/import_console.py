@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import psycopg
-from psycopg import errors as psycopg_errors, sql
-from psycopg.rows import dict_row
 import typer
+from psycopg import errors as psycopg_errors
+from psycopg import sql
+from psycopg.rows import dict_row
 
 from etl.src.importers.jbi_900 import JBI_SOURCE_SYSTEM, run_jbi_900_import
 from etl.src.importers.pipeline_support import RawImportWriter
@@ -93,9 +94,7 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
-def _print_table(
-    title: str, columns: Sequence[str], rows: Sequence[Mapping[str, Any]]
-) -> None:
+def _print_table(title: str, columns: Sequence[str], rows: Sequence[Mapping[str, Any]]) -> None:
     typer.echo(f"[import_console] {title}")
     if not rows:
         typer.echo("  (no rows)")
@@ -105,9 +104,7 @@ def _print_table(
         column: max(len(column), *(len(_format_value(row.get(column))) for row in rows))
         for column in columns
     }
-    header = "  " + "  ".join(
-        f"{column.upper():{widths[column]}}" for column in columns
-    )
+    header = "  " + "  ".join(f"{column.upper():{widths[column]}}" for column in columns)
     ruler = "  " + "  ".join("-" * widths[column] for column in columns)
     typer.echo(header)
     typer.echo(ruler)
@@ -250,9 +247,7 @@ def _fetch_judgments(
         return _fetch_dicts(conn, query, params)
     except psycopg_errors.UndefinedTable:
         conn.rollback()
-        typer.echo(
-            "[import_console] judgments.cases missing; falling back to metadata-only view."
-        )
+        typer.echo("[import_console] judgments.cases missing; falling back to metadata-only view.")
         fallback_where = ""
         fallback_params: list[Any] = []
         if source_system:
@@ -445,9 +440,7 @@ def import_simplicity_command(
     resume: bool = typer.Option(
         False, "--resume", help="Skip rows already logged in raw import tables"
     ),
-    skip_jobs: bool = typer.Option(
-        False, "--skip-jobs", help="Prevent queue_job RPC dispatch"
-    ),
+    skip_jobs: bool = typer.Option(False, "--skip-jobs", help="Prevent queue_job RPC dispatch"),
     env: SupabaseEnv | None = typer.Option(
         None, "--env", help="Override SUPABASE_MODE for this command"
     ),

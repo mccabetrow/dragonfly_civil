@@ -48,9 +48,7 @@ async def require_api_key(api_key: Optional[str] = Depends(API_KEY_HEADER)) -> N
     expected = (settings.N8N_API_KEY or "").strip()
     if not expected:
         LOGGER.error("N8N_API_KEY is not configured; refusing authenticated request")
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE, detail="API key not configured"
-        )
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="API key not configured")
     if not api_key or not secrets.compare_digest(api_key, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
@@ -72,9 +70,7 @@ class CaseParty(BaseModel):
         if self.emails:
             payload["emails"] = self.emails
         if self.phones:
-            payload["phones"] = [
-                phone.strip() for phone in self.phones if phone and phone.strip()
-            ]
+            payload["phones"] = [phone.strip() for phone in self.phones if phone and phone.strip()]
         if self.metadata:
             payload["metadata"] = self.metadata
         return payload
@@ -98,9 +94,7 @@ class CaseUpsertRequest(BaseModel):
 
     def to_supabase_payload(self) -> Dict[str, Any]:
         amount_cents = self.judgment_amount_cents
-        amount_dollars = (
-            round(amount_cents / 100.0, 2) if isinstance(amount_cents, int) else None
-        )
+        amount_dollars = round(amount_cents / 100.0, 2) if isinstance(amount_cents, int) else None
         case_section: Dict[str, Any] = {
             "case_number": self.case_number.strip().upper(),
             "source": self.source,
@@ -111,9 +105,7 @@ class CaseUpsertRequest(BaseModel):
         }
         if self.metadata:
             case_section["metadata"] = self.metadata
-        compact_case = {
-            key: value for key, value in case_section.items() if value is not None
-        }
+        compact_case = {key: value for key, value in case_section.items() if value is not None}
         entities = [self.plaintiff.to_supabase("plaintiff")] + [
             party.to_supabase("defendant") for party in self.defendants
         ]
@@ -191,9 +183,7 @@ def _compact_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return compact
 
 
-@app.post(
-    "/api/cases", response_model=CaseUpsertResponse, status_code=status.HTTP_200_OK
-)
+@app.post("/api/cases", response_model=CaseUpsertResponse, status_code=status.HTTP_200_OK)
 async def upsert_case_via_api(
     body: CaseUpsertRequest,
     _: None = Depends(require_api_key),
@@ -219,9 +209,7 @@ async def upsert_case_via_api(
         )
     except Exception as exc:
         LOGGER.exception("Supabase upsert failed for case %s", body.case_number)
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, detail="Failed to persist case"
-        ) from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Failed to persist case") from exc
 
     return CaseUpsertResponse(
         case_id=str(result.get("case_id")),
@@ -249,9 +237,7 @@ async def record_outreach_event(
         "sent_at": body.sent_at.isoformat() if body.sent_at else None,
         **body.metadata,
     }
-    clean_metadata = {
-        k: v for k, v in _compact_metadata(metadata).items() if v is not None
-    }
+    clean_metadata = {k: v for k, v in _compact_metadata(metadata).items() if v is not None}
 
     row: Dict[str, Any] = {
         "case_number": body.case_number.strip().upper(),
@@ -272,9 +258,7 @@ async def record_outreach_event(
 
     record = _first_dict(getattr(response, "data", None))
     if not record.get("id"):
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, detail="Supabase returned no outreach id"
-        )
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Supabase returned no outreach id")
 
     return OutreachEventResponse(id=int(record["id"]), status=row["status"])
 
@@ -298,9 +282,7 @@ async def record_inbound_webhook(
         "received_at": body.received_at.isoformat() if body.received_at else None,
         **body.metadata,
     }
-    clean_metadata = {
-        k: v for k, v in _compact_metadata(metadata).items() if v is not None
-    }
+    clean_metadata = {k: v for k, v in _compact_metadata(metadata).items() if v is not None}
 
     row: Dict[str, Any] = {
         "case_number": body.case_number.strip().upper(),
@@ -314,18 +296,14 @@ async def record_inbound_webhook(
     try:
         response = supabase_client.table("outreach_log").insert(row).execute()
     except Exception as exc:
-        LOGGER.exception(
-            "Failed to record inbound webhook for case %s", body.case_number
-        )
+        LOGGER.exception("Failed to record inbound webhook for case %s", body.case_number)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY, detail="Failed to persist inbound webhook"
         ) from exc
 
     record = _first_dict(getattr(response, "data", None))
     if not record.get("id"):
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, detail="Supabase returned no inbound id"
-        )
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Supabase returned no inbound id")
 
     status_updated = False
     if body.next_case_status:
@@ -338,9 +316,7 @@ async def record_inbound_webhook(
             LOGGER.exception("Failed to update case status for %s", body.case_number)
             status_updated = False
 
-    return InboundWebhookResponse(
-        id=int(record["id"]), case_status_updated=status_updated
-    )
+    return InboundWebhookResponse(id=int(record["id"]), case_status_updated=status_updated)
 
 
 @app.post(
@@ -366,9 +342,7 @@ async def complete_task(
         )
     except Exception as exc:
         LOGGER.exception("Failed to update task %s", body.task_id)
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, detail="Failed to update task"
-        ) from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Failed to update task") from exc
 
     record = _first_dict(getattr(update_response, "data", None))
     if not record:

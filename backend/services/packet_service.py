@@ -176,9 +176,7 @@ async def load_judgment_context(judgment_id: int) -> dict[str, Any]:
         bank_name = None
         bank_address = None
 
-    judgment_amount_decimal = (
-        Decimal(str(judgment_amount)) if judgment_amount else Decimal("0")
-    )
+    judgment_amount_decimal = Decimal(str(judgment_amount)) if judgment_amount else Decimal("0")
 
     # Get interest rate from settings
     settings = get_settings()
@@ -343,8 +341,7 @@ async def generate_packet(
     # Validate packet type
     if packet_type not in PACKET_TYPES:
         raise PacketError(
-            f"Invalid packet type: {packet_type}. "
-            f"Valid types: {list(PACKET_TYPES.keys())}"
+            f"Invalid packet type: {packet_type}. " f"Valid types: {list(PACKET_TYPES.keys())}"
         )
 
     template_filename = PACKET_TYPES[packet_type]
@@ -352,8 +349,7 @@ async def generate_packet(
 
     if not template_path.exists():
         raise PacketError(
-            f"Template not found: {template_path}. "
-            "Please ensure the template file exists."
+            f"Template not found: {template_path}. " "Please ensure the template file exists."
         )
 
     logger.info(
@@ -420,9 +416,7 @@ async def generate_packet(
                 packet_url = signed_url_response["signedURL"]
             else:
                 # Fallback to public URL if signed URL fails
-                packet_url = supabase.storage.from_(bucket_name).get_public_url(
-                    storage_path
-                )
+                packet_url = supabase.storage.from_(bucket_name).get_public_url(storage_path)
 
             logger.info(
                 f"Packet uploaded successfully: {storage_path}",

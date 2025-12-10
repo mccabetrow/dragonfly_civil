@@ -12,11 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from ..services.event_service import (
-    EventDTO,
-    get_timeline_for_entity,
-    get_timeline_for_judgment,
-)
+from ..services.event_service import EventDTO, get_timeline_for_entity, get_timeline_for_judgment
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +30,7 @@ class TimelineEventResponse(BaseModel):
     id: str = Field(..., description="Event UUID")
     event_type: str = Field(..., description="Type of event")
     created_at: str = Field(..., description="ISO timestamp of when the event occurred")
-    payload: dict[str, Any] = Field(
-        default_factory=dict, description="Event-specific data"
-    )
+    payload: dict[str, Any] = Field(default_factory=dict, description="Event-specific data")
     # Human-readable summary
     summary: str = Field(..., description="Human-readable event summary")
 
