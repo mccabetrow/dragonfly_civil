@@ -41,6 +41,7 @@ import {
 } from '../../hooks/useEnforcementRadar';
 import { useEnforcementActions } from '../../hooks/useEnforcementActions';
 import { useOnRefresh } from '../../context/RefreshContext';
+import { telemetry } from '../../utils/logUiAction';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -529,6 +530,17 @@ const EnforcementActionCenter: FC = () => {
   // Handle packet generation
   const handleGeneratePacket = useCallback(
     async (judgmentId: string) => {
+      // Find the row data for telemetry context
+      const row = data?.find((r) => r.id === judgmentId);
+
+      // Log telemetry for the packet generation click
+      telemetry.enforcementGeneratePacketClicked({
+        judgmentId,
+        strategy: row?.offerStrategy,
+        collectabilityScore: row?.collectabilityScore ?? undefined,
+        judgmentAmount: row?.judgmentAmount,
+      });
+
       const toastId = addToast({
         type: 'loading',
         message: 'Generating enforcement packet...',
@@ -553,7 +565,7 @@ const EnforcementActionCenter: FC = () => {
         setTimeout(() => removeToast(toastId), 5000);
       }
     },
-    [generatePacket, addToast, updateToast, removeToast]
+    [data, generatePacket, addToast, updateToast, removeToast]
   );
 
   // Handle sort

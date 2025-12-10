@@ -49,6 +49,7 @@ import { useIntakeStationData, type IntakeBatchSummary } from '../hooks/useIntak
 import { useUploadIntake } from '../hooks/useUploadIntake';
 import { useRefreshBus } from '../context/RefreshContext';
 import { cn } from '../lib/design-tokens';
+import { telemetry } from '../utils/logUiAction';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -226,6 +227,15 @@ const UploadZone: FC<UploadZoneProps> = ({ onUploadComplete }) => {
       if (csvFile) {
         const result = await uploadFile(csvFile);
         if (result) {
+          // Log telemetry for successful upload
+          telemetry.intakeUploadSubmitted({
+            batchId: result.batchId,
+            filename: result.filename,
+            rowCount: result.totalRows,
+            validRows: result.validRows,
+            errorRows: result.errorRows,
+            source: 'simplicity',
+          });
           onUploadComplete();
         }
       }
@@ -239,6 +249,15 @@ const UploadZone: FC<UploadZoneProps> = ({ onUploadComplete }) => {
       if (file) {
         const result = await uploadFile(file);
         if (result) {
+          // Log telemetry for successful upload
+          telemetry.intakeUploadSubmitted({
+            batchId: result.batchId,
+            filename: result.filename,
+            rowCount: result.totalRows,
+            validRows: result.validRows,
+            errorRows: result.errorRows,
+            source: 'simplicity',
+          });
           onUploadComplete();
         }
       }

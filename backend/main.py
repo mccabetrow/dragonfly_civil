@@ -55,6 +55,7 @@ from .routers.ops_guardian import router as ops_guardian_router  # noqa: E402
 from .routers.packets import router as packets_router  # noqa: E402
 from .routers.portfolio import router as portfolio_router  # noqa: E402
 from .routers.search import router as search_router  # noqa: E402
+from .routers.telemetry import router as telemetry_router  # noqa: E402
 from .routers.webhooks import router as webhooks_router  # noqa: E402
 from .scheduler import init_scheduler  # noqa: E402
 
@@ -250,6 +251,11 @@ def create_app() -> FastAPI:
     app.include_router(
         ops_guardian_router, prefix="/api/v1", tags=["ops"]
     )  # internal: /ops/guardian
+
+    # v1 Telemetry - UI action tracking
+    app.include_router(
+        telemetry_router, prefix="/api", tags=["telemetry"]
+    )  # internal: /v1/telemetry
 
     # Legacy / transitional routers (will migrate to v1)
     app.include_router(ingest_router, prefix="/api", tags=["ingest-legacy"])
