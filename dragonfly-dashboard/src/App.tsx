@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import AppShell from './layouts/AppShell';
+import AppShell from './layouts/AppShellNew';
 import { ToastProvider } from './components/ui/Toast';
 import { RefreshProvider } from './context/RefreshContext';
 import CommandPalette from './components/ui/CommandPalette';
@@ -9,13 +9,13 @@ import PortfolioDashboardPage from './pages/PortfolioDashboardPage';
 import ExecutiveDashboardPageNew from './pages/ExecutiveDashboardPageNew';
 import OpsPage from './pages/OpsPage';
 import OpsIntakePage from './pages/OpsIntakePage';
-import IntakeStationPage from './pages/IntakeStationPage';
+import IntakeStationPage from './pages/IntakeStationPageNew';
 import CollectabilityPageNew from './pages/CollectabilityPageNew';
 import CasesPageNew from './pages/CasesPageNew';
 import SettingsPageNew from './pages/SettingsPageNew';
 import DataIngestionPage from './pages/DataIngestionPage';
 import HelpPageNew from './pages/HelpPageNew';
-import EnforcementRadarPage from './pages/enforcement/EnforcementRadarPage';
+import EnforcementActionCenter from './pages/enforcement/EnforcementActionCenter';
 import EnforcementEnginePage from './pages/enforcement/EnforcementEnginePage';
 import OpsQueuePage from './pages/OpsQueuePage';
 import CeoOverviewPage from './pages/CeoOverviewPage';
@@ -42,7 +42,7 @@ const App: React.FC = () => {
               <Route path="/ops/queue" element={<OpsQueuePage />} />
               <Route path="/ops/console" element={<OpsCommandCenter />} />
               <Route path="/intake" element={<IntakeStationPage />} />
-              <Route path="/radar" element={<EnforcementRadarPage />} />
+              <Route path="/radar" element={<EnforcementActionCenter />} />
               <Route path="/enforcement/engine" element={<EnforcementEnginePage />} />
               <Route path="/collectability" element={<CollectabilityPageNew />} />
               <Route path="/cases" element={<CasesPageNew />} />

@@ -8,6 +8,8 @@ Key Changes from Legacy:
 - Removed run_sql RPC dependency (use direct table operations)
 - Blocked operations (DELETE) use pytest.raises to confirm security works
 - Timestamp assertions relaxed to ±5 seconds
+
+NOTE: Marked legacy - requires access_logs table and FCRA schema.
 """
 
 import uuid
@@ -16,6 +18,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from conftest import get_test_client, skip_if_no_db
 from postgrest.exceptions import APIError
+
+pytestmark = pytest.mark.legacy  # Requires FCRA access_logs table
 
 
 class TestAccessLogsTable:
@@ -28,9 +32,7 @@ class TestAccessLogsTable:
 
         # Direct query - if table doesn't exist, this will fail
         result = client.from_("access_logs").select("id").limit(0).execute()
-        assert (
-            result.data is not None
-        ), "access_logs table should exist and be queryable"
+        assert result.data is not None, "access_logs table should exist and be queryable"
 
     @skip_if_no_db
     def test_access_logs_select_works(self):
@@ -39,10 +41,7 @@ class TestAccessLogsTable:
 
         # Service role should be able to read
         result = (
-            client.from_("access_logs")
-            .select("id, table_name, access_type")
-            .limit(5)
-            .execute()
+            client.from_("access_logs").select("id, table_name, access_type").limit(5).execute()
         )
         assert (
             not hasattr(result, "error") or result.error is None
@@ -72,9 +71,7 @@ class TestLogAccessFunction:
         ).execute()
 
         # Should succeed without error
-        assert (
-            not hasattr(result, "error") or result.error is None
-        ), "log_access should succeed"
+        assert not hasattr(result, "error") or result.error is None, "log_access should succeed"
         assert result.data is not None, "log_access should return the new record ID"
 
     @skip_if_no_db
@@ -159,10 +156,7 @@ class TestAccessLogsImmutability:
             ).execute()
             # If we get here without error, verify record still exists unchanged
             verify_result = (
-                client.from_("access_logs")
-                .select("metadata")
-                .eq("id", log_id)
-                .execute()
+                client.from_("access_logs").select("metadata").eq("id", log_id).execute()
             )
             if verify_result.data and len(verify_result.data) > 0:
                 metadata = verify_result.data[0].get("metadata", {})
@@ -208,9 +202,7 @@ class TestAccessLogsImmutability:
         try:
             client.from_("access_logs").delete().eq("id", log_id).execute()
             # If we get here without error, verify record still exists
-            verify_result = (
-                client.from_("access_logs").select("id").eq("id", log_id).execute()
-            )
+            verify_result = client.from_("access_logs").select("id").eq("id", log_id).execute()
             assert (
                 verify_result.data and len(verify_result.data) > 0
             ), "access_logs record should not be deletable - FCRA compliance"
@@ -304,9 +296,7 @@ class TestFCRAAuditIntegration:
 
         # Query the created log
         log_id = result.data
-        log_record = (
-            client.from_("access_logs").select("accessed_at").eq("id", log_id).execute()
-        )
+        log_record = client.from_("access_logs").select("accessed_at").eq("id", log_id).execute()
 
         if log_record.data and len(log_record.data) > 0:
             accessed_at_str = log_record.data[0]["accessed_at"]

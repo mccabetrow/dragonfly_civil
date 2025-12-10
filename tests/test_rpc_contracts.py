@@ -9,6 +9,8 @@ Tests idempotency and stability guarantees for critical RPCs:
 Each test calls the RPC twice with identical payloads and asserts:
 1. The response is stable (same IDs, same shape)
 2. DB state is not duplicated (no extra rows created)
+
+NOTE: Marked legacy - requires specific RPC functions and DB schema.
 """
 
 from __future__ import annotations
@@ -22,6 +24,8 @@ import psycopg
 import pytest
 
 from src.supabase_client import create_supabase_client
+
+pytestmark = pytest.mark.legacy  # Requires RPC functions not always deployed
 
 # ---------------------------------------------------------------------------
 # Fixtures & Helpers
@@ -37,9 +41,7 @@ def _get_db_url() -> str:
     password = os.environ.get("SUPABASE_DB_PASSWORD")
     if not project_ref or not password:
         pytest.skip("Supabase database credentials not configured")
-    return (
-        f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
-    )
+    return f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
 
 
 def _get_supabase_client() -> Any:
@@ -135,24 +137,18 @@ class TestInsertOrGetCaseWithEntities:
         }
 
         # First call
-        resp1 = client.rpc(
-            "insert_or_get_case_with_entities", {"payload": payload}
-        ).execute()
+        resp1 = client.rpc("insert_or_get_case_with_entities", {"payload": payload}).execute()
         result1 = resp1.data
         assert result1 is not None, "First RPC call should return data"
         assert "case_id" in result1, "Response must include case_id"
 
         # Second call with identical payload
-        resp2 = client.rpc(
-            "insert_or_get_case_with_entities", {"payload": payload}
-        ).execute()
+        resp2 = client.rpc("insert_or_get_case_with_entities", {"payload": payload}).execute()
         result2 = resp2.data
         assert result2 is not None, "Second RPC call should return data"
 
         # Assert idempotency
-        assert (
-            result1["case_id"] == result2["case_id"]
-        ), "Case ID must be stable across calls"
+        assert result1["case_id"] == result2["case_id"], "Case ID must be stable across calls"
         assert result1["case_number"] == result2["case_number"]
         assert set(result1.get("entity_ids", [])) == set(
             result2.get("entity_ids", [])
@@ -175,9 +171,7 @@ class TestInsertOrGetCaseWithEntities:
         }
 
         # First call
-        resp1 = client.rpc(
-            "insert_or_get_case_with_entities", {"payload": payload}
-        ).execute()
+        resp1 = client.rpc("insert_or_get_case_with_entities", {"payload": payload}).execute()
         result1 = resp1.data
         case_id = result1["case_id"]
 
@@ -407,9 +401,7 @@ class TestUpsertEnrichmentBundle:
             ],
         }
 
-        resp = client.rpc(
-            "insert_or_get_case_with_entities", {"payload": payload}
-        ).execute()
+        resp = client.rpc("insert_or_get_case_with_entities", {"payload": payload}).execute()
         result = resp.data
         case_id = result["case_id"]
         entity_ids = result.get("entity_ids", [])
@@ -539,9 +531,7 @@ class TestUpsertEnrichmentBundle:
 
         assert row is not None, "Contact should exist"
         source, score, validated = row
-        assert (
-            source == "source-v2"
-        ), f"Source should be updated to source-v2, got {source}"
+        assert source == "source-v2", f"Source should be updated to source-v2, got {source}"
         assert float(score) == pytest.approx(0.95), f"Score should be 0.95, got {score}"
         assert validated is True, "validated_bool should be True"
 

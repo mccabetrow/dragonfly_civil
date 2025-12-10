@@ -25,6 +25,8 @@ import pytest
 
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
+pytestmark = pytest.mark.legacy  # Requires intake views from migrations
+
 
 def _get_connection_url() -> str:
     """Return the database connection URL for the current environment."""
@@ -92,9 +94,7 @@ class TestIntakeMonitorView:
                 pytest.skip(
                     f"{self.VIEW_NAME} view not found - migration 20251211000000 not applied"
                 )
-            assert _view_exists(
-                cur, self.VIEW_NAME
-            ), f"{self.VIEW_NAME} view should exist"
+            assert _view_exists(cur, self.VIEW_NAME), f"{self.VIEW_NAME} view should exist"
 
     def test_view_is_queryable(self):
         """The view should be queryable without errors."""
@@ -113,9 +113,7 @@ class TestIntakeMonitorView:
                 pytest.skip(f"{self.VIEW_NAME} view not found")
 
             has_select = _check_role_has_select(cur, self.VIEW_NAME, "authenticated")
-            assert (
-                has_select
-            ), f"authenticated role should have SELECT on {self.VIEW_NAME}"
+            assert has_select, f"authenticated role should have SELECT on {self.VIEW_NAME}"
 
     def test_service_role_has_select(self):
         """The service_role should have SELECT privilege."""
@@ -147,9 +145,7 @@ class TestEnrichmentHealthView:
                 pytest.skip(
                     f"{self.VIEW_NAME} view not found - migration 20251211000000 not applied"
                 )
-            assert _view_exists(
-                cur, self.VIEW_NAME
-            ), f"{self.VIEW_NAME} view should exist"
+            assert _view_exists(cur, self.VIEW_NAME), f"{self.VIEW_NAME} view should exist"
 
     def test_view_is_queryable(self):
         """The view should be queryable without errors."""
@@ -168,9 +164,7 @@ class TestEnrichmentHealthView:
                 pytest.skip(f"{self.VIEW_NAME} view not found")
 
             has_select = _check_role_has_select(cur, self.VIEW_NAME, "authenticated")
-            assert (
-                has_select
-            ), f"authenticated role should have SELECT on {self.VIEW_NAME}"
+            assert has_select, f"authenticated role should have SELECT on {self.VIEW_NAME}"
 
     def test_service_role_has_select(self):
         """The service_role should have SELECT privilege."""

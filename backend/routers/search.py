@@ -75,10 +75,10 @@ class SemanticSearchResponse(BaseModel):
     summary="Semantic search across judgments",
     description="""
     Search for judgments using natural language queries.
-    
+
     Uses OpenAI embeddings and pgvector for semantic similarity matching.
     Returns judgments ranked by relevance to the query.
-    
+
     Example queries:
     - "construction company that didn't pay"
     - "restaurant in Manhattan"
@@ -206,3 +206,118 @@ async def search_health() -> dict[str, Any]:
     status["healthy"] = is_healthy
 
     return status
+
+
+# ---------------------------------------------------------------------------
+# Quick Text Search (for Global Search in UI)
+# ---------------------------------------------------------------------------
+
+
+class QuickSearchResult(BaseModel):
+    """A single result from quick text search."""
+
+    id: str
+    type: str = "judgment"
+    title: str
+    subtitle: str
+    path: str
+
+
+class QuickSearchResponse(BaseModel):
+    """Response from quick text search."""
+
+    items: list[QuickSearchResult]
+
+
+@router.get(
+    "/judgments",
+    response_model=QuickSearchResponse,
+    summary="Quick text search for judgments",
+    description="""
+    Fast text-based search for the global search UI.
+
+    Searches by case number, defendant name, or plaintiff name.
+    Uses ILIKE for substring matching.
+    """,
+)
+async def quick_search_judgments(
+    q: str = "",
+    limit: int = 8,
+) -> QuickSearchResponse:
+    """
+    Quick text search for global search modal.
+
+    Matches case_number, defendant_name, plaintiff_name using ILIKE.
+    Returns results formatted for the command palette UI.
+    """
+    if not q or len(q) < 2:
+        return QuickSearchResponse(items=[])
+
+    search_term = f"%{q}%"
+
+    try:
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    id,
+                    case_number,
+                    defendant_name,
+                    plaintiff_name,
+                    judgment_amount,
+                    tier
+                FROM public.judgments
+                WHERE
+                    case_number ILIKE $1
+                    OR defendant_name ILIKE $1
+                    OR plaintiff_name ILIKE $1
+                ORDER BY
+                    CASE
+                        WHEN case_number ILIKE $1 THEN 1
+                        WHEN defendant_name ILIKE $1 THEN 2
+                        ELSE 3
+                    END,
+                    created_at DESC
+                LIMIT $2
+                """,
+                search_term,
+                min(limit, 20),
+            )
+    except Exception as e:
+        logger.error(f"Quick search failed: {e}")
+        return QuickSearchResponse(items=[])
+
+    items = []
+    for row in rows:
+        judgment_id = str(row["id"])
+        case_number = row.get("case_number") or "Unknown"
+        defendant = row.get("defendant_name") or "Unknown Defendant"
+        plaintiff = row.get("plaintiff_name") or ""
+        amount = row.get("judgment_amount")
+        tier = row.get("tier") or ""
+
+        # Format amount
+        amount_str = f"${amount:,.2f}" if amount else ""
+        tier_str = f"[{tier}]" if tier else ""
+
+        # Build subtitle
+        subtitle_parts = []
+        if plaintiff:
+            subtitle_parts.append(f"v. {plaintiff}")
+        if amount_str:
+            subtitle_parts.append(amount_str)
+        if tier_str:
+            subtitle_parts.append(tier_str)
+
+        items.append(
+            QuickSearchResult(
+                id=judgment_id,
+                type="judgment",
+                title=f"{case_number} — {defendant}",
+                subtitle=" • ".join(subtitle_parts) if subtitle_parts else "No details",
+                path=f"/cases?id={judgment_id}",
+            )
+        )
+
+    logger.info(f"Quick search '{q}' returned {len(items)} results")
+    return QuickSearchResponse(items=items)

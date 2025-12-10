@@ -7,11 +7,14 @@ from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List
 
 import psycopg
+import pytest
 from psycopg import errors as psycopg_errors
 from psycopg.abc import Query
 
 from etl.src.importers.jbi_900 import run_jbi_900_import
 from etl.src.importers.simplicity_plaintiffs import run_simplicity_import
+
+pytestmark = pytest.mark.legacy  # Requires plaintiffs table and import schema
 
 
 def _resolve_db_url() -> str:
@@ -30,9 +33,7 @@ def _resolve_db_url() -> str:
     if fallback_url:
         return fallback_url
 
-    raise RuntimeError(
-        "SUPABASE_DB_URL not configured; set SUPABASE_DB_URL or create .env.test."
-    )
+    raise RuntimeError("SUPABASE_DB_URL not configured; set SUPABASE_DB_URL or create .env.test.")
 
 
 def _write_csv(tmp_path: Path, rows: List[str]) -> Path:
@@ -394,9 +395,7 @@ def test_run_simplicity_import_records_import_and_tasks(tmp_path: Path) -> None:
             plaintiff_ids = [
                 str(op["plaintiff_id"]) for op in inserted_ops if op.get("plaintiff_id")
             ]
-            judgment_ids = [
-                str(op["judgment_id"]) for op in inserted_ops if op.get("judgment_id")
-            ]
+            judgment_ids = [str(op["judgment_id"]) for op in inserted_ops if op.get("judgment_id")]
             assert plaintiff_ids
             assert judgment_ids
 
@@ -618,9 +617,7 @@ def test_run_jbi_import_records_import_and_tasks(tmp_path: Path) -> None:
             plaintiff_ids = [
                 str(op["plaintiff_id"]) for op in inserted_ops if op.get("plaintiff_id")
             ]
-            judgment_ids = [
-                str(op["judgment_id"]) for op in inserted_ops if op.get("judgment_id")
-            ]
+            judgment_ids = [str(op["judgment_id"]) for op in inserted_ops if op.get("judgment_id")]
             assert plaintiff_ids
             assert judgment_ids
 

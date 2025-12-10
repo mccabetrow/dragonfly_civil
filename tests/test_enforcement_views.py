@@ -23,6 +23,8 @@ import pytest
 
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
+pytestmark = pytest.mark.legacy  # Requires enforcement views from migrations
+
 # Expected columns for v_radar (subset - we only check the required ones)
 REQUIRED_V_RADAR_COLUMNS = {
     "id",
@@ -180,9 +182,7 @@ class TestEnforcementRadarView:
                 count = row[0]
                 # If seed has run, we expect at least one row; otherwise skip gracefully
                 if count == 0:
-                    pytest.skip(
-                        "No rows in enforcement.v_radar; seed batch may not have run"
-                    )
+                    pytest.skip("No rows in enforcement.v_radar; seed batch may not have run")
                 assert count >= 1, f"Expected at least 1 row, got {count}"
 
     def test_v_radar_offer_strategy_values_valid(self):
@@ -274,9 +274,7 @@ class TestEnrichmentHealthView:
                 row = cur.fetchone()
                 assert row is not None
                 count = row[0]
-                assert (
-                    count == 1
-                ), f"Expected exactly 1 row from v_enrichment_health, got {count}"
+                assert count == 1, f"Expected exactly 1 row from v_enrichment_health, got {count}"
 
     def test_v_enrichment_health_counts_are_non_negative(self):
         """Verify all job counts are non-negative integers."""

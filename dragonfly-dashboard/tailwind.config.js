@@ -118,11 +118,22 @@ export default {
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'glow': 'glow 2s ease-in-out infinite alternate',
+        'pulse-once': 'pulse-once 2s ease-out forwards',
+        'flash-green': 'flash-green 2s ease-out forwards',
       },
       keyframes: {
         glow: {
           '0%': { opacity: 0.5 },
           '100%': { opacity: 1 },
+        },
+        'pulse-once': {
+          '0%': { opacity: 1, transform: 'scale(1)' },
+          '50%': { opacity: 0.8, transform: 'scale(1.01)' },
+          '100%': { opacity: 1, transform: 'scale(1)' },
+        },
+        'flash-green': {
+          '0%': { backgroundColor: 'rgba(16, 185, 129, 0.3)' },
+          '100%': { backgroundColor: 'transparent' },
         },
       },
     },

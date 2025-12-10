@@ -98,36 +98,6 @@ class CEOCommandCenterMetrics(BaseModel):
     Sourced from analytics.v_ceo_command_center view.
     """
 
-
-class EnforcementEngineMetrics(BaseModel):
-    """
-    Enforcement Engine Worker metrics for operations dashboard.
-
-    Single-row summary from public.enforcement_activity_metrics():
-      - Plans created (24h, 7d, total)
-      - Packets generated (24h, 7d, total)
-      - Worker status (active, pending, completed, failed)
-    """
-
-    # Plan metrics
-    plans_created_24h: int
-    plans_created_7d: int
-    total_plans: int
-
-    # Packet metrics
-    packets_generated_24h: int
-    packets_generated_7d: int
-    total_packets: int
-
-    # Worker metrics
-    active_workers: int
-    pending_jobs: int
-    completed_24h: int
-    failed_24h: int
-
-    # Timestamp
-    generated_at: str
-
     # Portfolio Health
     total_judgments: int
     total_judgment_value: float
@@ -158,6 +128,36 @@ class EnforcementEngineMetrics(BaseModel):
     last_successful_import_ts: str | None
 
     # Generated timestamp
+    generated_at: str
+
+
+class EnforcementEngineMetrics(BaseModel):
+    """
+    Enforcement Engine Worker metrics for operations dashboard.
+
+    Single-row summary from public.enforcement_activity_metrics():
+      - Plans created (24h, 7d, total)
+      - Packets generated (24h, 7d, total)
+      - Worker status (active, pending, completed, failed)
+    """
+
+    # Plan metrics
+    plans_created_24h: int
+    plans_created_7d: int
+    total_plans: int
+
+    # Packet metrics
+    packets_generated_24h: int
+    packets_generated_7d: int
+    total_packets: int
+
+    # Worker metrics
+    active_workers: int
+    pending_jobs: int
+    completed_24h: int
+    failed_24h: int
+
+    # Timestamp
     generated_at: str
 
 

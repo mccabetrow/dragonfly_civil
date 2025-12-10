@@ -189,7 +189,7 @@ function normalizeApiBatch(raw: ApiBatchRow): IntakeBatchSummary {
 // HOOK
 // ═══════════════════════════════════════════════════════════════════════════
 
-const POLLING_INTERVAL_MS = 30_000; // 30 seconds
+const POLLING_INTERVAL_MS = 5_000; // 5 seconds for real-time feel
 
 export function useIntakeStationData(): UseIntakeStationDataResult {
   const [data, setData] = useState<IntakeStationData>({

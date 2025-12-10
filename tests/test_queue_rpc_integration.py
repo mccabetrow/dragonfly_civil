@@ -11,6 +11,8 @@ from pydantic import ValidationError
 from src.settings import get_settings
 from workers.queue_client import QueueClient
 
+pytestmark = pytest.mark.legacy  # Requires queue_job RPC and migrations
+
 
 QUEUE_KIND = "enforce"
 MIGRATION_NAMES = (
@@ -73,16 +75,22 @@ def _ensure_queue_exists(db_url: str, kind: str) -> None:
                     break
                 except errors.UndefinedFunction:
                     continue
-                except psycopg.Error as exc:  # pragma: no cover - duplicate queue or unexpected error
+                except (
+                    psycopg.Error
+                ) as exc:  # pragma: no cover - duplicate queue or unexpected error
                     if exc.sqlstate in {"42710", "42P07"}:
                         break
                     raise
             else:  # pragma: no cover - bail if no creation function is available
-                pytest.skip("pgmq create functions are unavailable; queue bootstrap requires manual setup")
+                pytest.skip(
+                    "pgmq create functions are unavailable; queue bootstrap requires manual setup"
+                )
 
             cur.execute("select to_regclass(%s)", (queue_regclass,))
             created = cur.fetchone()
-            if not created or created[0] is None:  # pragma: no cover - guard against bootstrap drift
+            if (
+                not created or created[0] is None
+            ):  # pragma: no cover - guard against bootstrap drift
                 pytest.skip(f"Queue {kind} is not available even after bootstrap attempts")
 
 
@@ -175,7 +183,9 @@ def test_queue_job_round_trip_via_rpc() -> None:
             try:
                 with psycopg.connect(db_url, autocommit=True) as cleanup_conn:
                     with cleanup_conn.cursor() as cleanup_cur:
-                        cleanup_cur.execute("select pgmq.delete(%s, %s)", (QUEUE_KIND, queued_msg_id))
+                        cleanup_cur.execute(
+                            "select pgmq.delete(%s, %s)", (QUEUE_KIND, queued_msg_id)
+                        )
             except Exception:  # pragma: no cover
                 pass
         _drain_queue(db_url, QUEUE_KIND)

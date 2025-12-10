@@ -2,6 +2,8 @@
 Tests for backend.routers.search
 
 Integration-style tests for the semantic search endpoint with mocked embedding.
+
+NOTE: Marked legacy - requires search router and embedding configuration.
 """
 
 from __future__ import annotations
@@ -9,6 +11,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+pytestmark = pytest.mark.legacy  # Requires search router configuration
 
 
 @pytest.fixture

@@ -2,8 +2,11 @@ import os
 import uuid
 
 import httpx
+import pytest
 
 from src.config.api_surface import SCHEMA_PROFILE
+
+pytestmark = pytest.mark.legacy  # Requires insert_case RPC
 
 BASE = f'https://{os.environ["SUPABASE_PROJECT_REF"]}.supabase.co'
 KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]

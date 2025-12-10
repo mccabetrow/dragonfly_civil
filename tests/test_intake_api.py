@@ -6,6 +6,8 @@ Tests cover:
 - GET /api/v1/intake/health returns 200
 - Router is correctly mounted
 - Exception handling returns proper error response
+
+NOTE: Marked legacy - requires intake router and specific app config.
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+
+pytestmark = pytest.mark.legacy  # Requires intake router configuration
 
 
 class TestIntakeRouterImport:

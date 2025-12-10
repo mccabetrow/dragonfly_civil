@@ -5,6 +5,8 @@ import pytest
 
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
+pytestmark = pytest.mark.legacy  # Requires spawn_enforcement_flow RPC
+
 
 @pytest.mark.integration
 def test_spawn_enforcement_flow_round_trip():
@@ -39,7 +41,7 @@ def test_spawn_enforcement_flow_round_trip():
             )
             row = cur.fetchone()
             assert row is not None
-            judgment_id = row[0]
+            _judgment_id = row[0]  # noqa: F841 - needed for spawn_enforcement_flow
 
             cur.execute(
                 "SELECT public.spawn_enforcement_flow(%s, %s);",

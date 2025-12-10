@@ -14,7 +14,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-from ..db import get_pool
+from ..db import get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +50,10 @@ class CreateOfferRequest(BaseModel):
 class UpdateOfferStatusRequest(BaseModel):
     """Request body for updating an offer's status."""
 
-    status: Literal["offered", "negotiation", "accepted", "rejected", "expired"] = (
-        Field(..., description="New status for the offer")
+    status: Literal["offered", "negotiation", "accepted", "rejected", "expired"] = Field(
+        ..., description="New status for the offer"
     )
-    operator_notes: Optional[str] = Field(
-        default=None, description="Optional notes to append"
-    )
+    operator_notes: Optional[str] = Field(default=None, description="Optional notes to append")
 
 
 class OfferResponse(BaseModel):
@@ -77,9 +75,7 @@ class OfferStatsResponse(BaseModel):
     accepted: int = Field(..., description="Number of accepted offers")
     rejected: int = Field(..., description="Number of rejected offers")
     negotiation: int = Field(..., description="Number of offers in negotiation")
-    conversion_rate: float = Field(
-        ..., description="Acceptance rate (accepted / total)"
-    )
+    conversion_rate: float = Field(..., description="Acceptance rate (accepted / total)")
 
 
 class ErrorResponse(BaseModel):
@@ -112,17 +108,12 @@ async def create_offer(request: CreateOfferRequest) -> OfferResponse:
     - Inserts a new row into enforcement.offers with status='offered'
     - Returns the created offer
     """
-    conn = await get_pool()
-    if conn is None:
-        raise HTTPException(status_code=503, detail="Database connection not available")
-
-    # Validate judgment exists
-    async with conn.cursor() as cur:
-        await cur.execute(
+    async with get_connection() as conn:
+        # Validate judgment exists
+        row = await conn.fetchrow(
             "SELECT id FROM public.judgments WHERE id = %s",
-            (request.judgment_id,),
+            request.judgment_id,
         )
-        row = await cur.fetchone()
 
         if row is None:
             raise HTTPException(
@@ -130,10 +121,9 @@ async def create_offer(request: CreateOfferRequest) -> OfferResponse:
                 detail=f"Judgment with id {request.judgment_id} not found",
             )
 
-    # Insert the offer
-    try:
-        async with conn.cursor() as cur:
-            await cur.execute(
+        # Insert the offer
+        try:
+            row = await conn.fetchrow(
                 """
                 INSERT INTO enforcement.offers (
                     judgment_id,
@@ -150,29 +140,24 @@ async def create_offer(request: CreateOfferRequest) -> OfferResponse:
                 )
                 RETURNING id, judgment_id, offer_amount, offer_type, status, operator_notes, created_at
                 """,
-                (
-                    request.judgment_id,
-                    float(request.offer_amount),
-                    request.offer_type,
-                    request.operator_notes or "",
-                ),
+                request.judgment_id,
+                float(request.offer_amount),
+                request.offer_type,
+                request.operator_notes or "",
             )
-            row = await cur.fetchone()
 
             if row is None:
                 raise HTTPException(
                     status_code=500, detail="Failed to create offer - no row returned"
                 )
 
-            (
-                offer_id,
-                judgment_id,
-                offer_amount,
-                offer_type,
-                status,
-                notes,
-                created_at,
-            ) = row
+            offer_id = row["id"]
+            judgment_id = row["judgment_id"]
+            offer_amount = row["offer_amount"]
+            offer_type = row["offer_type"]
+            status = row["status"]
+            notes = row["operator_notes"]
+            created_at = row["created_at"]
 
             logger.info(
                 "Offer created: offer_id=%s judgment_id=%s type=%s amount=%.2f",
@@ -196,18 +181,16 @@ async def create_offer(request: CreateOfferRequest) -> OfferResponse:
                 # Calculate cents on the dollar if we have judgment amount
                 cents_on_dollar = None
                 try:
-                    async with conn.cursor() as jcur:
-                        await jcur.execute(
-                            "SELECT judgment_amount FROM public.judgments WHERE id = %s",
-                            (judgment_id,),
-                        )
-                        jrow = await jcur.fetchone()
-                        if jrow and jrow[0]:
-                            judgment_amount = float(jrow[0])
-                            if judgment_amount > 0:
-                                cents_on_dollar = round(
-                                    (offer_amount / judgment_amount) * 100, 1
-                                )
+                    jrow = await conn.fetchrow(
+                        "SELECT judgment_amount FROM public.judgments WHERE id = %s",
+                        judgment_id,
+                    )
+                    if jrow and jrow.get("judgment_amount"):
+                        judgment_amount_val = float(jrow["judgment_amount"])
+                        if judgment_amount_val > 0:
+                            cents_on_dollar = round(
+                                (float(offer_amount) / judgment_amount_val) * 100, 1
+                            )
                 except Exception:
                     pass
 
@@ -240,11 +223,11 @@ async def create_offer(request: CreateOfferRequest) -> OfferResponse:
                 created_at=created_at.isoformat(),
             )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to create offer: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to create offer: {str(e)}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to create offer: %s", e)
+            raise HTTPException(status_code=500, detail=f"Failed to create offer: {str(e)}")
 
 
 @router.get(
@@ -257,9 +240,7 @@ async def get_offer_stats(
     from_date: Optional[date] = Query(
         default=None, description="Start date for filtering (inclusive)"
     ),
-    to_date: Optional[date] = Query(
-        default=None, description="End date for filtering (inclusive)"
-    ),
+    to_date: Optional[date] = Query(default=None, description="End date for filtering (inclusive)"),
 ) -> OfferStatsResponse:
     """
     Get aggregated offer statistics.
@@ -267,10 +248,6 @@ async def get_offer_stats(
     Optionally filter by date range based on created_at.
     Returns counts by status and conversion rate.
     """
-    conn = await get_pool()
-    if conn is None:
-        raise HTTPException(status_code=503, detail="Database connection not available")
-
     # Build query with optional date filters
     query = """
         SELECT
@@ -292,9 +269,8 @@ async def get_offer_stats(
         params.append(to_date)
 
     try:
-        async with conn.cursor() as cur:
-            await cur.execute(query, tuple(params) if params else None)
-            row = await cur.fetchone()
+        async with get_connection() as conn:
+            row = await conn.fetchrow(query, *params)
 
             if row is None:
                 return OfferStatsResponse(
@@ -305,7 +281,10 @@ async def get_offer_stats(
                     conversion_rate=0.0,
                 )
 
-            total, accepted, rejected, negotiation = row
+            total = row["total_offers"]
+            accepted = row["accepted"]
+            rejected = row["rejected"]
+            negotiation = row["negotiation"]
 
             # Calculate conversion rate
             conversion_rate = 0.0
@@ -322,9 +301,7 @@ async def get_offer_stats(
 
     except Exception as e:
         logger.error("Failed to get offer stats: %s", e)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get offer stats: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to get offer stats: {str(e)}")
 
 
 @router.get(
@@ -336,37 +313,28 @@ async def get_offer_stats(
 )
 async def get_offer(offer_id: UUID) -> OfferResponse:
     """Get a single offer by ID."""
-    conn = await get_pool()
-    if conn is None:
-        raise HTTPException(status_code=503, detail="Database connection not available")
-
     try:
-        async with conn.cursor() as cur:
-            await cur.execute(
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
                 """
                 SELECT id, judgment_id, offer_amount, offer_type, status, operator_notes, created_at
                 FROM enforcement.offers
                 WHERE id = %s
                 """,
-                (offer_id,),
+                offer_id,
             )
-            row = await cur.fetchone()
 
             if row is None:
-                raise HTTPException(
-                    status_code=404, detail=f"Offer with id {offer_id} not found"
-                )
-
-            oid, judgment_id, offer_amount, offer_type, status, notes, created_at = row
+                raise HTTPException(status_code=404, detail=f"Offer with id {offer_id} not found")
 
             return OfferResponse(
-                id=str(oid),
-                judgment_id=judgment_id,
-                offer_amount=Decimal(str(offer_amount)),
-                offer_type=offer_type,
-                status=status,
-                operator_notes=notes,
-                created_at=created_at.isoformat(),
+                id=str(row["id"]),
+                judgment_id=row["judgment_id"],
+                offer_amount=Decimal(str(row["offer_amount"])),
+                offer_type=row["offer_type"],
+                status=row["status"],
+                operator_notes=row["operator_notes"],
+                created_at=row["created_at"].isoformat(),
             )
 
     except HTTPException:
@@ -384,32 +352,27 @@ async def get_offer(offer_id: UUID) -> OfferResponse:
 )
 async def get_offers_for_judgment(judgment_id: int) -> list[OfferResponse]:
     """Get all offers for a specific judgment."""
-    conn = await get_pool()
-    if conn is None:
-        raise HTTPException(status_code=503, detail="Database connection not available")
-
     try:
-        async with conn.cursor() as cur:
-            await cur.execute(
+        async with get_connection() as conn:
+            rows = await conn.fetch(
                 """
                 SELECT id, judgment_id, offer_amount, offer_type, status, operator_notes, created_at
                 FROM enforcement.offers
                 WHERE judgment_id = %s
                 ORDER BY created_at DESC
                 """,
-                (judgment_id,),
+                judgment_id,
             )
-            rows = await cur.fetchall()
 
             return [
                 OfferResponse(
-                    id=str(row[0]),
-                    judgment_id=row[1],
-                    offer_amount=Decimal(str(row[2])),
-                    offer_type=row[3],
-                    status=row[4],
-                    operator_notes=row[5],
-                    created_at=row[6].isoformat(),
+                    id=str(row["id"]),
+                    judgment_id=row["judgment_id"],
+                    offer_amount=Decimal(str(row["offer_amount"])),
+                    offer_type=row["offer_type"],
+                    status=row["status"],
+                    operator_notes=row["operator_notes"],
+                    created_at=row["created_at"].isoformat(),
                 )
                 for row in rows
             ]
@@ -439,40 +402,33 @@ async def update_offer_status(
     - Updates the status
     - Emits offer_accepted event if status changes to 'accepted'
     """
-    conn = await get_pool()
-    if conn is None:
-        raise HTTPException(status_code=503, detail="Database connection not available")
-
     try:
-        async with conn.cursor() as cur:
+        async with get_connection() as conn:
             # First, get the current offer to check it exists and get judgment_id
-            await cur.execute(
+            row = await conn.fetchrow(
                 """
                 SELECT id, judgment_id, offer_amount, offer_type, status, operator_notes, created_at
                 FROM enforcement.offers
                 WHERE id = %s
                 """,
-                (offer_id,),
+                offer_id,
             )
-            row = await cur.fetchone()
 
             if row is None:
-                raise HTTPException(
-                    status_code=404, detail=f"Offer with id {offer_id} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"Offer with id {offer_id} not found")
 
-            old_status = row[4]
+            old_status = row["status"]
 
             # Update the status
-            new_notes = row[5]
+            new_notes = row["operator_notes"]
             if request.operator_notes:
                 new_notes = (
-                    f"{row[5]}\n{request.operator_notes}"
-                    if row[5]
+                    f"{row['operator_notes']}\n{request.operator_notes}"
+                    if row["operator_notes"]
                     else request.operator_notes
                 )
 
-            await cur.execute(
+            updated_row = await conn.fetchrow(
                 """
                 UPDATE enforcement.offers
                 SET status = %s::enforcement.offer_status,
@@ -480,24 +436,23 @@ async def update_offer_status(
                 WHERE id = %s
                 RETURNING id, judgment_id, offer_amount, offer_type, status, operator_notes, created_at
                 """,
-                (request.status, new_notes, offer_id),
+                request.status,
+                new_notes,
+                offer_id,
             )
-            updated_row = await cur.fetchone()
 
             if updated_row is None:
                 raise HTTPException(
                     status_code=500, detail="Failed to update offer - no row returned"
                 )
 
-            (
-                oid,
-                jid,
-                amount,
-                otype,
-                status,
-                notes,
-                created_at,
-            ) = updated_row
+            oid = updated_row["id"]
+            jid = updated_row["judgment_id"]
+            amount = updated_row["offer_amount"]
+            otype = updated_row["offer_type"]
+            status = updated_row["status"]
+            notes = updated_row["operator_notes"]
+            created_at = updated_row["created_at"]
 
             logger.info(
                 "Offer status updated: offer_id=%s judgment_id=%s old_status=%s new_status=%s",
@@ -574,6 +529,4 @@ async def update_offer_status(
         raise
     except Exception as e:
         logger.error("Failed to update offer status: %s", e)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to update offer status: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to update offer status: {str(e)}")

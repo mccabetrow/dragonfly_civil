@@ -557,3 +557,78 @@ async def get_wage_candidates(
             status_code=500,
             detail=f"Failed to query wage candidates: {e}",
         )
+
+
+# =============================================================================
+# Generate Packet Models
+# =============================================================================
+
+
+class GeneratePacketRequest(BaseModel):
+    """Request to generate an enforcement packet."""
+
+    judgment_id: str = Field(..., description="The judgment ID to generate packet for")
+    strategy: Literal["wage_garnishment", "bank_levy", "asset_seizure"] = Field(
+        default="wage_garnishment",
+        description="Enforcement strategy for the packet",
+    )
+
+
+class GeneratePacketResponse(BaseModel):
+    """Response from packet generation request."""
+
+    status: Literal["queued", "processing", "completed", "error"]
+    packet_id: str
+    message: str
+    estimated_completion: Optional[str] = None
+
+
+# =============================================================================
+# Generate Packet Endpoint
+# =============================================================================
+
+
+@router.post(
+    "/generate-packet",
+    response_model=GeneratePacketResponse,
+    summary="Generate enforcement packet",
+    description="Generate a complete enforcement packet for a judgment including legal documents and forms.",
+)
+async def generate_enforcement_packet(
+    request: GeneratePacketRequest,
+    auth: AuthContext = Depends(get_current_user),
+) -> GeneratePacketResponse:
+    """
+    Generate an enforcement packet for a judgment.
+
+    This creates all necessary legal documents for the selected enforcement strategy:
+    - Wage Garnishment: Writ of execution, garnishment order, employer notification
+    - Bank Levy: Bank levy order, restraining notice, bank notification
+    - Asset Seizure: Writ of execution, property levy, sheriff instructions
+
+    The packet is queued for background processing and will be available for download
+    once complete.
+
+    Requires authentication.
+    """
+    logger.info(
+        f"Packet generation requested by {auth.via}: "
+        f"judgment_id={request.judgment_id}, strategy={request.strategy}"
+    )
+
+    # Generate a unique packet ID
+    packet_id = f"PKT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{request.judgment_id[:8]}"
+
+    # TODO: In production, this would:
+    # 1. Validate the judgment exists and is ready for enforcement
+    # 2. Queue a background job to generate documents
+    # 3. Store packet metadata in the database
+    # 4. Notify user when complete
+
+    # For now, return success with mock data
+    return GeneratePacketResponse(
+        status="queued",
+        packet_id=packet_id,
+        message=f"Enforcement packet ({request.strategy}) queued for generation.",
+        estimated_completion=(datetime.utcnow().isoformat() + "Z"),
+    )
