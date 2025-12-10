@@ -1,0 +1,21 @@
+# Railway Configuration for Dragonfly Civil
+# ═══════════════════════════════════════════════════════════════════════════
+# This file defines build and deploy settings for Railway services.
+# Each service in Railway should override the start command as needed.
+#
+# Services:
+#   1. web (Backend API):        uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+#   2. ingest-worker:            python -m backend.workers.ingest_processor
+#   3. enforcement-worker:       python -m backend.workers.enforcement_engine
+# ═══════════════════════════════════════════════════════════════════════════
+
+[build]
+builder = "nixpacks"
+buildCommand = "pip install -r requirements.txt"
+
+[deploy]
+numReplicas = 1
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
