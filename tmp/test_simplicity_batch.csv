@@ -1,0 +1,8 @@
+Case Number,Plaintiff,Defendant,Judgment Amount,Filing Date,County
+SIMP-TEST-001,Acme Collections LLC,John Smith,$15000.00,03/15/2024,Kings
+SIMP-TEST-002,Acme Collections LLC,Jane Doe,$8500.50,07/22/2024,Queens
+SIMP-TEST-003,Fast Recovery Inc,Bob Wilson,$22750.00,05/10/2024,New York
+SIMP-TEST-004,Fast Recovery Inc,Alice Johnson,$5000.00,08/01/2024,Bronx
+SIMP-TEST-005,Debt Masters LLC,Charlie Brown,$12345.67,04/18/2024,Kings
+SIMP-TEST-006,Debt Masters LLC,Invalid Amount,not-a-number,04/20/2024,Brooklyn
+SIMP-TEST-007,Recovery Plus,Missing Amount,,04/21/2024,Manhattan

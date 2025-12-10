@@ -61,18 +61,22 @@ class TrendMetrics(BaseModel):
 
 class IntakeRadarMetrics(BaseModel):
     """
-    Intake Radar metrics for CEO dashboard.
+    Intake Radar metrics for CEO dashboard (v2).
 
-    Aggregated view of ingest batch performance across all CSV imports.
-    Sourced from analytics.v_intake_radar view.
+    Single-row summary from analytics.v_intake_radar:
+      - Judgment intake counts (24h, 7d)
+      - New AUM (assets under management) in last 24h
+      - Validity rate of CSV batches
+      - Queue depth, failures, and processing time
     """
 
-    total_batches: int
-    rows_imported: int
-    rows_failed: int
-    success_rate: float
-    batches_in_flight: int
-    last_import_ts: str | None
+    judgments_ingested_24h: int
+    judgments_ingested_7d: int
+    new_aum_24h: float
+    validity_rate_24h: float
+    queue_depth_pending: int
+    critical_failures_24h: int
+    avg_processing_time_seconds: float
 
 
 class TierDistribution(BaseModel):
@@ -93,6 +97,36 @@ class CEOCommandCenterMetrics(BaseModel):
     enforcement performance, tier distribution, and ops health.
     Sourced from analytics.v_ceo_command_center view.
     """
+
+
+class EnforcementEngineMetrics(BaseModel):
+    """
+    Enforcement Engine Worker metrics for operations dashboard.
+
+    Single-row summary from public.enforcement_activity_metrics():
+      - Plans created (24h, 7d, total)
+      - Packets generated (24h, 7d, total)
+      - Worker status (active, pending, completed, failed)
+    """
+
+    # Plan metrics
+    plans_created_24h: int
+    plans_created_7d: int
+    total_plans: int
+
+    # Packet metrics
+    packets_generated_24h: int
+    packets_generated_7d: int
+    total_packets: int
+
+    # Worker metrics
+    active_workers: int
+    pending_jobs: int
+    completed_24h: int
+    failed_24h: int
+
+    # Timestamp
+    generated_at: str
 
     # Portfolio Health
     total_judgments: int
@@ -338,52 +372,58 @@ async def get_recovery_trends(
     "/intake-radar",
     response_model=IntakeRadarMetrics,
     summary="Get intake radar metrics",
-    description="Returns aggregated ingest batch metrics for the CEO dashboard.",
+    description="Returns single-row intake metrics for the CEO dashboard: "
+    "judgment counts, AUM, validity rate, queue depth, failures, and processing time.",
 )
 async def get_intake_radar(
     auth: AuthContext = Depends(get_current_user),
 ) -> IntakeRadarMetrics:
     """
-    Get Intake Radar metrics from analytics.v_intake_radar view.
+    Get Intake Radar metrics from analytics.v_intake_radar view (v2).
 
     Returns:
-        - total_batches: Total number of ingest batches
-        - rows_imported: Total successful row imports across all batches
-        - rows_failed: Total failed row imports
-        - success_rate: Percentage of successful imports (0-100)
-        - batches_in_flight: Number of batches currently processing
-        - last_import_ts: Timestamp of most recent import (ISO 8601)
+        - judgments_ingested_24h: Judgment count from last 24 hours
+        - judgments_ingested_7d: Judgment count from last 7 days
+        - new_aum_24h: Sum of judgment_amount from last 24 hours
+        - validity_rate_24h: (valid_rows / raw_rows) * 100 from batches (24h)
+        - queue_depth_pending: Count of pending jobs in ops.job_queue
+        - critical_failures_24h: Count of failed batches in last 24 hours
+        - avg_processing_time_seconds: Avg batch processing time (24h)
 
     Requires authentication.
     """
-    logger.info(f"Analytics intake-radar requested by {auth.via}")
+    logger.info(f"Intake Radar requested by {auth.via}")
 
     try:
         client = get_supabase_client()
 
-        # Query the analytics.v_intake_radar view
-        # Note: Supabase client queries schema.table format via RPC or direct
-        result = client.rpc("intake_radar_metrics").execute()
+        # Query via v2 RPC function (wraps analytics.v_intake_radar)
+        result = client.rpc("intake_radar_metrics_v2").execute()
 
         if result.data and len(result.data) > 0:
             row = result.data[0]
             return IntakeRadarMetrics(
-                total_batches=row.get("total_batches", 0),
-                rows_imported=row.get("rows_imported", 0),
-                rows_failed=row.get("rows_failed", 0),
-                success_rate=round(float(row.get("success_rate", 0.0)), 2),
-                batches_in_flight=row.get("batches_in_flight", 0),
-                last_import_ts=row.get("last_import_ts"),
+                judgments_ingested_24h=int(row.get("judgments_ingested_24h", 0) or 0),
+                judgments_ingested_7d=int(row.get("judgments_ingested_7d", 0) or 0),
+                new_aum_24h=round(float(row.get("new_aum_24h", 0) or 0), 2),
+                validity_rate_24h=round(float(row.get("validity_rate_24h", 100.0) or 100.0), 2),
+                queue_depth_pending=int(row.get("queue_depth_pending", 0) or 0),
+                critical_failures_24h=int(row.get("critical_failures_24h", 0) or 0),
+                avg_processing_time_seconds=round(
+                    float(row.get("avg_processing_time_seconds", 0) or 0), 2
+                ),
             )
 
-        # Fallback: empty metrics if view returns no rows
+        # Fallback: zero metrics if view returns no rows (should never happen)
+        logger.warning("intake_radar_metrics_v2 RPC returned no data")
         return IntakeRadarMetrics(
-            total_batches=0,
-            rows_imported=0,
-            rows_failed=0,
-            success_rate=0.0,
-            batches_in_flight=0,
-            last_import_ts=None,
+            judgments_ingested_24h=0,
+            judgments_ingested_7d=0,
+            new_aum_24h=0.0,
+            validity_rate_24h=100.0,
+            queue_depth_pending=0,
+            critical_failures_24h=0,
+            avg_processing_time_seconds=0.0,
         )
 
     except Exception as e:
@@ -518,4 +558,172 @@ async def get_ceo_command_center(
         raise HTTPException(
             status_code=500,
             detail="Failed to retrieve CEO Command Center metrics",
+        )
+
+
+@router.get(
+    "/enforcement-engine",
+    response_model=EnforcementEngineMetrics,
+    summary="Get enforcement engine metrics",
+    description="Returns real-time metrics for the Enforcement Engine Worker: "
+    "plan creation, packet generation, and worker queue status.",
+)
+async def get_enforcement_engine_metrics(
+    auth: AuthContext = Depends(get_current_user),
+) -> EnforcementEngineMetrics:
+    """
+    Get Enforcement Engine metrics from public.enforcement_activity_metrics().
+
+    Returns:
+        - plans_created_24h/7d/total: Enforcement plan creation counts
+        - packets_generated_24h/7d/total: Draft packet generation counts
+        - active_workers: Jobs currently being processed
+        - pending_jobs: Jobs waiting in queue
+        - completed_24h: Jobs completed in last 24 hours
+        - failed_24h: Jobs failed in last 24 hours
+        - generated_at: Timestamp of metric generation
+
+    Requires authentication.
+    """
+    logger.info(f"Enforcement Engine metrics requested by {auth.via}")
+
+    try:
+        client = get_supabase_client()
+
+        # Query via RPC function (wraps analytics.v_enforcement_activity)
+        result = client.rpc("enforcement_activity_metrics").execute()
+
+        if result.data and len(result.data) > 0:
+            row = result.data[0]
+
+            # Format generated_at timestamp
+            generated_at = row.get("generated_at")
+            if generated_at and hasattr(generated_at, "isoformat"):
+                generated_at_str = generated_at.isoformat()
+            elif generated_at:
+                generated_at_str = str(generated_at)
+            else:
+                generated_at_str = datetime.utcnow().isoformat() + "Z"
+
+            return EnforcementEngineMetrics(
+                # Plan metrics
+                plans_created_24h=row.get("plans_created_24h", 0) or 0,
+                plans_created_7d=row.get("plans_created_7d", 0) or 0,
+                total_plans=row.get("total_plans", 0) or 0,
+                # Packet metrics
+                packets_generated_24h=row.get("packets_generated_24h", 0) or 0,
+                packets_generated_7d=row.get("packets_generated_7d", 0) or 0,
+                total_packets=row.get("total_packets", 0) or 0,
+                # Worker metrics
+                active_workers=row.get("active_workers", 0) or 0,
+                pending_jobs=row.get("pending_jobs", 0) or 0,
+                completed_24h=row.get("completed_24h", 0) or 0,
+                failed_24h=row.get("failed_24h", 0) or 0,
+                # Timestamp
+                generated_at=generated_at_str,
+            )
+
+        # Fallback: empty metrics if RPC returns no data
+        logger.warning("enforcement_activity_metrics RPC returned no data")
+        return EnforcementEngineMetrics(
+            plans_created_24h=0,
+            plans_created_7d=0,
+            total_plans=0,
+            packets_generated_24h=0,
+            packets_generated_7d=0,
+            total_packets=0,
+            active_workers=0,
+            pending_jobs=0,
+            completed_24h=0,
+            failed_24h=0,
+            generated_at=datetime.utcnow().isoformat() + "Z",
+        )
+
+    except Exception as e:
+        logger.error(f"Analytics enforcement-engine failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve Enforcement Engine metrics",
+        )
+
+
+# =============================================================================
+# Ops Alerts
+# =============================================================================
+
+
+class OpsAlertsResponse(BaseModel):
+    """System health alerts for the Ops Console sidebar."""
+
+    queue_failed_24h: int
+    ingest_failures_24h: int
+    stalled_workflows: int
+    system_status: str  # 'Healthy' or 'Critical'
+    computed_at: str
+
+
+@router.get(
+    "/ops-alerts",
+    response_model=OpsAlertsResponse,
+    summary="Get ops system alerts",
+    description="Returns system health alerts for the Ops Console sidebar indicator.",
+)
+async def get_ops_alerts(
+    auth: AuthContext = Depends(get_current_user),
+) -> OpsAlertsResponse:
+    """
+    Get system health alerts.
+
+    Returns counts of failed jobs, ingest failures, and stalled workflows.
+    system_status is 'Healthy' if all counts are 0, else 'Critical'.
+    Used to show a red dot indicator on the Ops Console sidebar item.
+    """
+    logger.info(f"Ops alerts requested by {auth.via}")
+
+    try:
+        client = get_supabase_client()
+
+        # Query the public view directly
+        result = client.table("v_ops_alerts").select("*").limit(1).execute()
+        rows: list[dict] = result.data or []  # type: ignore[assignment]
+
+        if rows and len(rows) > 0:
+            row = rows[0]
+
+            # Handle timestamp
+            computed_at = row.get("computed_at")
+            if computed_at and hasattr(computed_at, "isoformat"):
+                computed_at_str = computed_at.isoformat()
+            elif computed_at:
+                computed_at_str = str(computed_at)
+            else:
+                computed_at_str = datetime.utcnow().isoformat() + "Z"
+
+            return OpsAlertsResponse(
+                queue_failed_24h=int(row.get("queue_failed_24h") or 0),
+                ingest_failures_24h=int(row.get("ingest_failures_24h") or 0),
+                stalled_workflows=int(row.get("stalled_workflows") or 0),
+                system_status=row.get("system_status") or "Healthy",
+                computed_at=computed_at_str,
+            )
+
+        # Fallback: healthy if no data
+        logger.warning("v_ops_alerts returned no data, returning healthy")
+        return OpsAlertsResponse(
+            queue_failed_24h=0,
+            ingest_failures_24h=0,
+            stalled_workflows=0,
+            system_status="Healthy",
+            computed_at=datetime.utcnow().isoformat() + "Z",
+        )
+
+    except Exception as e:
+        logger.error(f"Analytics ops-alerts failed: {e}")
+        # Return healthy status on error to avoid false alarms
+        return OpsAlertsResponse(
+            queue_failed_24h=0,
+            ingest_failures_24h=0,
+            stalled_workflows=0,
+            system_status="Healthy",
+            computed_at=datetime.utcnow().isoformat() + "Z",
         )

@@ -1,0 +1,6 @@
+case_number,plaintiff_name,defendant_name,judgment_amount,judgment_date,court,county
+TEST-INGEST-001,Acme Collections LLC,John Smith,15000.00,2024-06-15,Kings County Civil Court,Kings
+TEST-INGEST-002,Acme Collections LLC,Jane Doe,8500.50,2024-07-22,Queens County Civil Court,Queens
+TEST-INGEST-003,Fast Recovery Inc,Bob Wilson,22750.00,2024-05-10,New York County Civil Court,New York
+TEST-INGEST-004,Fast Recovery Inc,Alice Johnson,5000.00,2024-08-01,Bronx County Civil Court,Bronx
+TEST-INGEST-005,Debt Masters LLC,Charlie Brown,12345.67,2024-04-18,Kings County Civil Court,Kings

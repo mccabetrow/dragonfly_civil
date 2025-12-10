@@ -1,5 +1,64 @@
 # 🛠️ Dragonfly Coding Workflow
 
+---
+
+## 🚀 Golden Commands (Do Not Think, Just Run)
+
+### Dev Cycle
+
+```powershell
+$env:SUPABASE_MODE='dev'
+.\scripts\db_push.ps1 -SupabaseEnv dev
+python -m pytest -q
+python -m tools.doctor --env dev
+```
+
+### Prod Cycle
+
+```powershell
+$env:SUPABASE_MODE='prod'
+.\scripts\db_push.ps1 -SupabaseEnv prod
+python -m tools.prod_smoke
+```
+
+### Quick Health Check
+
+```powershell
+python -m tools.doctor_all --env dev   # Full intake + enforcement checks
+python -m tools.security_audit --env dev
+```
+
+---
+
+## ✅ Release Checklist
+
+Before any prod deploy, verify **all boxes**:
+
+- [ ] All `pytest` green
+- [ ] `tools.doctor --env dev` green
+- [ ] `tools.prod_smoke` green (prod)
+- [ ] New endpoints tested manually (curl/Postman/REST Client)
+- [ ] Railway shows healthy status (API + Workers)
+- [ ] Vercel dashboard build succeeded
+- [ ] No uncommitted migrations in `supabase/migrations/`
+
+---
+
+## 🚫 Bad Ideas We Never Do
+
+> **These are non-negotiable. Violating any = immediate rollback.**
+
+| ❌ Don't                        | ✅ Do Instead                               |
+| ------------------------------- | ------------------------------------------- |
+| Manual SQL in prod              | Write a migration in `supabase/migrations/` |
+| DB changes without migration    | Always use timestamped `.sql` files         |
+| Push to main with failing tests | Fix tests first, then push                  |
+| Change env vars silently        | Document in `docs/infra-notes.md`           |
+| Skip smoke tests                | Run `tools.prod_smoke` every time           |
+| Hardcode credentials            | Use `get_supabase_env()` + env vars         |
+
+---
+
 ## 1. The "Staff Engineer" Loop
 
 1.  **Spec:** Write 2 sentences defining the business outcome.

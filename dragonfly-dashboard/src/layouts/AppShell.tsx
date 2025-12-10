@@ -23,6 +23,7 @@ import SystemDiagnostic from '../components/SystemDiagnostic';
 import { cn } from '../lib/design-tokens';
 import { Button, IconButton } from '../components/ui/Button';
 import { useRefreshBus } from '../context/RefreshContext';
+import { useOpsAlerts } from '../hooks/useOpsAlerts';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NAVIGATION CONFIG
@@ -33,6 +34,7 @@ interface NavigationItem {
   path: string;
   icon: typeof LayoutDashboard;
   description: string;
+  alertKey?: string; // Optional key for dynamic alert status
 }
 
 const MAIN_NAVIGATION: NavigationItem[] = [
@@ -59,6 +61,7 @@ const MAIN_NAVIGATION: NavigationItem[] = [
     path: '/ops',
     icon: Headphones,
     description: 'Call queue and daily tasks',
+    alertKey: 'ops', // Shows red dot when system is Critical
   },
   {
     label: 'Command Center',
@@ -109,6 +112,7 @@ const AppShellNew: FC = () => {
   const location = useLocation();
   const releaseNotes = useReleaseNotesModal();
   const { triggerRefresh, isRefreshing } = useRefreshBus();
+  const { isCritical: opsAlertCritical } = useOpsAlerts(60000); // Poll every 60s
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
@@ -204,7 +208,11 @@ const AppShellNew: FC = () => {
               Main
             </p>
             {MAIN_NAVIGATION.map((item) => (
-              <NavItem key={item.path} item={item} />
+              <NavItem
+                key={item.path}
+                item={item}
+                showAlert={item.alertKey === 'ops' && opsAlertCritical}
+              />
             ))}
 
             <div className="my-4 border-t border-white/5" />
@@ -396,9 +404,10 @@ const AppShellNew: FC = () => {
 
 interface NavItemProps {
   item: NavigationItem;
+  showAlert?: boolean; // Show red dot indicator
 }
 
-const NavItem: FC<NavItemProps> = ({ item }) => {
+const NavItem: FC<NavItemProps> = ({ item, showAlert = false }) => {
   const Icon = item.icon;
 
   return (
@@ -417,13 +426,20 @@ const NavItem: FC<NavItemProps> = ({ item }) => {
         <>
           <span
             className={cn(
-              'flex h-7 w-7 items-center justify-center rounded-lg transition-all duration-200',
+              'relative flex h-7 w-7 items-center justify-center rounded-lg transition-all duration-200',
               isActive
                 ? 'bg-cyan-500/20 text-cyan-400 shadow-glow-cyan'
                 : 'bg-white/5 text-slate-500 group-hover:bg-white/10 group-hover:text-slate-300'
             )}
           >
             <Icon className="h-4 w-4" />
+            {/* Alert indicator (red dot) */}
+            {showAlert && (
+              <span
+                className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-dragonfly-navy-950 animate-pulse"
+                aria-label="System alert"
+              />
+            )}
           </span>
           <div className="flex-1 min-w-0">
             <span className="block truncate">{item.label}</span>

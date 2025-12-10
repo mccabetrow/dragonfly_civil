@@ -343,3 +343,49 @@ export interface ClickableProps {
  * Combine for common async component props
  */
 export interface AsyncComponentProps extends LoadableProps, ErrorableProps {}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENFORCEMENT ENGINE TYPES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Enforcement Engine Worker metrics from analytics.v_enforcement_activity.
+ * Used by the Enforcement Engine dashboard page for real-time monitoring.
+ */
+export interface EnforcementEngineMetrics {
+  /** Enforcement plans created in the last 24 hours */
+  plans_created_24h: number;
+  /** Enforcement plans created in the last 7 days */
+  plans_created_7d: number;
+  /** Total enforcement plans ever created */
+  total_plans: number;
+
+  /** Draft packets generated in the last 24 hours */
+  packets_generated_24h: number;
+  /** Draft packets generated in the last 7 days */
+  packets_generated_7d: number;
+  /** Total draft packets ever generated */
+  total_packets: number;
+
+  /** Workers currently processing jobs */
+  active_workers: number;
+  /** Jobs waiting in the queue */
+  pending_jobs: number;
+  /** Jobs completed in the last 24 hours */
+  completed_24h: number;
+  /** Jobs that failed in the last 24 hours */
+  failed_24h: number;
+
+  /** Timestamp when metrics were generated */
+  generated_at: string;
+}
+
+/**
+ * Hook result type for useEnforcementEngineData
+ */
+export interface EnforcementEngineResult {
+  data: EnforcementEngineMetrics | null;
+  loading: boolean;
+  error: string | null;
+  refetch: () => void;
+}
