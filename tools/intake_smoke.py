@@ -107,7 +107,8 @@ async def run_smoke_test(csv_path: Path, env: str, dry_run: bool) -> int:
     # Try to import and run the intake service
     try:
         from contextlib import asynccontextmanager
-        from backend.db import get_pool, init_db_pool, close_db_pool
+
+        from backend.db import close_db_pool, get_pool, init_db_pool
         from backend.services.intake_service import IntakeService
 
         # Initialize the database pool

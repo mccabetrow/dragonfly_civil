@@ -9,11 +9,11 @@ Tests:
 
 from __future__ import annotations
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch, AsyncMock
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # Import handlers to test
 from workers.call_queue_sync_handler import (
@@ -21,10 +21,10 @@ from workers.call_queue_sync_handler import (
     _is_batch_job,
     fetch_plaintiffs_needing_calls,
     fetch_single_plaintiff,
-    upsert_call_task,
-    queue_notify_ops,
     handle_call_queue_sync,
+    queue_notify_ops,
     sync_all_call_tasks,
+    upsert_call_task,
 )
 
 

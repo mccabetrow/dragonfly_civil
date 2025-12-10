@@ -1,16 +1,16 @@
 """Tests for the dummy intake CSV generator."""
 
 import csv
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from tools.generate_dummy_intake import (
     CSV_HEADERS,
-    generate_dummy_csv,
     generate_case_number,
     generate_defendant_name,
+    generate_dummy_csv,
     generate_judgment_amount,
     generate_judgment_date,
     generate_row,

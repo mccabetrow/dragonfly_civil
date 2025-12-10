@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterator, Dict
+from typing import Dict, Iterator
 
 import pandas as pd
 

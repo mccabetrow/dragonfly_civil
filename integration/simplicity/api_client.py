@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Dict
+from typing import Dict, List
 
 
 def fetch_updated_leads(since: datetime) -> List[Dict]:

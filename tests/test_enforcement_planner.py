@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from planner.enforcement_planner import EnforcementPlanner, TASK_DEFINITIONS
+from planner.enforcement_planner import TASK_DEFINITIONS, EnforcementPlanner
 
 
 def _fixed_now() -> datetime:

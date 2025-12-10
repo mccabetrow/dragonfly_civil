@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Generator
 import os
 import uuid
+from collections.abc import Generator
 
 import psycopg
 import pytest

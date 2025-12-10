@@ -18,9 +18,8 @@ import argparse
 import csv
 import json
 import sys
-from pathlib import Path
-
 from dataclasses import dataclass
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:

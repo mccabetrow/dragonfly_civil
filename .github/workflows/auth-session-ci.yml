@@ -44,4 +44,5 @@ jobs:
           SUPABASE_URL: "https://placeholder.supabase.co"
           SUPABASE_SERVICE_ROLE_KEY: "placeholder-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
           SUPABASE_DB_URL: "postgresql://placeholder:placeholder@localhost:5432/placeholder"
+          SUPABASE_PROJECT_REF: "placeholder"
         run: pytest -q -k "auth or session"

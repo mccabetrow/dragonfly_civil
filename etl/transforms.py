@@ -7,7 +7,6 @@ from typing import Any, Dict, Iterable, List, Sequence
 import phonenumbers
 from loguru import logger
 
-
 DEFAULT_DATE_FORMATS: Sequence[str] = ("%Y-%m-%d", "%m/%d/%Y", "%d-%b-%Y")
 
 
