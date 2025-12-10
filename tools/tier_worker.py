@@ -30,8 +30,8 @@ import time
 # Ensure project root is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from workers.tier_assignment_handler import handle_tier_assignment
 from src.supabase_client import create_supabase_client
+from workers.tier_assignment_handler import handle_tier_assignment
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +96,8 @@ async def process_one(client) -> bool:
         else:
             logger.warning("tier_worker_retry kind=%s msg_id=%s", QUEUE_KIND, msg_id)
         return True
-    except Exception as e:
-        logger.exception(
-            "tier_worker_handler_error kind=%s msg_id=%s", QUEUE_KIND, msg_id
-        )
+    except Exception:
+        logger.exception("tier_worker_handler_error kind=%s msg_id=%s", QUEUE_KIND, msg_id)
         # Delete even on error to avoid infinite retry loops on bad data
         delete_job(client, msg_id)
         return True
@@ -150,7 +148,7 @@ async def run_worker(once: bool = False, poll_interval: int = DEFAULT_POLL_INTER
         except KeyboardInterrupt:
             logger.info("tier_worker_shutdown kind=%s", QUEUE_KIND)
             break
-        except Exception as e:
+        except Exception:
             logger.exception("tier_worker_loop_error kind=%s", QUEUE_KIND)
             await asyncio.sleep(poll_interval)
 

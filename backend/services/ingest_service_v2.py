@@ -430,7 +430,7 @@ async def process_simplicity_batch(batch_id: UUID) -> ProcessResult:
             # Fetch valid rows
             valid_rows = await conn.fetch(
                 """
-                SELECT 
+                SELECT
                     case_number, court, plaintiff_name, defendant_name,
                     judgment_amount, judgment_date, county
                 FROM judgments.staging_simplicity_clean
@@ -478,11 +478,7 @@ async def process_simplicity_batch(batch_id: UUID) -> ProcessResult:
                         row["court"],
                         row["plaintiff_name"],
                         row["defendant_name"],
-                        (
-                            float(row["judgment_amount"])
-                            if row["judgment_amount"]
-                            else None
-                        ),
+                        (float(row["judgment_amount"]) if row["judgment_amount"] else None),
                         row["judgment_date"],
                         row["county"],
                         str(batch_id),
@@ -501,7 +497,7 @@ async def process_simplicity_batch(batch_id: UUID) -> ProcessResult:
             await conn.execute(
                 """
                 UPDATE ops.ingest_batches
-                SET 
+                SET
                     status = 'completed',
                     processed_at = now()
                 WHERE id = $1
@@ -552,7 +548,7 @@ async def process_simplicity_batch(batch_id: UUID) -> ProcessResult:
                 await conn.execute(
                     """
                     UPDATE ops.ingest_batches
-                    SET 
+                    SET
                         status = 'failed',
                         error_summary = $2,
                         processed_at = now()
@@ -639,7 +635,7 @@ async def update_batch_counts(
         await conn.execute(
             """
             UPDATE ops.ingest_batches
-            SET 
+            SET
                 row_count_raw = $2,
                 row_count_valid = $3,
                 row_count_invalid = $4
@@ -670,7 +666,7 @@ async def get_batch_details(batch_id: UUID) -> dict[str, Any] | None:
     async with get_connection() as conn:
         row = await conn.fetchrow(
             """
-            SELECT 
+            SELECT
                 id, source, filename,
                 row_count_raw, row_count_valid, row_count_invalid,
                 status, error_summary,
@@ -694,9 +690,7 @@ async def get_batch_details(batch_id: UUID) -> dict[str, Any] | None:
         "status": row["status"],
         "error_summary": row["error_summary"],
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-        "processed_at": (
-            row["processed_at"].isoformat() if row["processed_at"] else None
-        ),
+        "processed_at": (row["processed_at"].isoformat() if row["processed_at"] else None),
         "created_by": row["created_by"],
     }
 
@@ -724,12 +718,8 @@ async def get_batch_errors(batch_id: UUID, limit: int = 100) -> list[dict[str, A
             "plaintiff_name": row["plaintiff_name"],
             "defendant_name": row["defendant_name"],
             "case_number": row["case_number"],
-            "judgment_amount": (
-                float(row["judgment_amount"]) if row["judgment_amount"] else None
-            ),
-            "judgment_date": (
-                row["judgment_date"].isoformat() if row["judgment_date"] else None
-            ),
+            "judgment_amount": (float(row["judgment_amount"]) if row["judgment_amount"] else None),
+            "judgment_date": (row["judgment_date"].isoformat() if row["judgment_date"] else None),
             "court": row["court"],
         }
         for row in rows
@@ -741,7 +731,7 @@ async def list_batches(limit: int = 50) -> list[dict[str, Any]]:
     async with get_connection() as conn:
         rows = await conn.fetch(
             """
-            SELECT 
+            SELECT
                 id, source, filename,
                 row_count_raw, row_count_valid, row_count_invalid,
                 status, error_summary,
@@ -764,9 +754,7 @@ async def list_batches(limit: int = 50) -> list[dict[str, Any]]:
             "status": row["status"],
             "error_summary": row["error_summary"],
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-            "processed_at": (
-                row["processed_at"].isoformat() if row["processed_at"] else None
-            ),
+            "processed_at": (row["processed_at"].isoformat() if row["processed_at"] else None),
             "created_by": row["created_by"],
         }
         for row in rows

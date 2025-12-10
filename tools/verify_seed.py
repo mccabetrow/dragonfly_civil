@@ -23,7 +23,7 @@ async def check():
     async with get_connection() as conn:
         rows = await conn.fetch(
             """
-            SELECT case_number, plaintiff_name, defendant_name, 
+            SELECT case_number, plaintiff_name, defendant_name,
                    judgment_amount, entry_date, source_file
             FROM public.judgments
             WHERE case_number LIKE '2024-CV-%'

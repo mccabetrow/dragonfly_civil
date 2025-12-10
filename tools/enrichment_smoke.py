@@ -73,7 +73,6 @@ async def run_smoke_test(skip_cleanup: bool = False) -> bool:
     client = create_supabase_client(env)
     test_case_index = f"SMOKE-TEST-{uuid.uuid4().hex[:8].upper()}"
     judgment_id: Optional[str] = None
-    test_passed = False
 
     logger.info("=== Enrichment Smoke Test (env=%s) ===", env)
 
@@ -116,9 +115,7 @@ async def run_smoke_test(skip_cleanup: bool = False) -> bool:
         # Check 3a: debtor_intelligence row exists
         intel_resp = (
             client.table("debtor_intelligence")
-            .select(
-                "id, judgment_id, data_source, employer_name, bank_name, confidence_score"
-            )
+            .select("id, judgment_id, data_source, employer_name, bank_name, confidence_score")
             .eq("judgment_id", judgment_id)
             .execute()
         )
@@ -178,7 +175,6 @@ async def run_smoke_test(skip_cleanup: bool = False) -> bool:
             return False
 
         logger.info("=== SMOKE TEST PASSED ===")
-        test_passed = True
         return True
 
     except Exception as exc:
@@ -200,13 +196,9 @@ async def run_smoke_test(skip_cleanup: bool = False) -> bool:
                 client.table("core_judgments").delete().eq("id", judgment_id).execute()
                 logger.info("  Cleanup complete")
             except Exception as cleanup_exc:
-                logger.warning(
-                    "  Cleanup failed (may require manual cleanup): %s", cleanup_exc
-                )
+                logger.warning("  Cleanup failed (may require manual cleanup): %s", cleanup_exc)
         elif skip_cleanup and judgment_id:
-            logger.info(
-                "Skipping cleanup (--skip-cleanup). Test judgment: %s", judgment_id
-            )
+            logger.info("Skipping cleanup (--skip-cleanup). Test judgment: %s", judgment_id)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

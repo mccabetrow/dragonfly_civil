@@ -92,7 +92,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     client = create_supabase_client()
 
     print(f"\n{'='*60}")
-    print(f"  ENFORCEMENT ACTION SMOKE TEST")
+    print("  ENFORCEMENT ACTION SMOKE TEST")
     print(f"  Environment: {env}")
     print(f"{'='*60}\n")
 
@@ -132,7 +132,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             }
             response = client.table("core_judgments").insert(judgment_data).execute()
             if not response.data:
-                print(f"  [FAIL] Could not create judgment")
+                print("  [FAIL] Could not create judgment")
                 return 1
             judgment = response.data[0]
             judgment_id = judgment["id"]
@@ -140,7 +140,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"  [OK] Created judgment: {judgment_id}")
 
         # Step 2: Create or verify debtor intelligence
-        print(f"[2/5] Checking debtor intelligence for judgment...")
+        print("[2/5] Checking debtor intelligence for judgment...")
         intel_response = (
             client.table("debtor_intelligence")
             .select("id, employer_name, bank_name, income_band, confidence_score")
@@ -154,7 +154,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 f"  [OK] Found existing intelligence: employer={intel.get('employer_name')}, bank={intel.get('bank_name')}"
             )
         else:
-            print(f"  [INFO] No intelligence found, creating mock data...")
+            print("  [INFO] No intelligence found, creating mock data...")
             # Use the RPC to create intelligence
             try:
                 rpc_response = client.rpc(
@@ -178,12 +178,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 print(f"  [OK] Created intelligence: {intel_id}")
             except Exception as e:
                 print(f"  [WARN] Could not create intelligence via RPC: {e}")
-                print(
-                    f"  [INFO] Proceeding without intelligence (will trigger asset search)"
-                )
+                print("  [INFO] Proceeding without intelligence (will trigger asset search)")
 
         # Step 3: Check existing enforcement actions
-        print(f"[3/5] Checking existing enforcement actions...")
+        print("[3/5] Checking existing enforcement actions...")
         actions_response = (
             client.table("enforcement_actions")
             .select("id, action_type, status, created_at")
@@ -196,13 +194,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             for action in existing_actions:
                 print(f"    - {action.get('action_type')}: {action.get('status')}")
         else:
-            print(f"  [OK] No existing actions (clean slate)")
+            print("  [OK] No existing actions (clean slate)")
 
         # Step 4: Queue the enforcement_action job
-        print(f"[4/5] Queueing enforcement_action job...")
-        idempotency_key = (
-            f"smoke_enforcement_action:{judgment_id}:{uuid.uuid4().hex[:8]}"
-        )
+        print("[4/5] Queueing enforcement_action job...")
+        idempotency_key = f"smoke_enforcement_action:{judgment_id}:{uuid.uuid4().hex[:8]}"
 
         try:
             queue_response = client.rpc(
@@ -216,47 +212,41 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 },
             ).execute()
             msg_id = queue_response.data
-            print(
-                f"  [OK] Queued job: msg_id={msg_id}, idempotency_key={idempotency_key}"
-            )
+            print(f"  [OK] Queued job: msg_id={msg_id}, idempotency_key={idempotency_key}")
         except Exception as e:
             error_msg = str(e)
             if "unsupported kind" in error_msg.lower():
-                print(f"  [FAIL] Queue RPC doesn't recognize 'enforcement_action' kind")
-                print(
-                    f"  [INFO] Run migration 0209_add_enforcement_action_queue_kind.sql first"
-                )
+                print("  [FAIL] Queue RPC doesn't recognize 'enforcement_action' kind")
+                print("  [INFO] Run migration 0209_add_enforcement_action_queue_kind.sql first")
                 return 1
             raise
 
         # Step 5: Optionally process the job
         if args.process:
-            print(f"[5/5] Processing queued job...")
+            print("[5/5] Processing queued job...")
             from workers.enforcement_action_handler import handle_enforcement_action
             from workers.queue_client import QueueClient
 
             with QueueClient() as qc:
                 job = qc.dequeue("enforcement_action")
                 if not job:
-                    print(f"  [WARN] No job found in queue (may have been processed)")
+                    print("  [WARN] No job found in queue (may have been processed)")
                 else:
                     job_msg_id = job.get("msg_id")
                     print(f"  [INFO] Dequeued job: {job_msg_id}")
                     try:
                         asyncio.run(handle_enforcement_action(job))
                         qc.ack("enforcement_action", job_msg_id)
-                        print(f"  [OK] Job processed and acknowledged")
+                        print("  [OK] Job processed and acknowledged")
                     except Exception as e:
                         print(f"  [FAIL] Job processing failed: {e}")
                         return 1
 
             # Verify actions were created
-            print(f"\n[VERIFICATION] Checking enforcement actions created...")
+            print("\n[VERIFICATION] Checking enforcement actions created...")
             final_response = (
                 client.table("enforcement_actions")
-                .select(
-                    "id, action_type, status, notes, requires_attorney_signature, created_at"
-                )
+                .select("id, action_type, status, notes, requires_attorney_signature, created_at")
                 .eq("judgment_id", judgment_id)
                 .order("created_at", desc=False)
                 .execute()
@@ -267,32 +257,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if new_count > 0:
                 print(f"  [OK] {new_count} new action(s) created:")
                 for action in final_actions:
-                    sig_marker = (
-                        "[ATTY]" if action.get("requires_attorney_signature") else ""
-                    )
-                    print(
-                        f"    - {action.get('action_type')}: {action.get('status')} {sig_marker}"
-                    )
+                    sig_marker = "[ATTY]" if action.get("requires_attorney_signature") else ""
+                    print(f"    - {action.get('action_type')}: {action.get('status')} {sig_marker}")
                     if action.get("notes"):
                         print(f"      Notes: {action.get('notes')[:80]}...")
             else:
-                print(f"  [WARN] No new actions created (may already exist)")
+                print("  [WARN] No new actions created (may already exist)")
         else:
-            print(f"[5/5] Skipping processing (use --process to run worker)")
-            print(f"  [INFO] Job queued. Run worker manually:")
-            print(
-                f"         python -m tools.enforcement_action_worker --env {env} --once"
-            )
+            print("[5/5] Skipping processing (use --process to run worker)")
+            print("  [INFO] Job queued. Run worker manually:")
+            print(f"         python -m tools.enforcement_action_worker --env {env} --once")
 
         # Cleanup if requested
         if args.cleanup and (created_judgment or created_intelligence):
-            print(f"\n[CLEANUP] Removing test data...")
+            print("\n[CLEANUP] Removing test data...")
             if created_judgment:
                 client.table("core_judgments").delete().eq("id", judgment_id).execute()
                 print(f"  [OK] Deleted judgment {judgment_id}")
 
         print(f"\n{'='*60}")
-        print(f"  SMOKE TEST COMPLETE")
+        print("  SMOKE TEST COMPLETE")
         print(f"{'='*60}\n")
         return 0
 

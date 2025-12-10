@@ -246,9 +246,7 @@ async def create_pool(
 
     try:
         async with conn.cursor() as cur:
-            await cur.execute(
-                query, (name, target_irr, management_fee_percent, description)
-            )
+            await cur.execute(query, (name, target_irr, management_fee_percent, description))
             row = await cur.fetchone()
     except Exception as e:
         if "unique" in str(e).lower():
@@ -327,9 +325,7 @@ async def assign_pool(
     assigned_count = len(updated_rows)
     assigned_ids = [row[0] for row in updated_rows]
 
-    logger.info(
-        f"Assigned {assigned_count}/{len(judgment_ids)} judgments to pool {pool_name}"
-    )
+    logger.info(f"Assigned {assigned_count}/{len(judgment_ids)} judgments to pool {pool_name}")
 
     return {
         "pool_id": pool.id,
@@ -475,7 +471,7 @@ async def calculate_nav(pool_id: str) -> NAVResult:
     projected_query = """
         SELECT
             COALESCE(SUM(
-                CASE 
+                CASE
                     WHEN enforcement_stage = 'collecting' THEN judgment_amount * 0.5
                     WHEN enforcement_stage = 'enforcement' THEN judgment_amount * 0.3
                     WHEN enforcement_stage = 'discovery' THEN judgment_amount * 0.2
@@ -583,9 +579,7 @@ async def record_transaction(
 
     try:
         async with conn.cursor() as cur:
-            await cur.execute(
-                query, (pool_id, judgment_id, txn_type, amount, description)
-            )
+            await cur.execute(query, (pool_id, judgment_id, txn_type, amount, description))
             row = await cur.fetchone()
     except Exception as e:
         logger.error(f"Failed to record transaction: {e}")

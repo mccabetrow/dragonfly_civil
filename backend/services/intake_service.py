@@ -290,7 +290,7 @@ class IntakeService:
                     INSERT INTO ops.ingest_batches (
                         filename, source, status, created_by, stats
                     ) VALUES (
-                        %s, %s, 'pending', %s, 
+                        %s, %s, 'pending', %s,
                         jsonb_build_object('total', 0, 'valid', 0, 'error', 0)
                     )
                     RETURNING id
@@ -300,14 +300,12 @@ class IntakeService:
                 row = await cur.fetchone()
                 return UUID(str(row["id"]))
 
-    async def start_batch(
-        self, batch_id: UUID, worker_id: Optional[str] = None
-    ) -> None:
+    async def start_batch(self, batch_id: UUID, worker_id: Optional[str] = None) -> None:
         """Mark batch as processing."""
         async with self.pool.connection() as conn:
             await conn.execute(
                 """
-                UPDATE ops.ingest_batches 
+                UPDATE ops.ingest_batches
                 SET status = 'processing', started_at = now(), worker_id = %s
                 WHERE id = %s
                 """,

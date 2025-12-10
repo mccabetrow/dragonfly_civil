@@ -59,14 +59,12 @@ async def main(csv_path: str) -> None:
             async with get_connection() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT id, case_number FROM public.judgments 
+                    SELECT id, case_number FROM public.judgments
                     WHERE case_number LIKE '2024-CV-%'
                     ORDER BY id DESC
                 """
                 )
-                logger.info(
-                    f"Verification: Found {len(rows)} rows with 2024-CV-% prefix"
-                )
+                logger.info(f"Verification: Found {len(rows)} rows with 2024-CV-% prefix")
                 for r in rows:
                     logger.info(f"  - {r['id']}: {r['case_number']}")
         else:

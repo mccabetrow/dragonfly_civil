@@ -129,8 +129,8 @@ class TestMigrationStatusView:
             # Check if legacy table has data
             cur.execute(
                 """
-                SELECT 1 FROM information_schema.tables 
-                WHERE table_schema = 'public' 
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public'
                   AND table_name = 'dragonfly_migrations'
                 """
             )
@@ -145,17 +145,15 @@ class TestMigrationStatusView:
             # Check if supabase table has data
             cur.execute(
                 """
-                SELECT 1 FROM information_schema.tables 
-                WHERE table_schema = 'supabase_migrations' 
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'supabase_migrations'
                   AND table_name = 'schema_migrations'
                 """
             )
             supabase_table_exists = cur.fetchone() is not None
 
             if supabase_table_exists:
-                cur.execute(
-                    "SELECT COUNT(*) FROM supabase_migrations.schema_migrations"
-                )
+                cur.execute("SELECT COUNT(*) FROM supabase_migrations.schema_migrations")
                 supabase_count = cur.fetchone()[0]
             else:
                 supabase_count = 0
@@ -183,7 +181,7 @@ class TestMigrationStatusView:
 
             cur.execute(
                 """
-                SELECT data_type 
+                SELECT data_type
                 FROM information_schema.columns
                 WHERE table_schema = 'public'
                   AND table_name = 'v_migration_status'
@@ -192,9 +190,7 @@ class TestMigrationStatusView:
             )
             row = cur.fetchone()
             assert row is not None, "success column not found"
-            assert (
-                row[0] == "boolean"
-            ), f"success column should be boolean, got {row[0]}"
+            assert row[0] == "boolean", f"success column should be boolean, got {row[0]}"
 
     def test_authenticated_role_has_select(self):
         """The authenticated role should have SELECT on the view."""
@@ -224,6 +220,4 @@ class TestMigrationStatusView:
                 """
             )
             result = cur.fetchone()
-            assert (
-                result and result[0]
-            ), "service_role should have SELECT on v_migration_status"
+            assert result and result[0], "service_role should have SELECT on v_migration_status"

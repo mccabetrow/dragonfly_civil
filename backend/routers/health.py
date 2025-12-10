@@ -227,17 +227,15 @@ async def health_ops() -> OperationalHealthResponse:
 
         async with pool.cursor() as cur:
             # Count pending jobs
-            await cur.execute(
-                "SELECT COUNT(*) FROM ops.job_queue WHERE status = 'pending'"
-            )
+            await cur.execute("SELECT COUNT(*) FROM ops.job_queue WHERE status = 'pending'")
             row = await cur.fetchone()
             pending_jobs = row[0] if row else 0
 
             # Count failed jobs in last 24h
             await cur.execute(
                 """
-                SELECT COUNT(*) FROM ops.job_queue 
-                WHERE status = 'failed' 
+                SELECT COUNT(*) FROM ops.job_queue
+                WHERE status = 'failed'
                 AND updated_at > now() - interval '24 hours'
             """
             )
@@ -247,7 +245,7 @@ async def health_ops() -> OperationalHealthResponse:
             # Get last event timestamp and 24h count
             await cur.execute(
                 """
-                SELECT 
+                SELECT
                     MAX(created_at) as last_event,
                     COUNT(*) FILTER (WHERE created_at > now() - interval '24 hours') as events_24h
                 FROM intelligence.events

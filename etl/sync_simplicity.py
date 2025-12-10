@@ -14,9 +14,9 @@ import typer
 from dotenv import load_dotenv
 from loguru import logger
 
-from integration.simplicity import csv_reader
 from etl import transforms
 from etl.loaders import upsert_case, upsert_contact, upsert_judgment, upsert_party
+from integration.simplicity import csv_reader
 
 app = typer.Typer(add_completion=False, help="Simplicity bi-directional sync CLI")
 
@@ -290,7 +290,7 @@ def run_export(
     reverse_map = reverse_status_mapping(status_mapping)
 
     query = """
-        SELECT 
+        SELECT
             j.id as judgment_id,
             c.case_number,
             c.county,
@@ -354,7 +354,9 @@ def _mapping_path() -> Path:
 @app.command("import")
 def import_command(
     file: Path = typer.Option(..., "--file", help="CSV file exported from Simplicity"),
-    dry_run: bool = typer.Option(True, "--dry-run/--commit", help="Dry-run by default; use --commit to persist"),
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--commit", help="Dry-run by default; use --commit to persist"
+    ),
     limit: Optional[int] = typer.Option(None, "--limit", help="Limit rows processed"),
     i_understand: bool = typer.Option(
         False,

@@ -5,8 +5,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.supabase_client import get_supabase_db_url
 import psycopg
+
+from src.supabase_client import get_supabase_db_url
 
 
 def main():
@@ -17,7 +18,7 @@ def main():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT table_name FROM information_schema.tables 
+                SELECT table_name FROM information_schema.tables
                 WHERE table_schema = 'enrichment'
                 ORDER BY table_name
             """

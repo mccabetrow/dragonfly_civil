@@ -23,9 +23,7 @@ def _resolve_db_url() -> str:
     if project_ref and password:
         return f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
 
-    pytest.skip(
-        "Supabase database credentials not configured for executive metrics tests"
-    )
+    pytest.skip("Supabase database credentials not configured for executive metrics tests")
     return ""
 
 
@@ -265,7 +263,7 @@ def test_metrics_enforcement_tracks_open_and_closed_cases(db_url: str) -> None:
             open_case_row = cur.fetchone()
             assert open_case_row is not None
             open_case_map = dict(open_case_row)
-            open_case_id = open_case_map["id"]
+            open_case_map["id"]
 
             cur.execute(
                 """
@@ -310,8 +308,7 @@ def test_metrics_enforcement_tracks_open_and_closed_cases(db_url: str) -> None:
                 """,
                 (
                     open_opened_at.date() - timedelta(days=open_opened_at.weekday()),
-                    closed_opened_at.date()
-                    - timedelta(days=closed_opened_at.weekday()),
+                    closed_opened_at.date() - timedelta(days=closed_opened_at.weekday()),
                     closed_at.date() - timedelta(days=closed_at.weekday()),
                 ),
             )
@@ -320,9 +317,7 @@ def test_metrics_enforcement_tracks_open_and_closed_cases(db_url: str) -> None:
         rows = [dict(row) for row in raw_rows]
         buckets = {row["bucket_week"]: row for row in rows}
         open_week = open_opened_at.date() - timedelta(days=open_opened_at.weekday())
-        closed_week = closed_opened_at.date() - timedelta(
-            days=closed_opened_at.weekday()
-        )
+        closed_week = closed_opened_at.date() - timedelta(days=closed_opened_at.weekday())
         closing_week = closed_at.date() - timedelta(days=closed_at.weekday())
 
         assert open_week in buckets
@@ -331,21 +326,17 @@ def test_metrics_enforcement_tracks_open_and_closed_cases(db_url: str) -> None:
 
         assert closed_week in buckets
         assert buckets[closed_week]["cases_opened"] >= 1
-        assert Decimal(buckets[closed_week]["opened_judgment_amount"]) >= Decimal(
-            "8000"
-        )
+        assert Decimal(buckets[closed_week]["opened_judgment_amount"]) >= Decimal("8000")
 
         assert closing_week in buckets
         assert buckets[closing_week]["cases_closed"] >= 1
-        assert Decimal(buckets[closing_week]["closed_judgment_amount"]) >= Decimal(
-            "8000"
-        )
+        assert Decimal(buckets[closing_week]["closed_judgment_amount"]) >= Decimal("8000")
 
         active_snapshot = next(iter(buckets.values()))
         assert active_snapshot["active_case_count"] == baseline_count + 1
-        assert Decimal(
-            active_snapshot["active_judgment_amount"]
-        ) == baseline_amount + Decimal("5000")
+        assert Decimal(active_snapshot["active_judgment_amount"]) == baseline_amount + Decimal(
+            "5000"
+        )
     finally:
         conn.rollback()
         conn.close()

@@ -219,9 +219,7 @@ async def handle_tier_assignment(job: Dict[str, Any]) -> bool:
         # 1. Fetch the judgment
         response = (
             client.table("core_judgments")
-            .select(
-                "id, case_index_number, status, collectability_score, principal_amount, tier"
-            )
+            .select("id, case_index_number, status, collectability_score, principal_amount, tier")
             .eq("id", judgment_id)
             .execute()
         )
@@ -265,9 +263,7 @@ async def handle_tier_assignment(job: Dict[str, Any]) -> bool:
         if principal_amount is not None:
             principal_amount = Decimal(str(principal_amount))
 
-        new_tier, tier_reason = compute_tier(
-            collectability_score, principal_amount, intelligence
-        )
+        new_tier, tier_reason = compute_tier(collectability_score, principal_amount, intelligence)
 
         old_tier = judgment.get("tier")
 
@@ -322,7 +318,7 @@ async def handle_tier_assignment(job: Dict[str, Any]) -> bool:
 
         return True
 
-    except Exception as e:
+    except Exception:
         logger.exception(
             "tier_assignment_failed kind=tier_assignment msg_id=%s judgment_id=%s",
             msg_id,

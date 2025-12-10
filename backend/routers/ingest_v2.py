@@ -138,14 +138,14 @@ class ProcessBatchResponse(BaseModel):
     summary="Upload Simplicity CSV",
     description="""
     Upload a Simplicity CSV file for batch ingestion.
-    
+
     The file is parsed, validated, and stored in staging tables.
     By default, processing happens immediately after upload.
-    
+
     **Required headers:**
     - `X-API-Key`: API key for authentication, OR
     - `Authorization: Bearer <jwt>`: Supabase JWT token
-    
+
     **Returns:**
     - batch_id: UUID to track this upload
     - Counts of raw, valid, and invalid rows
@@ -257,7 +257,7 @@ async def upload_simplicity_csv(
     summary="List Recent Batches",
     description="""
     List the most recent ingest batches, ordered by creation date descending.
-    
+
     Use this to monitor ingest activity and find batch IDs for detailed queries.
     """,
 )
@@ -287,7 +287,7 @@ async def list_ingest_batches(
     summary="Get Batch Details",
     description="""
     Get detailed information about a specific ingest batch.
-    
+
     Includes row counts, status, timing, and error summary if failed.
     """,
     responses={
@@ -328,7 +328,7 @@ async def get_batch(
     summary="Get Batch Errors",
     description="""
     Get the invalid rows from a batch with their validation errors.
-    
+
     Use this to understand why certain rows failed validation and
     fix the source data for re-upload.
     """,
@@ -372,7 +372,7 @@ async def get_batch_error_rows(
     summary="Process Pending Batch",
     description="""
     Manually trigger processing for a pending batch.
-    
+
     This upserts valid rows into the canonical imported_simplicity_cases table.
     Processing is idempotent - re-running won't duplicate data.
     """,

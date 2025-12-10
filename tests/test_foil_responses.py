@@ -38,7 +38,9 @@ def _ensure_foil_schema(db_url: str) -> None:
                     up_sql_section = up_sql_section.split("-- migrate:up", 1)[1]
                 up_sql = up_sql_section.strip()
                 if not up_sql:
-                    raise AssertionError(f"Migration {migration_path.name} is missing migrate:up SQL")
+                    raise AssertionError(
+                        f"Migration {migration_path.name} is missing migrate:up SQL"
+                    )
                 cur.execute(up_sql)  # type: ignore[arg-type]
 
 
@@ -48,7 +50,11 @@ def _extract_case_id(raw_value: Any) -> UUID:
     if isinstance(raw_value, str):
         return UUID(raw_value)
     if isinstance(raw_value, dict):
-        for candidate_key in ("case_id", "insert_or_get_case_with_entities", "insert_case_with_entities"):
+        for candidate_key in (
+            "case_id",
+            "insert_or_get_case_with_entities",
+            "insert_case_with_entities",
+        ):
             candidate = raw_value.get(candidate_key)
             if candidate:
                 return _extract_case_id(candidate)
@@ -161,5 +167,6 @@ def test_record_foil_response_roundtrip() -> None:
 
             cur.execute("delete from judgments.foil_responses where id = %s", (foil_id,))
             cur.execute("delete from judgments.cases where case_id = %s", (case_id,))
+
 
 # End of file

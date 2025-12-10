@@ -19,15 +19,7 @@ from pathlib import Path
 from typing import Annotated, Any, Optional
 from uuid import UUID
 
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    Depends,
-    File,
-    HTTPException,
-    Query,
-    UploadFile,
-)
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -344,7 +336,7 @@ async def list_batches(
         if status:
             params.extend([page_size, offset])
             data_query = f"""
-                SELECT * FROM ops.v_intake_monitor 
+                SELECT * FROM ops.v_intake_monitor
                 {where_clause}
                 ORDER BY created_at DESC
                 LIMIT $2 OFFSET $3
@@ -352,7 +344,7 @@ async def list_batches(
         else:
             params = [page_size, offset]
             data_query = """
-                SELECT * FROM ops.v_intake_monitor 
+                SELECT * FROM ops.v_intake_monitor
                 ORDER BY created_at DESC
                 LIMIT $1 OFFSET $2
             """
@@ -378,9 +370,7 @@ async def list_batches(
                 ),
                 health_status=row["health_status"],
                 created_at=row["created_at"].isoformat() if row["created_at"] else "",
-                completed_at=(
-                    row["completed_at"].isoformat() if row["completed_at"] else None
-                ),
+                completed_at=(row["completed_at"].isoformat() if row["completed_at"] else None),
             )
             for row in rows
         ]
@@ -437,15 +427,11 @@ async def get_batch(
             duplicate_rows=stats.get("duplicates", 0),
             skipped_rows=stats.get("skipped", 0),
             success_rate=float(row["success_rate"] or 0),
-            duration_seconds=(
-                float(row["duration_seconds"]) if row["duration_seconds"] else None
-            ),
+            duration_seconds=(float(row["duration_seconds"]) if row["duration_seconds"] else None),
             health_status=row["health_status"],
             created_at=row["created_at"].isoformat() if row["created_at"] else "",
             started_at=row["started_at"].isoformat() if row.get("started_at") else None,
-            completed_at=(
-                row["completed_at"].isoformat() if row["completed_at"] else None
-            ),
+            completed_at=(row["completed_at"].isoformat() if row["completed_at"] else None),
             created_by=row.get("created_by"),
             worker_id=row.get("worker_id"),
             stats=stats,
@@ -486,7 +472,7 @@ async def get_batch_errors(
         async with conn.cursor() as cur:
             await cur.execute(
                 """
-                SELECT COUNT(*) FROM ops.intake_logs 
+                SELECT COUNT(*) FROM ops.intake_logs
                 WHERE batch_id = $1 AND status IN ('error', 'skipped')
                 """,
                 (str(batch_id),),
@@ -501,14 +487,14 @@ async def get_batch_errors(
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
-                SELECT 
+                SELECT
                     row_index,
                     status,
                     error_code,
                     error_details,
                     judgment_id,
                     created_at
-                FROM ops.intake_logs 
+                FROM ops.intake_logs
                 WHERE batch_id = $1 AND status IN ('error', 'skipped')
                 ORDER BY row_index
                 LIMIT $2 OFFSET $3

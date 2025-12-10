@@ -41,7 +41,9 @@ def _parse_run_id(raw: Optional[str]) -> Optional[UUID]:
         return None
 
 
-def _record_validation_event(ok: bool, latency_ms: int, *, reason: Optional[str], run_id: Optional[UUID]) -> None:
+def _record_validation_event(
+    ok: bool, latency_ms: int, *, reason: Optional[str], run_id: Optional[UUID]
+) -> None:
     record_auth_event("validate", ok=ok, latency_ms=latency_ms, reason=reason, run_id=run_id)
 
 
@@ -57,7 +59,9 @@ def validate_refresh_endpoint(
         cookies = load_session()
     except Exception as exc:  # pragma: no cover - unexpected read errors
         _LOG.error("Failed to load cached session: %s", exc)
-        record_auth_event("error", ok=False, latency_ms=0, reason=f"load_failed:{exc}", run_id=parsed_run_id)
+        record_auth_event(
+            "error", ok=False, latency_ms=0, reason=f"load_failed:{exc}", run_id=parsed_run_id
+        )
         return {"ok": False, "refreshed": False, "reason": f"load_failed:{exc}"}
 
     if not cookies:
@@ -111,8 +115,17 @@ def _attempt_refresh(run_id: UUID) -> dict[str, Any]:
     except SessionValidationError as exc:
         latency_ms = max(int((time.perf_counter() - validation_started) * 1_000), 0)
         _record_validation_event(False, latency_ms, reason=f"post_refresh:{exc}", run_id=run_id)
-        event("auth.validation", status="post_refresh_validation_error", error=str(exc), refreshed=True)
-        return {"ok": False, "refreshed": refreshed, "reason": f"post_refresh_validation_error:{exc}"}
+        event(
+            "auth.validation",
+            status="post_refresh_validation_error",
+            error=str(exc),
+            refreshed=True,
+        )
+        return {
+            "ok": False,
+            "refreshed": refreshed,
+            "reason": f"post_refresh_validation_error:{exc}",
+        }
 
     latency_ms = max(int((time.perf_counter() - validation_started) * 1_000), 0)
     if not is_valid:

@@ -581,7 +581,7 @@ class TestRunOnce:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                DELETE FROM ops.job_queue 
+                DELETE FROM ops.job_queue
                 WHERE job_type::text IN ('enforcement_strategy', 'enforcement_drafting')
                   AND status::text = 'pending'
                 """
@@ -649,8 +649,8 @@ class TestSchemaRequirements:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT enumlabel 
-                FROM pg_enum 
+                SELECT enumlabel
+                FROM pg_enum
                 WHERE enumtypid = 'ops.job_type_enum'::regtype
                 """
             )
@@ -699,7 +699,7 @@ class TestSchemaRequirements:
                 """
                 SELECT COUNT(*) as cnt
                 FROM information_schema.routines
-                WHERE routine_schema = 'public' 
+                WHERE routine_schema = 'public'
                   AND routine_name = 'enforcement_activity_metrics'
                 """
             )

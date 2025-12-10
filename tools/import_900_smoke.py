@@ -101,9 +101,7 @@ def _create_fixture_csv(test_id: str) -> Path:
     return csv_path
 
 
-async def run_import_enrichment_smoke(
-    skip_cleanup: bool = False, verbose: bool = False
-) -> bool:
+async def run_import_enrichment_smoke(skip_cleanup: bool = False, verbose: bool = False) -> bool:
     """Execute the import + enrichment smoke test.
 
     Returns True on success, False on failure.
@@ -121,9 +119,7 @@ async def run_import_enrichment_smoke(
     plaintiff_ids: List[str] = []
     test_passed = False
 
-    logger.info(
-        "=== Import + Enrichment Smoke Test (env=%s, test_id=%s) ===", env, test_id
-    )
+    logger.info("=== Import + Enrichment Smoke Test (env=%s, test_id=%s) ===", env, test_id)
 
     try:
         # Step 1: Create fixture CSV
@@ -166,7 +162,7 @@ async def run_import_enrichment_smoke(
         plaintiffs_resp = (
             client.table("plaintiffs")
             .select("id, name")
-            .ilike("name", f"%Smoke Test Creditor%")
+            .ilike("name", "%Smoke Test Creditor%")
             .execute()
         )
         if not plaintiffs_resp.data:
@@ -251,9 +247,7 @@ async def run_import_enrichment_smoke(
             .execute()
         )
         scores_updated = sum(
-            1
-            for r in updated_core_resp.data
-            if r.get("collectability_score") is not None
+            1 for r in updated_core_resp.data if r.get("collectability_score") is not None
         )
         if scores_updated == 0:
             failures.append("No collectability_score values set")
@@ -289,18 +283,12 @@ async def run_import_enrichment_smoke(
                 # Clean up in reverse dependency order
                 if core_judgment_ids:
                     # debtor_intelligence and external_data_calls have CASCADE on judgment_id
-                    client.table("core_judgments").delete().in_(
-                        "id", core_judgment_ids
-                    ).execute()
+                    client.table("core_judgments").delete().in_("id", core_judgment_ids).execute()
                     logger.info("  Deleted %d core_judgments", len(core_judgment_ids))
 
                 if legacy_judgment_ids:
-                    client.table("judgments").delete().in_(
-                        "id", legacy_judgment_ids
-                    ).execute()
-                    logger.info(
-                        "  Deleted %d legacy judgments", len(legacy_judgment_ids)
-                    )
+                    client.table("judgments").delete().in_("id", legacy_judgment_ids).execute()
+                    logger.info("  Deleted %d legacy judgments", len(legacy_judgment_ids))
 
                 if plaintiff_ids:
                     # Need to delete status history first
@@ -312,9 +300,7 @@ async def run_import_enrichment_smoke(
                         "plaintiff_id", plaintiff_ids
                     ).execute()
                     # Then plaintiffs
-                    client.table("plaintiffs").delete().in_(
-                        "id", plaintiff_ids
-                    ).execute()
+                    client.table("plaintiffs").delete().in_("id", plaintiff_ids).execute()
                     logger.info("  Deleted %d plaintiffs", len(plaintiff_ids))
 
             except Exception as cleanup_err:

@@ -103,12 +103,12 @@ Examples:
 
 async def run_once(plaintiff_id: str | None = None, dry_run: bool = False) -> int:
     """Run the sync once and return exit code."""
+    from src.supabase_client import create_supabase_client
     from workers.call_queue_sync_handler import (
-        sync_all_call_tasks,
         fetch_single_plaintiff,
+        sync_all_call_tasks,
         upsert_call_task,
     )
-    from src.supabase_client import create_supabase_client
 
     logger = logging.getLogger(__name__)
 
@@ -181,8 +181,8 @@ async def run_once(plaintiff_id: str | None = None, dry_run: bool = False) -> in
 
 async def poll_queue(interval: int) -> None:
     """Poll the PGMQ queue for call_queue_sync jobs."""
-    from workers.call_queue_sync_handler import handle_call_queue_sync
     from src.supabase_client import create_supabase_client
+    from workers.call_queue_sync_handler import handle_call_queue_sync
 
     logger = logging.getLogger(__name__)
     logger.info("poll_start kind=call_queue_sync interval=%ds", interval)
@@ -216,7 +216,7 @@ async def poll_queue(interval: int) -> None:
             else:
                 logger.debug("no_jobs_available kind=call_queue_sync")
 
-        except Exception as e:
+        except Exception:
             logger.exception("poll_error kind=call_queue_sync")
 
         await asyncio.sleep(interval)
@@ -243,7 +243,7 @@ def main() -> int:
     except KeyboardInterrupt:
         logger.info("worker_shutdown signal=interrupt")
         return 0
-    except Exception as e:
+    except Exception:
         logger.exception("worker_fatal")
         return 1
 

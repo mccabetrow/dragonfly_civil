@@ -63,6 +63,7 @@ select = ["E", "F", "W"]
 ignore = [
     "E501",  # Line too long (handled by formatter)
     "F401",  # Unused import (often intentional for re-exports)
+    "E402",  # Module level import not at top (scripts manipulate sys.path)
 ]
 
 # =============================================================================

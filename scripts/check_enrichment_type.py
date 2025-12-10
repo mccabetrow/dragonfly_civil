@@ -5,8 +5,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.supabase_client import get_supabase_db_url
 import psycopg
+
+from src.supabase_client import get_supabase_db_url
 
 
 def main():
@@ -23,8 +24,8 @@ def main():
 
             cur.execute(
                 """
-                SELECT typname FROM pg_type t 
-                JOIN pg_namespace n ON t.typnamespace = n.oid 
+                SELECT typname FROM pg_type t
+                JOIN pg_namespace n ON t.typnamespace = n.oid
                 WHERE n.nspname = 'enrichment' AND t.typname = 'contact_kind'
             """
             )

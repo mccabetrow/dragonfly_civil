@@ -73,9 +73,7 @@ def create_test_intelligence(client, judgment_id: str) -> dict:
 
     try:
         # Delete existing intelligence first
-        client.table("debtor_intelligence").delete().eq(
-            "judgment_id", judgment_id
-        ).execute()
+        client.table("debtor_intelligence").delete().eq("judgment_id", judgment_id).execute()
 
         response = client.table("debtor_intelligence").insert(intel_data).execute()
         logger.info("Created debtor intelligence for judgment_id=%s", judgment_id)
@@ -116,9 +114,7 @@ def dequeue_tier_job(client) -> dict | None:
 def ack_job(client, msg_id: int):
     """Acknowledge a processed job by deleting from queue."""
     try:
-        client.rpc(
-            "pgmq_delete", {"queue_name": "tier_assignment", "msg_id": msg_id}
-        ).execute()
+        client.rpc("pgmq_delete", {"queue_name": "tier_assignment", "msg_id": msg_id}).execute()
         logger.info("Acknowledged job msg_id=%s", msg_id)
     except Exception as e:
         logger.warning("Failed to ack job: %s", e)
@@ -128,9 +124,7 @@ def verify_tier_assignment(client, judgment_id: str) -> dict | None:
     """Fetch the judgment and verify tier was assigned."""
     response = (
         client.table("core_judgments")
-        .select(
-            "id, tier, tier_reason, tier_as_of, collectability_score, principal_amount"
-        )
+        .select("id, tier, tier_reason, tier_as_of, collectability_score, principal_amount")
         .eq("id", judgment_id)
         .execute()
     )
@@ -228,7 +222,7 @@ async def run_smoke_test(judgment_id: str | None = None, verbose: bool = False):
 
         if job_judgment_id == judgment_id:
             processed_target = True
-            print(f"  Found and processed target job!")
+            print("  Found and processed target job!")
             break
 
     if not processed_target:

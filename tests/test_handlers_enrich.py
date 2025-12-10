@@ -81,7 +81,9 @@ async def test_handle_outreach_logs_and_updates(fake_supabase):
     result = await handlers.handle_outreach(job)
 
     assert result is True
-    insert_calls = [call for call in fake_supabase if call[0] == "insert" and call[1] == "outreach_log"]
+    insert_calls = [
+        call for call in fake_supabase if call[0] == "insert" and call[1] == "outreach_log"
+    ]
     assert insert_calls, "Expected outreach_log insert call"
     inserted_payload = insert_calls[0][2]
     assert inserted_payload["case_number"] == "SIM-0002"
@@ -99,8 +101,12 @@ async def test_handle_enforce_spawns_flow(fake_supabase):
     result = await handlers.handle_enforce(job)
 
     assert result is True
-    assert ("rpc", "spawn_enforcement_flow", {
-        "case_number": "SIM-0003",
-        "template_code": "CUSTOM_FLOW",
-    }) in fake_supabase
+    assert (
+        "rpc",
+        "spawn_enforcement_flow",
+        {
+            "case_number": "SIM-0003",
+            "template_code": "CUSTOM_FLOW",
+        },
+    ) in fake_supabase
     assert ("update", "judgments", {"status": "enforcement_open"}) in fake_supabase

@@ -104,9 +104,7 @@ class IntakeGuardian:
                     logger.debug("🛡️ Intake Guardian: No stuck batches found")
                     return result
 
-                logger.warning(
-                    f"🛡️ Intake Guardian: Found {len(stuck_batches)} stuck batch(es)"
-                )
+                logger.warning(f"🛡️ Intake Guardian: Found {len(stuck_batches)} stuck batch(es)")
 
                 # Process each stuck batch
                 for batch in stuck_batches:
@@ -224,13 +222,9 @@ class IntakeGuardian:
                     username="Intake Guardian",
                 )
                 if sent:
-                    logger.debug(
-                        f"🛡️ Intake Guardian: Discord alert sent for {batch_id}"
-                    )
+                    logger.debug(f"🛡️ Intake Guardian: Discord alert sent for {batch_id}")
                 else:
-                    logger.debug(
-                        f"🛡️ Intake Guardian: Discord not configured, alert skipped"
-                    )
+                    logger.debug("🛡️ Intake Guardian: Discord not configured, alert skipped")
         except Exception as e:
             # Don't fail the whole operation if Discord alert fails
             logger.warning(f"🛡️ Intake Guardian: Failed to send Discord alert: {e}")

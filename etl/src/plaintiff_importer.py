@@ -74,9 +74,7 @@ def _ensure_required_table(
     dbname: str,
 ) -> bool:
     query = (
-        "select 1 "
-        "from information_schema.tables "
-        "where table_schema = %s and table_name = %s"
+        "select 1 " "from information_schema.tables " "where table_schema = %s and table_name = %s"
     )
     with conn.cursor() as cur:
         cur.execute(query, (schema, table))
@@ -228,18 +226,10 @@ class ExistingIndex:
         self.by_name: Dict[str, ExistingPlaintiff] = {}
 
     @classmethod
-    def load(
-        cls, conn: Connection, candidates: Iterable[PlaintiffCandidate]
-    ) -> "ExistingIndex":
-        normalized_names = sorted(
-            {candidate.normalized_name for candidate in candidates}
-        )
+    def load(cls, conn: Connection, candidates: Iterable[PlaintiffCandidate]) -> "ExistingIndex":
+        normalized_names = sorted({candidate.normalized_name for candidate in candidates})
         normalized_emails = sorted(
-            {
-                candidate.normalized_email
-                for candidate in candidates
-                if candidate.normalized_email
-            }
+            {candidate.normalized_email for candidate in candidates if candidate.normalized_email}
         )
 
         query = """
@@ -389,9 +379,7 @@ def _read_csv(csv_path: Path, *, limit: Optional[int] = None) -> ParseResult:
             normalized_name = _normalize_name(plaintiff_name)
             candidate = aggregates.get(normalized_name)
             if candidate is None:
-                candidate = PlaintiffCandidate(
-                    name=plaintiff_name, normalized_name=normalized_name
-                )
+                candidate = PlaintiffCandidate(name=plaintiff_name, normalized_name=normalized_name)
                 aggregates[normalized_name] = candidate
 
             candidate.row_numbers.append(row_index)
@@ -480,9 +468,7 @@ def _insert_plaintiff(conn: Connection, candidate: PlaintiffCandidate) -> str:
         return str(row["id"])
 
 
-def _update_plaintiff(
-    conn: Connection, plaintiff_id: str, updates: Dict[str, str]
-) -> None:
+def _update_plaintiff(conn: Connection, plaintiff_id: str, updates: Dict[str, str]) -> None:
     if not updates:
         return
     assignments = [f"{field} = %s" for field in updates]
@@ -505,9 +491,7 @@ def _insert_status_entry(conn: Connection, plaintiff_id: str) -> None:
         )
 
 
-def _insert_contact(
-    conn: Connection, plaintiff_id: str, contact: ContactCandidate
-) -> None:
+def _insert_contact(conn: Connection, plaintiff_id: str, contact: ContactCandidate) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -618,7 +602,6 @@ def _process_candidates(
                 action_description = "add contacts"
 
         if action_description and len(stats.examples) < 3:
-            preview = candidate.preview_contact or "no contact"
             stats.examples.append(
                 f"{candidate.name} — {action_description} (contacts+{new_contacts}, dupes={duplicate_contacts})"
             )
@@ -654,9 +637,7 @@ def _log_summary(stats: ImportStats, *, commit: bool) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Import plaintiffs and contacts from a CSV file"
-    )
+    parser = argparse.ArgumentParser(description="Import plaintiffs and contacts from a CSV file")
     parser.add_argument(
         "--csv",
         dest="csv_path",
@@ -738,9 +719,7 @@ def _run_cli(argv: Optional[Sequence[str]]) -> int:
                 rows_skipped=parse_result.rows_skipped,
             )
 
-            _process_candidates(
-                conn, parse_result.candidates, commit=not dry_run, stats=stats
-            )
+            _process_candidates(conn, parse_result.candidates, commit=not dry_run, stats=stats)
             if not dry_run:
                 conn.commit()
     except Exception as exc:  # pragma: no cover - runtime guard

@@ -19,14 +19,14 @@ FOIL_FOLLOWUP_TEMPLATE = """Subject: FOIL Follow-up for case {case_number}
 
 Dear {agency_name},
 
-This is a follow-up regarding our Freedom of Information Law (FOIL) request 
+This is a follow-up regarding our Freedom of Information Law (FOIL) request
 submitted on {sent_date} concerning case {case_number}.
 
-We have not yet received a response to our request. Under FOIL regulations, 
-agencies are required to respond within five business days of receipt of a 
+We have not yet received a response to our request. Under FOIL regulations,
+agencies are required to respond within five business days of receipt of a
 request, with the possibility of a reasonable extension.
 
-We kindly request an update on the status of our request and an estimated 
+We kindly request an update on the status of our request and an estimated
 timeline for receiving the requested records.
 
 Thank you for your attention to this matter.
@@ -122,7 +122,7 @@ async def process_foil_followups() -> int:
                         # Log the follow-up attempt
                         await conn.execute(
                             """
-                            INSERT INTO public.foil_followup_log 
+                            INSERT INTO public.foil_followup_log
                                 (foil_request_id, attempted_at, message_preview, success)
                             VALUES ($1, $2, $3, $4)
                             """,
@@ -153,7 +153,7 @@ async def process_foil_followups() -> int:
                         # Log the failure
                         await conn.execute(
                             """
-                            INSERT INTO public.foil_followup_log 
+                            INSERT INTO public.foil_followup_log
                                 (foil_request_id, attempted_at, success, error_message)
                             VALUES ($1, $2, $3, $4)
                             """,
@@ -208,7 +208,7 @@ async def get_foil_stats() -> dict[str, Any]:
                 COUNT(*) FILTER (WHERE status = 'completed') AS completed_count,
                 COUNT(*) AS total_count,
                 COUNT(*) FILTER (
-                    WHERE status = 'pending' 
+                    WHERE status = 'pending'
                     AND created_at <= NOW() - INTERVAL '20 days'
                 ) AS needs_followup_count
             FROM public.foil_requests

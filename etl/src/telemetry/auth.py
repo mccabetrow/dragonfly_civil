@@ -47,7 +47,9 @@ def record_auth_event(
 
     try:
         client = get_client()
-        client.schema("analytics").table("auth_sessions").upsert(payload, returning="minimal").execute()
+        client.schema("analytics").table("auth_sessions").upsert(
+            payload, returning="minimal"
+        ).execute()
     except Exception as exc:  # pragma: no cover - telemetry must never fail caller
         _LOG.warning("Auth telemetry submission failed: %s", exc)
         _LOG.debug("Auth telemetry payload skipped: %s", payload)
