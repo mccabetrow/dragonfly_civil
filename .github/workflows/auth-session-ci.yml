@@ -42,6 +42,6 @@ jobs:
         env:
           SKIP_AUTH_DESTRUCTIVE: "1"
           SUPABASE_URL: "https://placeholder.supabase.co"
-          SUPABASE_SERVICE_ROLE_KEY: "placeholder-key"
+          SUPABASE_SERVICE_ROLE_KEY: "placeholder-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
           SUPABASE_DB_URL: "postgresql://placeholder:placeholder@localhost:5432/placeholder"
         run: pytest -q -k "auth or session"
