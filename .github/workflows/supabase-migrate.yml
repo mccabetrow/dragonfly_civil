@@ -99,7 +99,11 @@ jobs:
           OUTPUT=$(supabase migration list --db-url "$DB_URL")
           echo "$OUTPUT"
           # Count lines where Remote column is empty (pending migrations)
-          PENDING=$(echo "$OUTPUT" | grep -cE '^\s*[0-9]+\s*\|\s*\|' || echo "0")
+          # Note: grep -c returns exit code 1 when count is 0, so we handle it explicitly
+          PENDING=$(echo "$OUTPUT" | grep -cE '^\s*[0-9]+\s*\|\s*\|' || true)
+          if [ -z "$PENDING" ]; then
+            PENDING=0
+          fi
           echo "count=$PENDING" >> $GITHUB_OUTPUT
           echo "📊 Pending migrations: $PENDING"
 
