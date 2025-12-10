@@ -578,9 +578,21 @@ class GeneratePacketResponse(BaseModel):
     """Response from packet generation request."""
 
     status: Literal["queued", "processing", "completed", "error"]
-    packet_id: str
+    job_id: str = Field(..., description="Background job ID for tracking")
+    packet_id: Optional[str] = Field(None, description="Packet ID (available when completed)")
     message: str
     estimated_completion: Optional[str] = None
+
+
+class JobStatusResponse(BaseModel):
+    """Response for job status query."""
+
+    job_id: str
+    status: Literal["pending", "processing", "completed", "failed"]
+    packet_id: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 # =============================================================================
@@ -611,24 +623,149 @@ async def generate_enforcement_packet(
 
     Requires authentication.
     """
+    import uuid
+
     logger.info(
         f"Packet generation requested by {auth.via}: "
         f"judgment_id={request.judgment_id}, strategy={request.strategy}"
     )
 
-    # Generate a unique packet ID
-    packet_id = f"PKT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{request.judgment_id[:8]}"
+    client = get_supabase_client()
 
-    # TODO: In production, this would:
-    # 1. Validate the judgment exists and is ready for enforcement
-    # 2. Queue a background job to generate documents
-    # 3. Store packet metadata in the database
-    # 4. Notify user when complete
+    # 1. Validate judgment exists
+    try:
+        judgment_id_int = int(request.judgment_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid judgment_id format")
 
-    # For now, return success with mock data
+    judgment_result = (
+        client.table("judgments")
+        .select("id, case_number")
+        .eq("id", judgment_id_int)
+        .limit(1)
+        .execute()
+    )
+
+    if not judgment_result.data:
+        raise HTTPException(status_code=404, detail=f"Judgment {request.judgment_id} not found")
+
+    judgment_row = judgment_result.data[0]
+    case_number = judgment_row["case_number"] if isinstance(judgment_row, dict) else "UNKNOWN"
+
+    # 2. Create job in ops.job_queue
+    job_id = str(uuid.uuid4())
+    job_payload = {
+        "judgment_id": request.judgment_id,
+        "strategy": request.strategy,
+        "case_number": case_number,
+        "requested_by": auth.via,
+    }
+
+    try:
+        job_result = (
+            client.schema("ops")
+            .table("job_queue")
+            .insert(
+                {
+                    "id": job_id,
+                    "job_type": "enforcement_generate_packet",
+                    "status": "pending",
+                    "payload": job_payload,
+                }
+            )
+            .execute()
+        )
+
+        if not job_result.data:
+            raise HTTPException(status_code=500, detail="Failed to create background job")
+
+    except Exception as e:
+        logger.error(f"Failed to queue packet generation job: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to queue job: {str(e)}")
+
+    logger.info(f"Queued packet generation job {job_id} for judgment {request.judgment_id}")
+
     return GeneratePacketResponse(
         status="queued",
-        packet_id=packet_id,
+        job_id=job_id,
+        packet_id=None,
         message=f"Enforcement packet ({request.strategy}) queued for generation.",
         estimated_completion=(datetime.utcnow().isoformat() + "Z"),
+    )
+
+
+@router.get(
+    "/job-status/{job_id}",
+    response_model=JobStatusResponse,
+    summary="Get job status",
+    description="Get the status of a background job and resulting packet ID if complete.",
+)
+async def get_job_status(
+    job_id: str,
+    auth: AuthContext = Depends(get_current_user),
+) -> JobStatusResponse:
+    """
+    Get the status of a background enforcement job.
+
+    Returns the current status and packet_id once the job completes.
+    Frontend should poll this endpoint every 2 seconds until status is 'completed' or 'failed'.
+
+    Requires authentication.
+    """
+    from typing import cast
+
+    client = get_supabase_client()
+
+    # Look up job in ops.job_queue
+    try:
+        job_result = (
+            client.schema("ops")
+            .table("job_queue")
+            .select("id, status, payload, last_error, created_at, updated_at")
+            .eq("id", job_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        logger.error(f"Failed to query job status: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to query job: {str(e)}")
+
+    if not job_result.data:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    job = cast(dict, job_result.data[0])
+    raw_status = str(job.get("status", "pending"))
+    # Validate status is a known value
+    valid_statuses = ("pending", "processing", "completed", "failed")
+    status: str = raw_status if raw_status in valid_statuses else "pending"
+    payload_raw = job.get("payload")
+    payload = cast(dict, payload_raw) if isinstance(payload_raw, dict) else {}
+
+    # If completed, look for the resulting packet
+    packet_id: str | None = None
+    if status == "completed":
+        judgment_id = payload.get("judgment_id")
+        if judgment_id:
+            try:
+                packet_result = (
+                    client.schema("enforcement")
+                    .table("draft_packets")
+                    .select("id")
+                    .eq("job_id", job_id)
+                    .limit(1)
+                    .execute()
+                )
+                if packet_result.data:
+                    packet_row = cast(dict, packet_result.data[0])
+                    packet_id = str(packet_row.get("id")) if packet_row.get("id") else None
+            except Exception as e:
+                logger.warning(f"Could not fetch packet for job {job_id}: {e}")
+
+    return JobStatusResponse(
+        job_id=job_id,
+        status=status,
+        packet_id=packet_id,
+        error_message=str(job.get("last_error")) if job.get("last_error") else None,
+        created_at=str(job.get("created_at")) if job.get("created_at") else None,
+        updated_at=str(job.get("updated_at")) if job.get("updated_at") else None,
     )

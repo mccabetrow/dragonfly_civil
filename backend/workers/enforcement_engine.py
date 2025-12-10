@@ -62,7 +62,7 @@ logger = logging.getLogger("enforcement_engine")
 # Worker configuration
 POLL_INTERVAL_SECONDS = 5.0
 LOCK_TIMEOUT_MINUTES = 30
-JOB_TYPES = ("enforcement_strategy", "enforcement_drafting")
+JOB_TYPES = ("enforcement_strategy", "enforcement_drafting", "enforcement_generate_packet")
 
 
 # =============================================================================
@@ -270,6 +270,20 @@ async def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
         elif job_type == "enforcement_drafting":
             plan_id = payload.get("plan_id")
             result = await run_drafting_pipeline(judgment_id, plan_id)
+        elif job_type == "enforcement_generate_packet":
+            # Generate enforcement packet - runs full drafting pipeline
+            strategy = payload.get("strategy", "wage_garnishment")
+            case_number = payload.get("case_number", "UNKNOWN")
+            result = await run_drafting_pipeline(judgment_id)
+            # Log packet generation to ops.intake_logs
+            if result["success"]:
+                log_job_event(
+                    conn,
+                    job_id,
+                    "INFO",
+                    f"Packet Generated for Case {case_number}",
+                    {"strategy": strategy, "packet_id": result.get("packet_id")},
+                )
         else:
             raise ValueError(f"Unknown job_type: {job_type}")
 
