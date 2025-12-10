@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import AppShell from './layouts/AppShellNew';
+import AppShell from './layouts/AppShell';
 import { ToastProvider } from './components/ui/Toast';
 import { RefreshProvider } from './context/RefreshContext';
 import CommandPalette from './components/ui/CommandPalette';

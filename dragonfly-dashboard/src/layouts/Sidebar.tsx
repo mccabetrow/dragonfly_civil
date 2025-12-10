@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/design-tokens';
 import { useSystemHealth } from '../hooks/useSystemHealth';
+import { useOpsAlerts } from '../hooks/useOpsAlerts';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NAVIGATION CONFIG
@@ -42,6 +43,7 @@ interface NavigationItem {
   path: string;
   icon: typeof LayoutDashboard;
   shortLabel?: string; // For collapsed state
+  alertKey?: string; // Key for dynamic alert indicator (e.g., 'ops' for Critical status)
 }
 
 interface NavigationSection {
@@ -53,7 +55,7 @@ const NAVIGATION_SECTIONS: NavigationSection[] = [
   {
     title: 'OPERATIONS',
     items: [
-      { label: 'Ops Console', path: '/ops', icon: Headphones, shortLabel: 'OPS' },
+      { label: 'Ops Console', path: '/ops', icon: Headphones, shortLabel: 'OPS', alertKey: 'ops' },
       { label: 'Command Center', path: '/ops/console', icon: Terminal, shortLabel: 'CMD' },
       { label: 'Intake Station', path: '/intake', icon: Database, shortLabel: 'IN' },
       { label: 'Cases', path: '/cases', icon: Briefcase, shortLabel: 'CSE' },
@@ -92,6 +94,7 @@ interface SidebarProps {
 const Sidebar: FC<SidebarProps> = ({ collapsed, onToggle, mobileOpen, onMobileClose }) => {
   const location = useLocation();
   const { status, environment, isOnline, latencyMs } = useSystemHealth();
+  const { isCritical: opsAlertCritical, loading: opsAlertLoading } = useOpsAlerts(60000);
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -201,6 +204,8 @@ const Sidebar: FC<SidebarProps> = ({ collapsed, onToggle, mobileOpen, onMobileCl
                     item={item}
                     collapsed={collapsed}
                     isActive={location.pathname === item.path || location.pathname.startsWith(item.path + '/')}
+                    showAlert={item.alertKey === 'ops' && opsAlertCritical}
+                    alertLoading={item.alertKey === 'ops' && opsAlertLoading}
                   />
                 ))}
               </div>
@@ -231,9 +236,11 @@ interface NavItemProps {
   item: NavigationItem;
   collapsed: boolean;
   isActive: boolean;
+  showAlert?: boolean; // Show red dot indicator when system is Critical
+  alertLoading?: boolean; // Show skeleton pulse while loading alert status
 }
 
-const NavItem: FC<NavItemProps> = ({ item, collapsed, isActive }) => {
+const NavItem: FC<NavItemProps> = ({ item, collapsed, isActive, showAlert = false, alertLoading = false }) => {
   const Icon = item.icon;
 
   return (
@@ -258,12 +265,26 @@ const NavItem: FC<NavItemProps> = ({ item, collapsed, isActive }) => {
         />
       )}
 
-      <Icon
-        className={cn(
-          'h-4 w-4 flex-shrink-0 transition-colors',
-          isActive ? 'text-emerald-400' : 'text-slate-500 group-hover:text-slate-300'
+      {/* Icon with alert indicator */}
+      <span className="relative">
+        <Icon
+          className={cn(
+            'h-4 w-4 flex-shrink-0 transition-colors',
+            isActive ? 'text-emerald-400' : 'text-slate-500 group-hover:text-slate-300'
+          )}
+        />
+        {/* Alert indicator (red dot) */}
+        {showAlert && (
+          <span
+            className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-1 ring-slate-950 animate-pulse"
+            aria-label="System critical alert"
+          />
         )}
-      />
+        {/* Loading skeleton for alert */}
+        {alertLoading && !showAlert && (
+          <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-slate-600 animate-pulse" />
+        )}
+      </span>
 
       {!collapsed && (
         <span className="truncate font-mono text-[13px]">{item.label}</span>
