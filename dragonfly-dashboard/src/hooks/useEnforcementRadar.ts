@@ -37,12 +37,16 @@ export interface RadarRow {
   county: string | null;
   judgmentDate: string | null;
   createdAt: string;
+  hasEmployer: boolean;
+  hasBank: boolean;
 }
 
 export interface RadarFilters {
   strategy?: OfferStrategy | 'ALL';
   minScore?: number;
   minAmount?: number;
+  onlyEmployed?: boolean;
+  onlyBankAssets?: boolean;
 }
 
 interface ApiRadarRow {
@@ -57,6 +61,8 @@ interface ApiRadarRow {
   county: string | null;
   judgment_date: string | null;
   created_at: string;
+  has_employer: boolean;
+  has_bank: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -90,6 +96,12 @@ export function useEnforcementRadar(
       if (filters?.minAmount !== undefined && filters.minAmount > 0) {
         params.set('min_amount', String(filters.minAmount));
       }
+      if (filters?.onlyEmployed) {
+        params.set('only_employed', 'true');
+      }
+      if (filters?.onlyBankAssets) {
+        params.set('only_bank_assets', 'true');
+      }
 
       const queryString = params.toString();
       const path = `/api/v1/enforcement/radar${queryString ? `?${queryString}` : ''}`;
@@ -108,6 +120,8 @@ export function useEnforcementRadar(
         county: row.county != null ? String(row.county) : null,
         judgmentDate: row.judgment_date != null ? String(row.judgment_date) : null,
         createdAt: String(row.created_at ?? ''),
+        hasEmployer: Boolean(row.has_employer),
+        hasBank: Boolean(row.has_bank),
       }));
 
       setSnapshot(buildReadyMetricsState(normalized));
@@ -137,7 +151,7 @@ export function useEnforcementRadar(
         );
       }
     }
-  }, [filters?.strategy, filters?.minScore, filters?.minAmount]);
+  }, [filters?.strategy, filters?.minScore, filters?.minAmount, filters?.onlyEmployed, filters?.onlyBankAssets]);
 
   useEffect(() => {
     void fetchData();

@@ -40,6 +40,8 @@ class RadarRow(BaseModel):
     county: Optional[str] = Field(None, description="County")
     judgment_date: Optional[str] = Field(None, description="Judgment date ISO string")
     created_at: str = Field(..., description="Record creation timestamp")
+    has_employer: bool = Field(False, description="Has employer intelligence")
+    has_bank: bool = Field(False, description="Has bank account intelligence")
 
 
 # =============================================================================
@@ -348,6 +350,8 @@ async def get_enforcement_radar(
         None, ge=0, le=100, description="Minimum collectability score"
     ),
     min_amount: Optional[float] = Query(None, ge=0, description="Minimum judgment amount"),
+    only_employed: bool = Query(False, description="Only show judgments with employer intel"),
+    only_bank_assets: bool = Query(False, description="Only show judgments with bank intel"),
     auth: AuthContext = Depends(get_current_user),
 ) -> list[RadarRow]:
     """
@@ -355,49 +359,41 @@ async def get_enforcement_radar(
 
     Returns judgments sorted by collectability score and amount, with computed
     offer strategies (BUY_CANDIDATE, CONTINGENCY, ENRICHMENT_PENDING, LOW_PRIORITY).
+
+    Filters:
+        - min_score: Only judgments with collectability_score >= min_score
+        - min_amount: Only judgments with judgment_amount >= min_amount
+        - only_employed: Only judgments where debtor has known employer
+        - only_bank_assets: Only judgments where debtor has known bank account
     """
     logger.info(
         f"Enforcement radar requested by {auth.via}: "
-        f"strategy={strategy}, min_score={min_score}, min_amount={min_amount}"
+        f"strategy={strategy}, min_score={min_score}, min_amount={min_amount}, "
+        f"only_employed={only_employed}, only_bank_assets={only_bank_assets}"
     )
 
     try:
         client = get_supabase_client()
 
-        # Query judgments table with relevant fields
-        query = client.table("judgments").select(
-            "id, case_number, plaintiff_name, defendant_name, judgment_amount, "
-            "collectability_score, court, county, judgment_date, created_at"
-        )
+        # Call RPC function with filters
+        result = client.rpc(
+            "enforcement_radar_filtered",
+            {
+                "p_min_score": min_score,
+                "p_only_employed": only_employed,
+                "p_only_bank_assets": only_bank_assets,
+                "p_min_amount": min_amount,
+                "p_strategy": strategy,
+                "p_limit": 500,
+            },
+        ).execute()
 
-        # Apply score filter if provided
-        if min_score is not None:
-            query = query.gte("collectability_score", min_score)
-
-        # Apply amount filter if provided
-        if min_amount is not None:
-            query = query.gte("judgment_amount", min_amount)
-
-        # Order by collectability score descending, then amount
-        query = query.order("collectability_score", desc=True, nullsfirst=False)
-        query = query.order("judgment_amount", desc=True)
-
-        # Limit to top 500 for performance
-        query = query.limit(500)
-
-        result = query.execute()
         rows: list[dict] = result.data or []  # type: ignore[assignment]
 
         radar_rows: list[RadarRow] = []
         for row in rows:
             raw_score = row.get("collectability_score")
             score: int | None = int(raw_score) if raw_score is not None else None
-            amount = float(row.get("judgment_amount") or 0)
-            computed_strategy = _compute_offer_strategy(score, amount)
-
-            # Apply strategy filter after computation
-            if strategy and strategy != "ALL" and computed_strategy != strategy:
-                continue
 
             radar_rows.append(
                 RadarRow(
@@ -405,13 +401,15 @@ async def get_enforcement_radar(
                     case_number=str(row.get("case_number") or ""),
                     plaintiff_name=str(row.get("plaintiff_name") or ""),
                     defendant_name=str(row.get("defendant_name") or ""),
-                    judgment_amount=amount,
+                    judgment_amount=float(row.get("judgment_amount") or 0),
                     collectability_score=score,
-                    offer_strategy=computed_strategy,
+                    offer_strategy=str(row.get("offer_strategy") or "ENRICHMENT_PENDING"),
                     court=row.get("court"),
                     county=row.get("county"),
                     judgment_date=row.get("judgment_date"),
                     created_at=str(row.get("created_at") or datetime.utcnow().isoformat()),
+                    has_employer=bool(row.get("has_employer", False)),
+                    has_bank=bool(row.get("has_bank", False)),
                 )
             )
 

@@ -490,7 +490,22 @@ const SkeletonRow: FC = () => (
 // ═══════════════════════════════════════════════════════════════════════════
 
 const EnforcementActionCenter: FC = () => {
-  const { data, status, isError, errorMessage, refetch } = useEnforcementRadar();
+  // Local state for filters (controlled by toolbar)
+  const [filters, setFilters] = useState<FilterState>({
+    showOnlyEmployed: false,
+    showOnlyBankAssets: false,
+    minScore: 0,
+  });
+
+  // Convert FilterState to RadarFilters for the hook
+  const radarFilters = useMemo(() => ({
+    minScore: filters.minScore > 0 ? filters.minScore : undefined,
+    onlyEmployed: filters.showOnlyEmployed,
+    onlyBankAssets: filters.showOnlyBankAssets,
+  }), [filters]);
+
+  // Pass filters to the hook - server-side filtering
+  const { data, status, isError, errorMessage, refetch } = useEnforcementRadar(radarFilters);
   const { generatePacket, isProcessing } = useEnforcementActions();
 
   const isLoading = status === 'loading' || status === 'idle';
@@ -498,12 +513,6 @@ const EnforcementActionCenter: FC = () => {
   // Subscribe to global refresh
   useOnRefresh(() => refetch());
 
-  // Local state
-  const [filters, setFilters] = useState<FilterState>({
-    showOnlyEmployed: false,
-    showOnlyBankAssets: false,
-    minScore: 0,
-  });
   const [sort, setSort] = useState<SortConfig | null>({
     field: 'collectabilityScore',
     direction: 'desc',
@@ -581,39 +590,14 @@ const EnforcementActionCenter: FC = () => {
   }, []);
 
   // Filter and sort data
+  // Note: Filters are now applied server-side via the hook.
+  // We only do client-side sorting here.
   const rows = data ?? [];
-  
-  const filteredRows = useMemo(() => {
-    let result = [...rows];
-
-    // Apply filters
-    if (filters.minScore > 0) {
-      result = result.filter(
-        (r) => r.collectabilityScore !== null && r.collectabilityScore >= filters.minScore
-      );
-    }
-
-    // Note: showOnlyEmployed and showOnlyBankAssets would filter based on 
-    // enrichment data that would need to be added to RadarRow.
-    // For now, we just filter by strategy as a proxy:
-    // - Employed → BUY_CANDIDATE (likely to have employment data)
-    // - Bank Assets → CONTINGENCY (likely to have bank data)
-    if (filters.showOnlyEmployed) {
-      result = result.filter((r) => r.offerStrategy === 'BUY_CANDIDATE');
-    }
-    if (filters.showOnlyBankAssets) {
-      result = result.filter(
-        (r) => r.offerStrategy === 'CONTINGENCY' || r.offerStrategy === 'BUY_CANDIDATE'
-      );
-    }
-
-    return result;
-  }, [rows, filters]);
 
   const sortedRows = useMemo(() => {
-    if (!sort) return filteredRows;
+    if (!sort) return rows;
 
-    return [...filteredRows].sort((a, b) => {
+    return [...rows].sort((a, b) => {
       const multiplier = sort.direction === 'desc' ? -1 : 1;
 
       switch (sort.field) {
@@ -631,7 +615,7 @@ const EnforcementActionCenter: FC = () => {
           return 0;
       }
     });
-  }, [filteredRows, sort]);
+  }, [rows, sort]);
 
   // KPIs
   const kpis = useMemo(() => computeRadarKPIs(rows), [rows]);
@@ -715,7 +699,7 @@ const EnforcementActionCenter: FC = () => {
           filters={filters}
           onFilterChange={setFilters}
           totalCount={rows.length}
-          filteredCount={filteredRows.length}
+          filteredCount={sortedRows.length}
         />
 
         {/* Data Table */}
