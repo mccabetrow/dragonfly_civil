@@ -55,7 +55,7 @@ st.markdown(
         padding-top: 2rem;
         max-width: 1200px;
     }
-    
+
     /* Bigger fonts for readability */
     h1 {
         font-size: 2.5rem !important;
@@ -68,7 +68,7 @@ st.markdown(
     h3 {
         font-size: 1.4rem !important;
     }
-    
+
     /* Metric styling */
     [data-testid="stMetricValue"] {
         font-size: 2rem !important;
@@ -77,23 +77,23 @@ st.markdown(
     [data-testid="stMetricLabel"] {
         font-size: 1.1rem !important;
     }
-    
+
     /* Table styling */
     .dataframe {
         font-size: 1rem !important;
     }
-    
+
     /* Button styling */
     .stButton > button {
         font-size: 1rem;
         padding: 0.5rem 1rem;
     }
-    
+
     /* Error/warning boxes */
     .stAlert {
         font-size: 1.1rem;
     }
-    
+
     /* Tab styling */
     .stTabs [data-baseweb="tab"] {
         font-size: 1.2rem;
@@ -197,9 +197,7 @@ def load_distinct_counties(client) -> list[str]:
         response = client.table("core_judgments").select("county").execute()
         if not response.data:
             return []
-        counties = sorted(
-            set(row.get("county") for row in response.data if row.get("county"))
-        )
+        counties = sorted(set(row.get("county") for row in response.data if row.get("county")))
         return counties
     except Exception as e:
         logger.error("Failed to load counties: %s", e)
@@ -254,9 +252,7 @@ def load_stats(client) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def trigger_income_execution(
-    judgment_id: str, requested_by: str = "dashboard"
-) -> dict[str, Any]:
+def trigger_income_execution(judgment_id: str, requested_by: str = "dashboard") -> dict[str, Any]:
     """
     Call the n8n webhook to generate an income execution document.
 
@@ -430,25 +426,19 @@ def render_judgments_tab(client):
             with cols[2]:
                 # Check if income execution is possible
                 can_execute = (
-                    employer
-                    and employer != "—"
-                    and income_band not in ("LOW", "$0-25k", None, "")
+                    employer and employer != "—" and income_band not in ("LOW", "$0-25k", None, "")
                 )
 
                 if can_execute:
                     button_key = f"exec_{judgment_id}"
-                    if st.button(
-                        "📄 Generate Income Execution", key=button_key, type="primary"
-                    ):
+                    if st.button("📄 Generate Income Execution", key=button_key, type="primary"):
                         with st.spinner("Generating document..."):
                             result = trigger_income_execution(judgment_id)
 
                         if result.get("success"):
                             st.success("✅ Document generated! Check your email.")
                             if result.get("data", {}).get("document_url"):
-                                st.markdown(
-                                    f"[📥 Download PDF]({result['data']['document_url']})"
-                                )
+                                st.markdown(f"[📥 Download PDF]({result['data']['document_url']})")
                         else:
                             error = result.get("error", "Unknown error")
                             st.error(f"❌ Failed: {error}")
@@ -565,13 +555,13 @@ def main():
         st.error(
             f"""
             ## ⚠️ Database Connection Error
-            
+
             Could not connect to Supabase. Please check your environment variables:
-            
+
             - `SUPABASE_URL`
             - `SUPABASE_SERVICE_ROLE_KEY`
             - `SUPABASE_MODE` (optional, defaults to 'dev')
-            
+
             **Error:** {e}
             """
         )
