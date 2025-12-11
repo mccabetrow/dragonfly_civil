@@ -44,6 +44,7 @@ import { cn } from '../lib/design-tokens';
 import { useIntakeStationData, type IntakeBatchSummary } from '../hooks/useIntakeStationData';
 import { useUploadIntake, type DataSource } from '../hooks/useUploadIntake';
 import { useOnRefresh } from '../context/RefreshContext';
+import { useJobQueueRealtime } from '../hooks/useRealtimeSubscription';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -813,6 +814,27 @@ const BatchHistory: FC<BatchHistoryProps> = ({ batches, isLoading, previousBatch
 const IntakeStationPage: FC = () => {
   const { radar, batches, isLoading, refetch, startPolling, stopPolling, isPolling } = useIntakeStationData();
   const [previousBatches, setPreviousBatches] = useState<IntakeBatchSummary[]>([]);
+  const [realtimeFlash, setRealtimeFlash] = useState(false);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // REALTIME SUBSCRIPTION - Auto-refetch when jobs complete
+  // ═══════════════════════════════════════════════════════════════════════════
+  const { isConnected: realtimeConnected } = useJobQueueRealtime({
+    onJobComplete: (jobId, status) => {
+      console.log(`[Realtime] Job ${jobId} completed with status: ${status}`);
+      if (status === 'completed' || status === 'failed') {
+        // Trigger flash animation
+        setRealtimeFlash(true);
+        setTimeout(() => setRealtimeFlash(false), 2000);
+        // Refetch data
+        refetch();
+      }
+    },
+    onFlash: () => {
+      setRealtimeFlash(true);
+      setTimeout(() => setRealtimeFlash(false), 2000);
+    },
+  });
 
   // Subscribe to global refresh
   useOnRefresh(() => {
@@ -844,7 +866,23 @@ const IntakeStationPage: FC = () => {
   }, [refetch]);
 
   return (
-    <div className="space-y-6">
+    <div className={cn(
+      'space-y-6 transition-all duration-500',
+      realtimeFlash && 'ring-2 ring-emerald-500/30 ring-inset rounded-lg'
+    )}>
+      {/* Flash overlay */}
+      <AnimatePresence>
+        {realtimeFlash && (
+          <motion.div
+            className="fixed inset-0 bg-emerald-500/5 pointer-events-none z-50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -852,15 +890,22 @@ const IntakeStationPage: FC = () => {
             INTAKE STATION
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Real-time judgment ingestion • Auto-refresh {isPolling ? 'active' : 'paused'}
+            Real-time judgment ingestion • {realtimeConnected ? 'Realtime connected' : (isPolling ? 'Polling active' : 'Paused')}
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Polling indicator */}
-          {isPolling && (
-            <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
+          {/* Realtime indicator */}
+          {realtimeConnected && (
+            <div className="flex items-center gap-2 text-xs text-emerald-400 font-mono">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              Live
+              Realtime
+            </div>
+          )}
+          {/* Polling indicator (fallback) */}
+          {!realtimeConnected && isPolling && (
+            <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
+              <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+              Polling
             </div>
           )}
           {/* Manual refresh */}

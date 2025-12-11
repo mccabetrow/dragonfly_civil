@@ -41,6 +41,7 @@ import {
 } from '../../hooks/useEnforcementRadar';
 import { useEnforcementActions } from '../../hooks/useEnforcementActions';
 import { useOnRefresh } from '../../context/RefreshContext';
+import { usePacketRealtime } from '../../hooks/useRealtimeSubscription';
 import { telemetry } from '../../utils/logUiAction';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -529,7 +530,25 @@ const EnforcementActionCenter: FC = () => {
     showOnlyBankAssets: false,
     minScore: 0,
   });
+  const [realtimeFlash, setRealtimeFlash] = useState(false);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // REALTIME SUBSCRIPTION - Flash when packets are generated
+  // ═══════════════════════════════════════════════════════════════════════════
+  const { isConnected: realtimeConnected } = usePacketRealtime({
+    onPacketCreated: (packetId, strategy) => {
+      console.log(`[Realtime] Packet ${packetId} created with strategy: ${strategy}`);
+      // Trigger flash animation
+      setRealtimeFlash(true);
+      setTimeout(() => setRealtimeFlash(false), 2000);
+      // Refetch data
+      refetch();
+    },
+    onFlash: () => {
+      setRealtimeFlash(true);
+      setTimeout(() => setRealtimeFlash(false), 2000);
+    },
+  });
   // Convert FilterState to RadarFilters for the hook
   const radarFilters = useMemo(() => ({
     minScore: filters.minScore > 0 ? filters.minScore : undefined,
@@ -676,7 +695,23 @@ const EnforcementActionCenter: FC = () => {
   const kpis = useMemo(() => computeRadarKPIs(rows), [rows]);
 
   return (
-    <div className="min-h-screen bg-slate-950">
+    <div className={cn(
+      'min-h-screen bg-slate-950 transition-all duration-500',
+      realtimeFlash && 'ring-2 ring-emerald-500/30 ring-inset'
+    )}>
+      {/* Flash overlay */}
+      <AnimatePresence>
+        {realtimeFlash && (
+          <motion.div
+            className="fixed inset-0 bg-emerald-500/5 pointer-events-none z-40"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Toast Container */}
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
         <AnimatePresence mode="popLayout">
@@ -695,22 +730,31 @@ const EnforcementActionCenter: FC = () => {
               ENFORCEMENT ACTION CENTER
             </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Generate enforcement packets for high-priority judgments
+              Generate enforcement packets • {realtimeConnected ? 'Realtime connected' : 'Polling'}
             </p>
           </div>
-          <button
-            onClick={() => refetch()}
-            disabled={isLoading}
-            className={cn(
-              'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-              'bg-slate-800 text-slate-300 border border-slate-700',
-              'hover:bg-slate-700 hover:text-white',
-              isLoading && 'opacity-50 cursor-not-allowed'
+          <div className="flex items-center gap-3">
+            {/* Realtime indicator */}
+            {realtimeConnected && (
+              <div className="flex items-center gap-2 text-xs text-emerald-400 font-mono">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                Live
+              </div>
             )}
-          >
-            <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
-            Refresh
-          </button>
+            <button
+              onClick={() => refetch()}
+              disabled={isLoading}
+              className={cn(
+                'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+                'bg-slate-800 text-slate-300 border border-slate-700',
+                'hover:bg-slate-700 hover:text-white',
+                isLoading && 'opacity-50 cursor-not-allowed'
+              )}
+            >
+              <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         {/* KPI Strip */}
