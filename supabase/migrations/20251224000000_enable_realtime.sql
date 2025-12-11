@@ -98,7 +98,7 @@ CREATE OR REPLACE VIEW public.v_live_feed_events AS WITH recent_jobs AS (
             id AS event_id,
             CASE
                 WHEN status = 'completed' THEN 'Job completed: ' || COALESCE(job_type, 'processing')
-                WHEN status = 'failed' THEN 'Job failed: ' || COALESCE(error_message, 'unknown error')
+                WHEN status = 'failed' THEN 'Job failed: ' || COALESCE(last_error, 'unknown error')
                 WHEN status = 'processing' THEN 'Processing: ' || COALESCE(job_type, 'job')
                 ELSE 'Job ' || status
             END AS message,
