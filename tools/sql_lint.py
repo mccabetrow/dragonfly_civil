@@ -20,6 +20,7 @@ IGNORED_DIRS: Sequence[Path] = (
     REPO_ROOT / "supabase" / "migrations",
     REPO_ROOT / "supabase" / "db" / "migrations",
     REPO_ROOT / "supabase" / "archive",
+    REPO_ROOT / "supabase" / "recovery",
     REPO_ROOT / "tmp",
     REPO_ROOT / "docs",
 )

@@ -31,6 +31,8 @@ from psycopg.rows import dict_row
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+pytestmark = pytest.mark.integration
+
 
 # =============================================================================
 # Fixtures

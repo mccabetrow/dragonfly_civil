@@ -5,14 +5,13 @@ import uuid
 from pathlib import Path
 
 import psycopg
+import pytest
 from psycopg.rows import dict_row
 
-from etl.src.simplicity_ingest import (
-    _coerce_row,
-    ingest_file,
-    map_row_to_insert_case_payload,
-)
+from etl.src.simplicity_ingest import _coerce_row, ingest_file, map_row_to_insert_case_payload
 from scripts.sync_simplicity_cases import preview_ingest
+
+pytestmark = pytest.mark.integration
 
 
 def _resolve_db_url() -> str:

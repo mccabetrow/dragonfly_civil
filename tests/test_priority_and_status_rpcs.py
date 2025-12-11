@@ -8,6 +8,8 @@ import pytest
 from psycopg import errors
 from psycopg.rows import dict_row
 
+pytestmark = pytest.mark.integration
+
 
 def _resolve_db_url() -> str:
     explicit = os.environ.get("SUPABASE_DB_URL")

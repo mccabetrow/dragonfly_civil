@@ -25,7 +25,7 @@ import pytest
 
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
-pytestmark = pytest.mark.legacy  # Requires intake views from migrations
+pytestmark = [pytest.mark.legacy, pytest.mark.integration]
 
 
 def _get_connection_url() -> str:

@@ -25,7 +25,7 @@ import pytest
 
 from src.supabase_client import create_supabase_client
 
-pytestmark = pytest.mark.legacy  # Requires RPC functions not always deployed
+pytestmark = [pytest.mark.legacy, pytest.mark.integration]
 
 # ---------------------------------------------------------------------------
 # Fixtures & Helpers

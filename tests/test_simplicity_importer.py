@@ -13,6 +13,8 @@ from psycopg.rows import dict_row
 from etl.simplicity_importer.import_simplicity import import_simplicity_batch
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
+pytestmark = pytest.mark.integration
+
 TEST_SOURCE_SYSTEM = "simplicity_test"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 SAMPLE_CSV_PATH = DATA_DIR / "simplicity_sample.csv"

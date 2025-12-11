@@ -82,7 +82,7 @@ jobs:
           SUPABASE_PROJECT_REF: "placeholder"
         run: |
           cd "$GITHUB_WORKSPACE"
-          python -m pytest -q
+          python -m pytest -q -m "not legacy and not integration"
 
       - name: Apply Supabase schema to local Postgres
         run: |

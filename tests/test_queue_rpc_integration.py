@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from src.settings import get_settings
 from workers.queue_client import QueueClient
 
-pytestmark = pytest.mark.legacy  # Requires queue_job RPC and migrations
+pytestmark = [pytest.mark.legacy, pytest.mark.integration]
 
 
 QUEUE_KIND = "enforce"

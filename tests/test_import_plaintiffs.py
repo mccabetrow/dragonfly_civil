@@ -14,7 +14,7 @@ from psycopg.abc import Query
 from etl.src.importers.jbi_900 import run_jbi_900_import
 from etl.src.importers.simplicity_plaintiffs import run_simplicity_import
 
-pytestmark = pytest.mark.legacy  # Requires plaintiffs table and import schema
+pytestmark = [pytest.mark.legacy, pytest.mark.integration]
 
 
 def _resolve_db_url() -> str:

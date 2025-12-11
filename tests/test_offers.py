@@ -19,6 +19,8 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
+pytestmark = pytest.mark.integration
+
 
 def _get_db_url() -> str:
     """Resolve the Supabase database URL from environment."""

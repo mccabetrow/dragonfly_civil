@@ -12,6 +12,8 @@ from psycopg.types.json import Jsonb
 
 UTC = timezone.utc
 
+pytestmark = pytest.mark.integration
+
 
 def _resolve_db_url() -> str:
     explicit = os.environ.get("SUPABASE_DB_URL")

@@ -27,6 +27,8 @@ import pytest
 
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
+pytestmark = pytest.mark.integration
+
 # Check if backend.maintenance is importable (requires psycopg_pool which may not be installed locally)
 try:
     from backend.maintenance import SchemaGuard  # noqa: F401

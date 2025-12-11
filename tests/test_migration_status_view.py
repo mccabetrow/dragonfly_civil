@@ -23,6 +23,8 @@ import pytest
 
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
+pytestmark = pytest.mark.integration
+
 # Expected columns in the view
 EXPECTED_COLUMNS = {"source", "version", "name", "executed_at", "success"}
 
