@@ -14,6 +14,7 @@ import CollectabilityPageNew from './pages/CollectabilityPageNew';
 import CasesPageNew from './pages/CasesPageNew';
 import SettingsPageNew from './pages/SettingsPageNew';
 import DataIngestionPage from './pages/DataIngestionPage';
+import DataIntegrityPage from './pages/DataIntegrityPage';
 import HelpPageNew from './pages/HelpPageNew';
 import EnforcementActionCenter from './pages/enforcement/EnforcementActionCenter';
 import EnforcementEnginePage from './pages/enforcement/EnforcementEnginePage';
@@ -48,6 +49,7 @@ const App: React.FC = () => {
               <Route path="/cases" element={<CasesPageNew />} />
               <Route path="/settings" element={<SettingsPageNew />} />
               <Route path="/settings/ingestion" element={<DataIngestionPage />} />
+              <Route path="/settings/integrity" element={<DataIntegrityPage />} />
               <Route path="/help" element={<HelpPageNew />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>

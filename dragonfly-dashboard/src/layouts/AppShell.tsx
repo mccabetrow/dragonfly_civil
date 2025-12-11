@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import ReleaseNotesModal, { useReleaseNotesModal } from '../components/ReleaseNotesModal';
 import SystemDiagnostic from '../components/SystemDiagnostic';
+import LiveFeedTicker from '../components/LiveFeedTicker';
 import { cn } from '../lib/design-tokens';
 import { Button, IconButton } from '../components/ui/Button';
 import { useRefreshBus } from '../context/RefreshContext';
@@ -380,6 +381,9 @@ const AppShellNew: FC = () => {
             </motion.div>
           </AnimatePresence>
         </main>
+
+        {/* Live Feed Ticker - Real-time event stream */}
+        <LiveFeedTicker className="md:ml-72" />
 
         {/* Footer - Premium dark styling */}
         <footer className="border-t border-white/5 bg-dragonfly-navy-950/50 px-4 py-4 sm:px-6">

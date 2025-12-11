@@ -6,16 +6,19 @@
  *   - Intake radar metrics (24h/7d judgment counts, AUM, validity rate)
  *   - Batch history (recent uploads with status) via API
  *   - Real-time polling support (auto-refresh every 30s)
+ *   - Supabase Realtime subscriptions for instant updates
  *
  * Design:
  *   - Skeleton-ready loading states (no spinners)
  *   - Graceful error handling with user-friendly messages
  *   - RefreshContext integration for manual refresh
+ *   - Green flash animation on realtime updates
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { useOnRefresh } from '../context/RefreshContext';
 import { supabaseClient, IS_DEMO_MODE } from '../lib/supabaseClient';
 import { apiClient } from '../lib/apiClient';
+import { useJobQueueRealtime, useJudgmentRealtime } from './useRealtimeSubscription';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -53,12 +56,18 @@ export interface IntakeStationData {
   isPolling: boolean;
   error: string | null;
   lastUpdated: Date | null;
+  /** True when a realtime update just occurred (for flash animation) */
+  isFlashing: boolean;
+  /** Whether connected to realtime channel */
+  isRealtimeConnected: boolean;
 }
 
 export interface UseIntakeStationDataResult extends IntakeStationData {
   refetch: () => Promise<void>;
   startPolling: () => void;
   stopPolling: () => void;
+  /** Number of realtime events received this session */
+  realtimeEventCount: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -190,6 +199,7 @@ function normalizeApiBatch(raw: ApiBatchRow): IntakeBatchSummary {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const POLLING_INTERVAL_MS = 5_000; // 5 seconds for real-time feel
+const FLASH_DURATION_MS = 1500; // Duration of green flash animation
 
 export function useIntakeStationData(): UseIntakeStationDataResult {
   const [data, setData] = useState<IntakeStationData>({
@@ -199,21 +209,47 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
     isPolling: false,
     error: null,
     lastUpdated: null,
+    isFlashing: false,
+    isRealtimeConnected: false,
   });
 
   const [pollingEnabled, setPollingEnabled] = useState(false);
+  const flashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Flash animation handler
+  const triggerFlash = useCallback(() => {
+    setData((prev) => ({ ...prev, isFlashing: true }));
+    
+    if (flashTimeoutRef.current) {
+      clearTimeout(flashTimeoutRef.current);
+    }
+    
+    flashTimeoutRef.current = setTimeout(() => {
+      setData((prev) => ({ ...prev, isFlashing: false }));
+    }, FLASH_DURATION_MS);
+  }, []);
+
+  // Cleanup flash timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (flashTimeoutRef.current) {
+        clearTimeout(flashTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const fetchData = useCallback(async () => {
     // Demo mode - return mock data
     if (IS_DEMO_MODE) {
-      setData({
+      setData((prev) => ({
+        ...prev,
         radar: DEMO_RADAR,
         batches: DEMO_BATCHES,
         isLoading: false,
         isPolling: pollingEnabled,
         error: null,
         lastUpdated: new Date(),
-      });
+      }));
       return;
     }
 
@@ -242,14 +278,15 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
       const radarRow = Array.isArray(radarData) && radarData.length > 0 ? radarData[0] : null;
       const radar = radarRow ? normalizeRadar(radarRow) : null;
 
-      setData({
+      setData((prev) => ({
+        ...prev,
         radar,
         batches,
         isLoading: false,
         isPolling: pollingEnabled,
         error: null,
         lastUpdated: new Date(),
-      });
+      }));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load intake data';
       setData((prev) => ({
@@ -259,6 +296,41 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
       }));
     }
   }, [pollingEnabled]);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // REALTIME SUBSCRIPTIONS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Subscribe to job queue updates (job completions trigger refetch)
+  const jobRealtime = useJobQueueRealtime({
+    onJobComplete: (_jobId, status) => {
+      if (status === 'completed' || status === 'failed') {
+        fetchData();
+      }
+    },
+    onFlash: triggerFlash,
+    enabled: !IS_DEMO_MODE,
+  });
+
+  // Subscribe to new judgment ingestions
+  const judgmentRealtime = useJudgmentRealtime({
+    onJudgmentIngested: () => {
+      fetchData();
+    },
+    onFlash: triggerFlash,
+    enabled: !IS_DEMO_MODE,
+  });
+
+  // Update realtime connection status
+  useEffect(() => {
+    const isConnected = jobRealtime.isConnected || judgmentRealtime.isConnected;
+    setData((prev) => {
+      if (prev.isRealtimeConnected !== isConnected) {
+        return { ...prev, isRealtimeConnected: isConnected };
+      }
+      return prev;
+    });
+  }, [jobRealtime.isConnected, judgmentRealtime.isConnected]);
 
   // Initial fetch
   useEffect(() => {
@@ -294,6 +366,7 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
     refetch: fetchData,
     startPolling,
     stopPolling,
+    realtimeEventCount: jobRealtime.eventCount + judgmentRealtime.eventCount,
   };
 }
 

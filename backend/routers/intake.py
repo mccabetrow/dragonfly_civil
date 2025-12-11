@@ -220,10 +220,10 @@ async def upload_csv(
         if not file.filename.lower().endswith(".csv"):
             raise HTTPException(status_code=400, detail="File must be a CSV")
 
-        if source not in ("simplicity", "jbi", "manual", "csv_upload", "api"):
+        if source not in ("simplicity", "jbi", "foil", "manual", "csv_upload", "api"):
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid source: {source}. Must be one of: simplicity, jbi, manual, csv_upload, api",
+                detail=f"Invalid source: {source}. Must be one of: simplicity, jbi, foil, manual, csv_upload, api",
             )
 
         # Save file to temp location

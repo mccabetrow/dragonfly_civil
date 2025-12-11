@@ -72,6 +72,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/cases': 'Cases',
   '/settings': 'Settings',
   '/settings/ingestion': 'Data Ingestion',
+  '/settings/integrity': 'Data Integrity',
   '/help': 'Help',
 };
 

@@ -3,6 +3,12 @@
  *
  * Handles file upload with progress tracking and error handling.
  * Designed for the Intake Station drag-and-drop zone.
+ * 
+ * Supports multiple data sources:
+ * - simplicity: Standard Simplicity export format
+ * - jbi: JBI export format
+ * - foil: FOIL court data dumps (messy/varied column names)
+ * - manual: Manual CSV uploads
  */
 import { useCallback, useState } from 'react';
 import { apiUpload } from '../lib/apiClient';
@@ -10,6 +16,8 @@ import { apiUpload } from '../lib/apiClient';
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════
+
+export type DataSource = 'simplicity' | 'jbi' | 'foil' | 'manual' | 'api';
 
 export type UploadStatus = 'idle' | 'uploading' | 'processing' | 'success' | 'error';
 
@@ -31,10 +39,19 @@ export interface UploadState {
   result: UploadResult | null;
 }
 
+export interface UseUploadIntakeOptions {
+  /** Data source for the upload (determines parsing logic) */
+  source?: DataSource;
+}
+
 export interface UseUploadIntakeResult {
   state: UploadState;
-  uploadFile: (file: File) => Promise<UploadResult | null>;
+  uploadFile: (file: File, options?: UseUploadIntakeOptions) => Promise<UploadResult | null>;
   reset: () => void;
+  /** Current selected data source */
+  source: DataSource;
+  /** Set the data source */
+  setSource: (source: DataSource) => void;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -83,6 +100,8 @@ export function useUploadIntake(): UseUploadIntakeResult {
     result: null,
   });
 
+  const [source, setSource] = useState<DataSource>('simplicity');
+
   const reset = useCallback(() => {
     setState({
       status: 'idle',
@@ -93,7 +112,13 @@ export function useUploadIntake(): UseUploadIntakeResult {
     });
   }, []);
 
-  const uploadFile = useCallback(async (file: File): Promise<UploadResult | null> => {
+  const uploadFile = useCallback(async (
+    file: File,
+    options?: UseUploadIntakeOptions
+  ): Promise<UploadResult | null> => {
+    // Use provided source or current state
+    const uploadSource = options?.source ?? source;
+    
     // Validate file type
     if (!file.name.toLowerCase().endsWith('.csv')) {
       setState({
@@ -106,8 +131,8 @@ export function useUploadIntake(): UseUploadIntakeResult {
       return null;
     }
 
-    // Validate file size (max 50MB)
-    const MAX_SIZE = 50 * 1024 * 1024;
+    // Validate file size (max 50MB for normal, 500MB for FOIL)
+    const MAX_SIZE = uploadSource === 'foil' ? 500 * 1024 * 1024 : 50 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
       setState({
         status: 'error',
@@ -133,7 +158,7 @@ export function useUploadIntake(): UseUploadIntakeResult {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('source', 'simplicity');
+      formData.append('source', uploadSource);
 
       // Simulate progress during upload
       const progressInterval = setInterval(() => {
@@ -201,12 +226,14 @@ export function useUploadIntake(): UseUploadIntakeResult {
       });
       return null;
     }
-  }, []);
+  }, [source]);
 
   return {
     state,
     uploadFile,
     reset,
+    source,
+    setSource,
   };
 }
 

@@ -4,9 +4,16 @@
  *
  * Hook for triggering enforcement actions from the Action Center.
  * Provides async methods for packet generation with polling, status updates, etc.
+ * 
+ * Features:
+ *   - Async packet generation with job polling
+ *   - Realtime subscriptions for instant status updates
+ *   - Green flash animation on packet completion
  */
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useState, useRef, useEffect } from 'react';
 import { apiClient } from '../lib/apiClient';
+import { usePacketRealtime, useJobQueueRealtime } from './useRealtimeSubscription';
+import { IS_DEMO_MODE } from '../lib/supabaseClient';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -51,6 +58,12 @@ export interface UseEnforcementActionsResult {
   isProcessing: (judgmentId: string) => boolean;
   /** Clear any error state */
   clearError: () => void;
+  /** True when a realtime update just occurred (for flash animation) */
+  isFlashing: boolean;
+  /** Whether connected to realtime channels */
+  isRealtimeConnected: boolean;
+  /** Number of realtime events received */
+  realtimeEventCount: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -80,6 +93,7 @@ interface ApiJobStatusResponse {
 
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 60; // 2 minutes max polling
+const FLASH_DURATION_MS = 1500; // Duration of green flash animation
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HOOK
@@ -92,7 +106,54 @@ export function useEnforcementActions(): UseEnforcementActionsResult {
     lastResult: null,
   });
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
+  const [isFlashing, setIsFlashing] = useState(false);
   const pollingRef = useRef<Map<string, boolean>>(new Map());
+  const flashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Flash animation handler
+  const triggerFlash = useCallback(() => {
+    setIsFlashing(true);
+    
+    if (flashTimeoutRef.current) {
+      clearTimeout(flashTimeoutRef.current);
+    }
+    
+    flashTimeoutRef.current = setTimeout(() => {
+      setIsFlashing(false);
+    }, FLASH_DURATION_MS);
+  }, []);
+
+  // Cleanup flash timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (flashTimeoutRef.current) {
+        clearTimeout(flashTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // REALTIME SUBSCRIPTIONS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Subscribe to packet creation events
+  const packetRealtime = usePacketRealtime({
+    onPacketCreated: (_packetId, strategy) => {
+      console.log(`[Realtime] Packet created with strategy: ${strategy}`);
+    },
+    onFlash: triggerFlash,
+    enabled: !IS_DEMO_MODE,
+  });
+
+  // Subscribe to job completions
+  const jobRealtime = useJobQueueRealtime({
+    onJobComplete: (_jobId, status) => {
+      if (status === 'completed') {
+        triggerFlash();
+      }
+    },
+    enabled: !IS_DEMO_MODE,
+  });
 
   /**
    * Poll job status until complete or failed
@@ -250,5 +311,8 @@ export function useEnforcementActions(): UseEnforcementActionsResult {
     processingIds,
     isProcessing,
     clearError,
+    isFlashing,
+    isRealtimeConnected: packetRealtime.isConnected || jobRealtime.isConnected,
+    realtimeEventCount: packetRealtime.eventCount + jobRealtime.eventCount,
   };
 }

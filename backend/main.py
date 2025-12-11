@@ -50,6 +50,7 @@ from .routers.health import router as health_router  # noqa: E402
 from .routers.ingest import router as ingest_router  # noqa: E402
 from .routers.ingest_v2 import router as ingest_v2_router  # noqa: E402
 from .routers.intake import router as intake_router  # noqa: E402
+from .routers.integrity import router as integrity_router  # noqa: E402
 from .routers.intelligence import router as intelligence_router  # noqa: E402
 from .routers.offers import router as offers_router  # noqa: E402
 from .routers.ops_guardian import router as ops_guardian_router  # noqa: E402
@@ -253,6 +254,11 @@ def create_app() -> FastAPI:
     app.include_router(
         ops_guardian_router, prefix="/api/v1", tags=["ops"]
     )  # internal: /ops/guardian
+
+    # v1 Integrity - Data integrity and reconciliation dashboard
+    app.include_router(
+        integrity_router, prefix="/api", tags=["integrity"]
+    )  # internal: /v1/integrity
 
     # v1 Telemetry - UI action tracking
     app.include_router(

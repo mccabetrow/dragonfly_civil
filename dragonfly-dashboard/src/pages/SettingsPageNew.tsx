@@ -140,23 +140,42 @@ const SettingsPageNew: FC = () => {
           <Upload className="h-5 w-5 text-slate-400" />
           <h2 className="text-lg font-semibold text-slate-900">Data Management</h2>
         </div>
-        <Link
-          to="/settings/ingestion"
-          className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:border-indigo-200 hover:shadow-md"
-        >
-          <div className="flex items-start gap-4">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50">
-              <Upload className="h-5 w-5 text-indigo-600" />
+        <div className="space-y-3">
+          <Link
+            to="/settings/ingestion"
+            className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:border-indigo-200 hover:shadow-md"
+          >
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50">
+                <Upload className="h-5 w-5 text-indigo-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900">Data Ingestion</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Upload Simplicity CSV exports and monitor batch processing status
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold text-slate-900">Data Ingestion</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                Upload Simplicity CSV exports and monitor batch processing status
-              </p>
+            <ChevronRight className="h-5 w-5 text-slate-300 transition-colors group-hover:text-indigo-500" />
+          </Link>
+          <Link
+            to="/settings/integrity"
+            className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:border-emerald-200 hover:shadow-md"
+          >
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50">
+                <Shield className="h-5 w-5 text-emerald-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900">Data Integrity</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Vault status dashboard — verify ingested rows and resolve discrepancies
+                </p>
+              </div>
             </div>
-          </div>
-          <ChevronRight className="h-5 w-5 text-slate-300 transition-colors group-hover:text-indigo-500" />
-        </Link>
+            <ChevronRight className="h-5 w-5 text-slate-300 transition-colors group-hover:text-emerald-500" />
+          </Link>
+        </div>
       </section>
 
       {/* Team Access Section */}

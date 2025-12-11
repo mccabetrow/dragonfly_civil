@@ -42,7 +42,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/design-tokens';
 import { useIntakeStationData, type IntakeBatchSummary } from '../hooks/useIntakeStationData';
-import { useUploadIntake } from '../hooks/useUploadIntake';
+import { useUploadIntake, type DataSource } from '../hooks/useUploadIntake';
 import { useOnRefresh } from '../context/RefreshContext';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -226,6 +226,48 @@ const IntakeRadar: FC<IntakeRadarProps> = ({ data, isLoading }) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// DATA SOURCE SELECTOR
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DATA_SOURCES: { value: DataSource; label: string; description: string }[] = [
+  { value: 'simplicity', label: 'Simplicity', description: 'Standard Simplicity exports' },
+  { value: 'jbi', label: 'JBI', description: 'JBI system exports' },
+  { value: 'foil', label: 'FOIL', description: 'Court data dumps (large files)' },
+  { value: 'manual', label: 'Manual', description: 'Generic CSV uploads' },
+];
+
+interface DataSourceSelectorProps {
+  value: DataSource;
+  onChange: (value: DataSource) => void;
+}
+
+const DataSourceSelector: FC<DataSourceSelectorProps> = ({ value, onChange }) => {
+  return (
+    <div className="flex items-center gap-2 mb-4">
+      <span className="text-xs text-slate-500 font-mono uppercase tracking-wider">Source:</span>
+      <div className="flex gap-1">
+        {DATA_SOURCES.map((source) => (
+          <button
+            key={source.value}
+            type="button"
+            onClick={() => onChange(source.value)}
+            title={source.description}
+            className={cn(
+              'px-3 py-1 rounded text-xs font-mono transition-all',
+              value === source.value
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50'
+                : 'bg-slate-800/50 text-slate-500 border border-slate-700 hover:border-slate-600 hover:text-slate-400'
+            )}
+          >
+            {source.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ANIMATED DROPZONE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -234,7 +276,7 @@ interface AnimatedDropzoneProps {
 }
 
 const AnimatedDropzone: FC<AnimatedDropzoneProps> = ({ onUploadComplete }) => {
-  const { state, uploadFile, reset } = useUploadIntake();
+  const { state, uploadFile, reset, source, setSource } = useUploadIntake();
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -310,45 +352,54 @@ const AnimatedDropzone: FC<AnimatedDropzoneProps> = ({ onUploadComplete }) => {
   const isIdle = state.status === 'idle';
 
   return (
-    <motion.div
-      className={cn(
-        'relative rounded-xl border-2 border-dashed transition-all duration-300',
-        'flex flex-col items-center justify-center py-12 px-6',
-        'cursor-pointer',
-        // Drag over glow effect
-        isDragOver && 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_40px_rgba(16,185,129,0.3)]',
-        // Normal states
-        !isDragOver && isIdle && 'border-slate-700 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900/80',
-        isUploading && 'border-blue-500/50 bg-blue-500/5',
-        isSuccess && 'border-emerald-500/50 bg-emerald-500/5',
-        isError && 'border-red-500/50 bg-red-500/5'
+    <div className="flex flex-col">
+      {/* Data Source Selector - shown in idle state */}
+      {isIdle && (
+        <DataSourceSelector
+          value={source}
+          onChange={(v) => setSource(v)}
+        />
       )}
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      onClick={handleClick}
-      animate={{
-        scale: isDragOver ? 1.02 : 1,
-      }}
-      transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-    >
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".csv"
-        onChange={handleFileSelect}
-        className="hidden"
-      />
+      
+      <motion.div
+        className={cn(
+          'relative rounded-xl border-2 border-dashed transition-all duration-300',
+          'flex flex-col items-center justify-center py-12 px-6',
+          'cursor-pointer',
+          // Drag over glow effect
+          isDragOver && 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_40px_rgba(16,185,129,0.3)]',
+          // Normal states
+          !isDragOver && isIdle && 'border-slate-700 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900/80',
+          isUploading && 'border-blue-500/50 bg-blue-500/5',
+          isSuccess && 'border-emerald-500/50 bg-emerald-500/5',
+          isError && 'border-red-500/50 bg-red-500/5'
+        )}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onClick={handleClick}
+        animate={{
+          scale: isDragOver ? 1.02 : 1,
+        }}
+        transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
 
-      <AnimatePresence mode="wait">
-        {/* Idle State */}
-        {isIdle && !isDragOver && (
-          <motion.div
-            key="idle"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
+        <AnimatePresence mode="wait">
+          {/* Idle State */}
+          {isIdle && !isDragOver && (
+            <motion.div
+              key="idle"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
             className="flex flex-col items-center text-center"
           >
             <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-slate-800/80 mb-4">
@@ -511,6 +562,7 @@ const AnimatedDropzone: FC<AnimatedDropzoneProps> = ({ onUploadComplete }) => {
         )}
       </AnimatePresence>
     </motion.div>
+    </div>
   );
 };
 

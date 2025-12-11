@@ -166,12 +166,58 @@ def log_job_event(
 # =============================================================================
 
 
+def run_smart_strategy(conn: psycopg.Connection, judgment_id: str) -> dict[str, Any]:
+    """
+    Execute Smart Strategy Agent - deterministic strategy selection.
+
+    Decision logic:
+        1. IF employer found → Wage Garnishment
+        2. ELIF bank_name found → Bank Levy
+        3. ELIF home_ownership = 'owner' → Property Lien
+        4. ELSE → Surveillance (queue for enrichment)
+
+    Args:
+        conn: Active database connection
+        judgment_id: UUID of judgment to process
+
+    Returns:
+        dict with success status, strategy_type, strategy_reason, and plan_id
+    """
+    from backend.workers.smart_strategy import SmartStrategy
+
+    logger.info(f"[enforcement_strategy] Running Smart Strategy for judgment_id={judgment_id}")
+
+    try:
+        agent = SmartStrategy(conn)
+        decision = agent.evaluate(judgment_id, persist=True)
+
+        return {
+            "success": True,
+            "strategy_type": decision.strategy_type.value,
+            "strategy_reason": decision.strategy_reason,
+            "plan_id": None,  # Plan ID is generated during persist but not returned
+            "error_message": None,
+        }
+    except Exception as e:
+        logger.exception(f"[enforcement_strategy] Smart Strategy failed: {e}")
+        return {
+            "success": False,
+            "strategy_type": None,
+            "strategy_reason": None,
+            "plan_id": None,
+            "error_message": str(e),
+        }
+
+
 async def run_strategy_pipeline(judgment_id: str) -> dict[str, Any]:
     """
-    Execute strategy-only pipeline via Orchestrator.
+    Execute strategy-only pipeline via Orchestrator (AI-powered).
 
     Runs: Extractor → Normalizer → Reasoner → Strategist
     Does NOT run Drafter or Auditor.
+
+    Note: For simpler, deterministic strategy selection based on debtor
+    intelligence, use run_smart_strategy() instead.
 
     Args:
         judgment_id: UUID of judgment to process
@@ -181,7 +227,7 @@ async def run_strategy_pipeline(judgment_id: str) -> dict[str, Any]:
     """
     from backend.agents.orchestrator import Orchestrator
 
-    logger.info(f"[enforcement_strategy] Starting pipeline for judgment_id={judgment_id}")
+    logger.info(f"[enforcement_strategy] Starting AI pipeline for judgment_id={judgment_id}")
 
     orchestrator = Orchestrator()
     output = await orchestrator.run_strategy_only(judgment_id)
@@ -266,7 +312,14 @@ async def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
 
     try:
         if job_type == "enforcement_strategy":
-            result = await run_strategy_pipeline(judgment_id)
+            # Use Smart Strategy (deterministic) by default
+            # Set payload.use_ai_pipeline=true to use the full AI Orchestrator
+            use_ai = payload.get("use_ai_pipeline", False)
+            if use_ai:
+                result = await run_strategy_pipeline(judgment_id)
+            else:
+                # SmartStrategy is sync - no await needed
+                result = run_smart_strategy(conn, judgment_id)
         elif job_type == "enforcement_drafting":
             plan_id = payload.get("plan_id")
             result = await run_drafting_pipeline(judgment_id, plan_id)

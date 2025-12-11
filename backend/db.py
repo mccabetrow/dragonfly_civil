@@ -258,3 +258,30 @@ async def fetch_val(
             await cur.execute(query, args)
             row = await cur.fetchone()
             return None if row is None else row[0]
+
+
+# ---------------------------------------------------------------------------
+# Sync connection for FastAPI Depends
+# ---------------------------------------------------------------------------
+
+
+def get_db_connection():
+    """
+    Sync generator that yields a psycopg connection for FastAPI Depends.
+
+    Usage:
+        @router.get("/endpoint")
+        async def endpoint(conn: psycopg.Connection = Depends(get_db_connection)):
+            with conn.cursor() as cur:
+                cur.execute("SELECT ...")
+    """
+    s = get_settings()
+    dsn = s.supabase_db_url
+    if not dsn:
+        raise RuntimeError("SUPABASE_DB_URL not configured")
+
+    conn = psycopg.connect(dsn)
+    try:
+        yield conn
+    finally:
+        conn.close()
