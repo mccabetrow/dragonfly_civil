@@ -279,7 +279,7 @@ const FilterToolbar: FC<FilterToolbarProps> = ({
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TOAST NOTIFICATION
+// TERMINAL TOAST NOTIFICATION (Financial Terminal Style)
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface ToastProps {
@@ -289,33 +289,63 @@ interface ToastProps {
 
 const Toast: FC<ToastProps> = ({ toast, onDismiss }) => {
   const icons = {
-    loading: <Loader2 className="h-4 w-4 animate-spin text-blue-400" />,
+    loading: <Loader2 className="h-4 w-4 animate-spin text-cyan-400" />,
     success: <Check className="h-4 w-4 text-emerald-400" />,
     error: <AlertCircle className="h-4 w-4 text-red-400" />,
   };
 
-  const bgColors = {
-    loading: 'bg-blue-500/10 border-blue-500/30',
-    success: 'bg-emerald-500/10 border-emerald-500/30',
-    error: 'bg-red-500/10 border-red-500/30',
+  const borderColors = {
+    loading: 'border-l-cyan-500',
+    success: 'border-l-emerald-500',
+    error: 'border-l-red-500',
   };
+
+  const iconBg = {
+    loading: 'bg-cyan-500/20',
+    success: 'bg-emerald-500/20',
+    error: 'bg-red-500/20',
+  };
+
+  // Format timestamp for terminal style
+  const timestamp = new Date().toLocaleTimeString('en-US', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      layout
+      initial={{ opacity: 0, y: 50, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -10, scale: 0.95 }}
+      exit={{ opacity: 0, x: 100, scale: 0.95 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
       className={cn(
-        'flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg backdrop-blur-sm',
-        bgColors[toast.type]
+        'flex items-center gap-3 min-w-[320px] max-w-md',
+        'rounded-lg border border-slate-700/50 border-l-4 shadow-xl',
+        'bg-slate-900/95 backdrop-blur-sm px-4 py-3',
+        borderColors[toast.type]
       )}
     >
-      {icons[toast.type]}
-      <span className="text-sm text-white">{toast.message}</span>
+      {/* Icon */}
+      <span className={cn('flex-shrink-0 rounded-md p-1.5', iconBg[toast.type])}>
+        {icons[toast.type]}
+      </span>
+
+      {/* Timestamp + Message (terminal log style) */}
+      <div className="flex-1 min-w-0 flex items-baseline gap-3">
+        <span className="flex-shrink-0 font-mono text-xs text-slate-500 tabular-nums">
+          {timestamp}
+        </span>
+        <span className="font-mono text-sm text-slate-200 truncate">{toast.message}</span>
+      </div>
+
+      {/* Dismiss button (not for loading) */}
       {toast.type !== 'loading' && (
         <button
           onClick={() => onDismiss(toast.id)}
-          className="ml-2 text-slate-500 hover:text-white transition-colors"
+          className="flex-shrink-0 rounded p-1 text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -351,8 +381,8 @@ const SortableHeader: FC<SortableHeaderProps> = ({
   return (
     <th
       className={cn(
-        'px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer select-none',
-        'hover:text-slate-300 transition-colors',
+        'px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer select-none',
+        'hover:text-slate-300 transition-colors bg-inherit',
         align === 'right' && 'text-right',
         className
       )}
@@ -394,28 +424,31 @@ const DataRow: FC<DataRowProps> = ({ row, isProcessing, onGeneratePacket }) => {
     <motion.tr
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors"
+      className={cn(
+        'border-b border-slate-800/50 transition-colors cursor-pointer',
+        'hover:bg-slate-900/60 hover:shadow-inner'
+      )}
     >
       {/* Score */}
-      <td className="px-3 py-2">
+      <td className="px-3 py-2.5">
         <ScoreBadge score={row.collectabilityScore} />
       </td>
 
       {/* Plaintiff */}
-      <td className="px-3 py-2">
+      <td className="px-3 py-2.5">
         <div className="min-w-0">
           <p className="text-sm font-medium text-white truncate">{row.plaintiffName}</p>
-          <p className="text-xs text-slate-500 truncate font-mono">{row.caseNumber}</p>
+          <p className="text-xs text-slate-500 truncate font-mono tabular-nums">{row.caseNumber}</p>
         </div>
       </td>
 
       {/* Defendant */}
-      <td className="px-3 py-2">
+      <td className="px-3 py-2.5">
         <p className="text-sm text-slate-300 truncate">{row.defendantName}</p>
       </td>
 
-      {/* Amount */}
-      <td className="px-3 py-2 text-right">
+      {/* Amount - monospace, right-aligned */}
+      <td className="px-3 py-2.5 text-right">
         <span className="text-sm font-mono font-semibold text-white tabular-nums">
           {formatCurrencyFull(row.judgmentAmount)}
         </span>
@@ -562,12 +595,34 @@ const EnforcementActionCenter: FC = () => {
           message: 'Packet generated successfully!',
         });
 
+        // Log telemetry for successful packet generation
+        telemetry.logAction({
+          componentId: 'enforcement.action_center',
+          action: 'generate_packet_success',
+          metadata: {
+            judgmentId,
+            strategy: row?.offerStrategy,
+            collectabilityScore: row?.collectabilityScore ?? null,
+            judgmentAmount: row?.judgmentAmount,
+          },
+        });
+
         // Auto-dismiss success after 3s
         setTimeout(() => removeToast(toastId), 3000);
       } catch {
         updateToast(toastId, {
           type: 'error',
           message: 'Failed to generate packet. Please try again.',
+        });
+
+        // Log telemetry for failed packet generation
+        telemetry.logAction({
+          componentId: 'enforcement.action_center',
+          action: 'generate_packet_failed',
+          metadata: {
+            judgmentId,
+            strategy: row?.offerStrategy,
+          },
         });
 
         // Auto-dismiss error after 5s
@@ -717,9 +772,9 @@ const EnforcementActionCenter: FC = () => {
               </button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
               <table className="w-full">
-                <thead className="bg-slate-900/50 border-b border-slate-800">
+                <thead className="sticky top-0 z-10 backdrop-blur-md bg-slate-950/80 border-b border-slate-800">
                   <tr>
                     <SortableHeader
                       label="Score"
@@ -734,7 +789,7 @@ const EnforcementActionCenter: FC = () => {
                       currentSort={sort}
                       onSort={handleSort}
                     />
-                    <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider text-left">
+                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-left">
                       Defendant
                     </th>
                     <SortableHeader
@@ -744,10 +799,10 @@ const EnforcementActionCenter: FC = () => {
                       onSort={handleSort}
                       align="right"
                     />
-                    <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider text-left">
+                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-left">
                       Strategy
                     </th>
-                    <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider text-left w-36">
+                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-left w-36">
                       Action
                     </th>
                   </tr>

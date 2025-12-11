@@ -22,7 +22,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot\..
 
-Write-Host "=== 🐉 Dragonfly Dev Health Check ===" -ForegroundColor Green
+Write-Host "=== [DRAGONFLY] Dev Health Check ===" -ForegroundColor Green
 Write-Host "Environment: $SupabaseEnv" -ForegroundColor Cyan
 $env:SUPABASE_MODE = $SupabaseEnv
 
@@ -30,10 +30,10 @@ $env:SUPABASE_MODE = $SupabaseEnv
 Write-Host "`n[1/3] Applying migrations..." -ForegroundColor Yellow
 try {
     & .\scripts\db_migrate.ps1 -SupabaseEnv $SupabaseEnv
-    Write-Host "  ✓ Migrations applied" -ForegroundColor Green
+    Write-Host "  [OK] Migrations applied" -ForegroundColor Green
 }
 catch {
-    Write-Host "  ✗ Migration failed: $_" -ForegroundColor Red
+    Write-Host "  [FAIL] Migration failed: $_" -ForegroundColor Red
     exit 1
 }
 
@@ -45,22 +45,22 @@ try {
         tests/test_workers_enforcement.py `
         tests/test_analytics_intake_radar.py `
         -q --tb=short
-    Write-Host "  ✓ Tests passed" -ForegroundColor Green
+    Write-Host "  [OK] Tests passed" -ForegroundColor Green
 }
 catch {
-    Write-Host "  ✗ Tests failed: $_" -ForegroundColor Red
+    Write-Host "  [FAIL] Tests failed: $_" -ForegroundColor Red
     exit 1
 }
 
 # Step 3: System doctor
 Write-Host "`n[3/3] System Doctor..." -ForegroundColor Yellow
 try {
-    & .\.venv\Scripts\python.exe -m tools.doctor --env $SupabaseEnv
-    Write-Host "  ✓ Doctor checks passed" -ForegroundColor Green
+    & .\.venv\Scripts\python.exe -m tools.doctor
+    Write-Host "  [OK] Doctor checks passed" -ForegroundColor Green
 }
 catch {
-    Write-Host "  ✗ Doctor checks failed: $_" -ForegroundColor Red
+    Write-Host "  [FAIL] Doctor checks failed: $_" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "`n✅ Ready to Build." -ForegroundColor Green
+Write-Host "`n>>> Ready to Build. <<<" -ForegroundColor Green

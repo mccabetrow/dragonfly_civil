@@ -41,6 +41,7 @@ from .db import close_db_pool, init_db_pool  # noqa: E402
 # Router imports - explicit for clarity
 from .routers.analytics import router as analytics_router  # noqa: E402
 from .routers.budget import router as budget_router  # noqa: E402
+from .routers.cases import router as cases_router  # noqa: E402
 from .routers.enforcement import router as enforcement_router  # noqa: E402
 from .routers.events import router as events_router  # noqa: E402
 from .routers.finance import router as finance_router  # noqa: E402
@@ -237,6 +238,7 @@ def create_app() -> FastAPI:
     # v1 API - Primary versioned endpoints
     # NOTE: These routers already have /v1/... in their internal prefix
     # We only add /api as the base prefix here
+    app.include_router(cases_router, prefix="/api", tags=["cases"])  # internal: /v1/cases
     app.include_router(intake_router, prefix="/api/v1", tags=["intake"])  # internal: /intake
     app.include_router(
         enforcement_router, prefix="/api", tags=["enforcement"]

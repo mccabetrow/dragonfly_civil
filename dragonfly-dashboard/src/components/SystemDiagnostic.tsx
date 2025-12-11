@@ -1,4 +1,5 @@
 import { type FC, useState, useEffect, useCallback, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { apiClient, API_BASE_URL, type HealthCheckResult } from '../lib/apiClient';
 import { cn } from '../lib/design-tokens';
 
@@ -6,12 +7,15 @@ import { cn } from '../lib/design-tokens';
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
+type SystemStatus = 'healthy' | 'degraded' | 'critical' | 'loading';
+
 interface HealthState {
   loading: boolean;
   ok: boolean;
   status?: number;
   environment?: string;
   error?: string;
+  systemStatus: SystemStatus;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -50,26 +54,42 @@ function maskUrl(url: string): string {
  * SystemDiagnostic
  *
  * A small pill badge that shows live backend status:
- * - Green dot + "System Online (Prod/Dev)" when healthy
- * - Red dot + "Backend Disconnected" when unhealthy
+ * - Green dot + "System Online (Prod/Dev)" when healthy (with subtle pulse)
+ * - Amber dot + "System Degraded" when slow/degraded (slower pulse)
+ * - Red dot + "Backend Disconnected" when unhealthy (strong pulse)
  * - Gray dot while loading
  *
  * Polls /api/health every 60 seconds. Hovering shows the masked API URL and HTTP status.
  */
 const SystemDiagnostic: FC = () => {
-  const [health, setHealth] = useState<HealthState>({ loading: true, ok: false });
+  const [health, setHealth] = useState<HealthState>({ 
+    loading: true, 
+    ok: false, 
+    systemStatus: 'loading' 
+  });
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const checkHealth = useCallback(async () => {
     try {
       const result: HealthCheckResult = await apiClient.checkHealth();
+      // Determine system status based on response time or other factors
+      let systemStatus: SystemStatus = 'healthy';
+      if (!result.ok) {
+        systemStatus = 'critical';
+      } else if (result.status && result.status >= 500) {
+        systemStatus = 'critical';
+      } else if (result.status && result.status >= 400) {
+        systemStatus = 'degraded';
+      }
+      
       setHealth({
         loading: false,
         ok: result.ok,
         status: result.status,
         environment: result.environment,
         error: result.ok ? undefined : (result.error ?? 'Health check failed'),
+        systemStatus,
       });
     } catch (err) {
       setHealth({
@@ -78,6 +98,7 @@ const SystemDiagnostic: FC = () => {
         status: 0,
         environment: undefined,
         error: err instanceof Error ? err.message : 'Unknown error',
+        systemStatus: 'critical',
       });
     }
   }, []);
@@ -111,30 +132,80 @@ const SystemDiagnostic: FC = () => {
     }, 150);
   };
 
-  // Determine dot color
-  const dotColor = health.loading
-    ? 'bg-slate-400'
-    : health.ok
-      ? 'bg-emerald-400'
-      : 'bg-red-400';
+  // Determine dot color and animation based on system status
+  const getStatusConfig = () => {
+    switch (health.systemStatus) {
+      case 'healthy':
+        return {
+          dotColor: 'bg-emerald-400',
+          glowColor: 'shadow-emerald-400/50',
+          pulseVariant: 'subtle' as const,
+          statusText: `System Online (${health.environment?.charAt(0).toUpperCase()}${health.environment?.slice(1).toLowerCase() ?? 'Unknown'})`,
+          tooltipText: 'All systems operational',
+        };
+      case 'degraded':
+        return {
+          dotColor: 'bg-amber-400',
+          glowColor: 'shadow-amber-400/50',
+          pulseVariant: 'slow' as const,
+          statusText: 'System Degraded',
+          tooltipText: 'Performance may be impacted',
+        };
+      case 'critical':
+        return {
+          dotColor: 'bg-red-400',
+          glowColor: 'shadow-red-400/50',
+          pulseVariant: 'strong' as const,
+          statusText: 'Backend Disconnected',
+          tooltipText: 'Unable to connect to backend',
+        };
+      default:
+        return {
+          dotColor: 'bg-slate-400',
+          glowColor: '',
+          pulseVariant: 'none' as const,
+          statusText: 'Checking…',
+          tooltipText: 'Checking system health...',
+        };
+    }
+  };
 
-  // Determine dot animation (pulse when loading or error)
-  const dotAnimation = health.loading
-    ? 'animate-pulse'
-    : !health.ok
-      ? 'animate-pulse'
-      : '';
+  const config = getStatusConfig();
 
-  // Status text
-  const envLabel = health.environment
-    ? health.environment.charAt(0).toUpperCase() + health.environment.slice(1).toLowerCase()
-    : 'Unknown';
+  // Framer motion variants for the pulse animation
+  const pulseVariants = {
+    subtle: {
+      opacity: [0.4, 0.8, 0.4],
+      scale: [1, 1.2, 1],
+      transition: {
+        duration: 2,
+        repeat: Infinity,
+        ease: 'easeInOut' as const,
+      },
+    },
+    slow: {
+      opacity: [0.5, 1, 0.5],
+      scale: [1, 1.4, 1],
+      transition: {
+        duration: 1.5,
+        repeat: Infinity,
+        ease: 'easeInOut' as const,
+      },
+    },
+    strong: {
+      opacity: [0.6, 1, 0.6],
+      scale: [1, 1.6, 1],
+      transition: {
+        duration: 0.8,
+        repeat: Infinity,
+        ease: 'easeInOut' as const,
+      },
+    },
+    none: {},
+  };
 
-  const statusText = health.loading
-    ? 'Checking…'
-    : health.ok
-      ? `System Online (${envLabel})`
-      : 'Backend Disconnected';
+  // Status text (for backwards compat)
+  const statusText = config.statusText;
 
   return (
     <div className="relative">
@@ -149,24 +220,31 @@ const SystemDiagnostic: FC = () => {
           'bg-slate-800/60 border border-slate-700/50',
           health.ok
             ? 'text-emerald-300 hover:bg-slate-800 hover:border-emerald-500/30'
-            : 'text-slate-300 hover:bg-slate-800 hover:border-slate-600',
+            : health.systemStatus === 'degraded'
+              ? 'text-amber-300 hover:bg-slate-800 hover:border-amber-500/30'
+              : 'text-slate-300 hover:bg-slate-800 hover:border-slate-600',
           'focus:outline-none focus:ring-2 focus:ring-indigo-500/50'
         )}
         aria-label={`System status: ${statusText}. Click to refresh.`}
       >
-        {/* Status dot */}
-        <span className="relative flex h-2 w-2">
+        {/* Animated Status dot with pulse */}
+        <span className="relative flex h-2.5 w-2.5">
+          {/* Outer pulse ring - animated with framer-motion */}
+          {config.pulseVariant !== 'none' && (
+            <motion.span
+              className={cn(
+                'absolute inset-0 rounded-full',
+                config.dotColor,
+              )}
+              animate={pulseVariants[config.pulseVariant]}
+            />
+          )}
+          {/* Inner solid dot */}
           <span
             className={cn(
-              'absolute inline-flex h-full w-full rounded-full opacity-75',
-              dotColor,
-              dotAnimation
-            )}
-          />
-          <span
-            className={cn(
-              'relative inline-flex h-2 w-2 rounded-full',
-              dotColor
+              'relative inline-flex h-2.5 w-2.5 rounded-full shadow-lg',
+              config.dotColor,
+              config.glowColor
             )}
           />
         </span>
@@ -186,6 +264,10 @@ const SystemDiagnostic: FC = () => {
             'z-50'
           )}
         >
+          {/* Status summary */}
+          <div className="mb-2 pb-2 border-b border-slate-700">
+            <p className="font-medium text-white">{config.tooltipText}</p>
+          </div>
           <div className="space-y-2">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">

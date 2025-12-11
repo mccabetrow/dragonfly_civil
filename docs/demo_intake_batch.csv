@@ -1,0 +1,9 @@
+LeadID,PlaintiffName,Email,Phone,IndexNumber,Court,County,State,JudgmentDate,JudgmentAmount,DefendantName,Status
+DEMO-001,Acme Collections LLC,contact@acmecollections.com,212-555-0101,2024-CV-1001,Kings County Civil Court,Kings,NY,2024-06-15,45000.00,John Smith,Active
+DEMO-002,Metro Recovery Services,intake@metrorecovery.com,718-555-0202,2024-CV-1002,Queens County Civil Court,Queens,NY,2024-05-22,28500.00,Jane Doe,Active
+DEMO-003,Empire State Debt Solutions,legal@empiredebt.com,516-555-0303,2024-CV-1003,Nassau County Civil Court,Nassau,NY,2024-07-08,67250.00,Robert Johnson,Active
+DEMO-004,Liberty Judgment Buyers,info@libertyjb.com,917-555-0404,2024-CV-1004,New York County Civil Court,New York,NY,2024-04-11,12800.00,Maria Garcia,Active
+DEMO-005,Hudson Valley Collections,hvcc@hvcolections.com,845-555-0505,2024-CV-1005,Westchester County Civil Court,Westchester,NY,2024-08-19,95000.00,William Brown,Active
+DEMO-006,Brooklyn Asset Recovery,bar@brooklynasset.com,347-555-0606,2024-CV-1006,Kings County Civil Court,Kings,NY,2024-03-28,18750.00,Patricia Davis,Active
+DEMO-007,Manhattan Judgment Group,mjg@mjglaw.com,646-555-0707,2024-CV-1007,New York County Civil Court,New York,NY,2024-09-05,52400.00,Michael Wilson,Active
+DEMO-008,Queens Boulevard Partners,qbp@queensblvd.com,718-555-0808,2024-CV-1008,Queens County Civil Court,Queens,NY,2024-02-14,34200.00,Jennifer Martinez,Active

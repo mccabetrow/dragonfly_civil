@@ -13,18 +13,18 @@
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot\..
 
-Write-Host "=== 🏦 Dragonfly PROD Status ===" -ForegroundColor Red
-Write-Host "⚠️  Running against PRODUCTION" -ForegroundColor Yellow
+Write-Host "=== [DRAGONFLY] PROD Status ===" -ForegroundColor Red
+Write-Host "[!] Running against PRODUCTION" -ForegroundColor Yellow
 $env:SUPABASE_MODE = 'prod'
 
 # Step 1: Sync schema (apply any pending migrations)
 Write-Host "`n[1/2] Syncing Schema..." -ForegroundColor Yellow
 try {
     & .\scripts\db_migrate.ps1 -SupabaseEnv prod
-    Write-Host "  ✓ Schema synced" -ForegroundColor Green
+    Write-Host "  [OK] Schema synced" -ForegroundColor Green
 }
 catch {
-    Write-Host "  ✗ Schema sync failed: $_" -ForegroundColor Red
+    Write-Host "  [FAIL] Schema sync failed: $_" -ForegroundColor Red
     exit 1
 }
 
@@ -38,13 +38,13 @@ try {
     }
     else {
         Write-Host "  (Using doctor as prod_smoke not found)" -ForegroundColor DarkGray
-        & .\.venv\Scripts\python.exe -m tools.doctor --env prod
+        & .\.venv\Scripts\python.exe -m tools.doctor
     }
-    Write-Host "  ✓ Prod health check passed" -ForegroundColor Green
+    Write-Host "  [OK] Prod health check passed" -ForegroundColor Green
 }
 catch {
-    Write-Host "  ✗ Prod health check failed: $_" -ForegroundColor Red
+    Write-Host "  [FAIL] Prod health check failed: $_" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "`n✅ PROD IS HEALTHY." -ForegroundColor Green
+Write-Host "`n>>> PROD IS HEALTHY. <<<" -ForegroundColor Green

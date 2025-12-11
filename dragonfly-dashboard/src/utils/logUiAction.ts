@@ -100,6 +100,21 @@ export async function logUiAction(params: LogUiActionParams): Promise<void> {
  */
 export const telemetry = {
   /**
+   * Generic action logger for custom events.
+   * Use when pre-configured methods don't fit.
+   */
+  logAction(params: {
+    componentId: string;
+    action: string;
+    metadata?: Record<string, unknown>;
+  }): void {
+    logUiAction({
+      eventName: `${params.componentId}.${params.action}`,
+      context: params.metadata ?? {},
+    });
+  },
+
+  /**
    * Log an intake upload submission.
    */
   intakeUploadSubmitted(context: {
@@ -169,6 +184,19 @@ export const telemetry = {
   }): void {
     logUiAction({
       eventName: 'data.exported',
+      context,
+    });
+  },
+
+  /**
+   * Log a status indicator click.
+   */
+  statusIndicatorClicked(context: {
+    componentId: string;
+    currentStatus: string;
+  }): void {
+    logUiAction({
+      eventName: 'ui.status_indicator_clicked',
       context,
     });
   },

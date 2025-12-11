@@ -342,3 +342,128 @@ def test_metrics_enforcement_tracks_open_and_closed_cases(db_url: str) -> None:
     finally:
         conn.rollback()
         conn.close()
+
+
+@pytest.mark.integration
+def test_v_enforcement_overview_has_correct_columns(db_url: str) -> None:
+    """Verify public.v_enforcement_overview has the columns expected by the dashboard.
+
+    The dashboard's useEnforcementOverview hook queries:
+        .select('enforcement_stage, collectability_tier, case_count, total_judgment_amount')
+
+    This test ensures the view exists and has all required columns.
+    """
+    conn = _connect(db_url)
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            # Query the view - should not error
+            cur.execute("SELECT * FROM public.v_enforcement_overview LIMIT 10")
+            rows = cur.fetchall()
+
+            # Verify the view is queryable (may return 0 rows in empty DB)
+            assert isinstance(rows, list)
+
+            # Check column names match what frontend expects
+            if rows:
+                row = dict(rows[0])
+                expected_columns = [
+                    "enforcement_stage",
+                    "collectability_tier",
+                    "case_count",
+                    "total_judgment_amount",
+                ]
+                for col in expected_columns:
+                    assert col in row, f"Missing expected column: {col}"
+
+            # Also verify by checking information_schema
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'v_enforcement_overview'
+                ORDER BY ordinal_position
+            """
+            )
+            column_rows = cur.fetchall()
+            columns = [dict(r)["column_name"] for r in column_rows]
+
+            assert (
+                "enforcement_stage" in columns
+            ), "v_enforcement_overview missing 'enforcement_stage'"
+            assert (
+                "collectability_tier" in columns
+            ), "v_enforcement_overview missing 'collectability_tier'"
+            assert "case_count" in columns, "v_enforcement_overview missing 'case_count'"
+            assert (
+                "total_judgment_amount" in columns
+            ), "v_enforcement_overview missing 'total_judgment_amount'"
+
+            # Verify it does NOT have the old wrong column names
+            assert (
+                "count" not in columns
+            ), "v_enforcement_overview should not have 'count' (use 'case_count')"
+            assert (
+                "total_value" not in columns
+            ), "v_enforcement_overview should not have 'total_value' (use 'total_judgment_amount')"
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+@pytest.mark.integration
+def test_v_enforcement_overview_returns_aggregated_data(db_url: str) -> None:
+    """Verify public.v_enforcement_overview returns properly aggregated data."""
+    conn = _connect(db_url)
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            # Insert test judgment
+            plaintiff_id = uuid.uuid4()
+            cur.execute(
+                """
+                INSERT INTO public.plaintiffs (id, name, status, source_system)
+                VALUES (%s, %s, 'new', 'test_overview')
+                """,
+                (plaintiff_id, "Overview Test Plaintiff"),
+            )
+
+            test_stage = f"test_stage_{uuid.uuid4().hex[:6]}"
+            cur.execute(
+                """
+                INSERT INTO public.judgments (
+                    case_number, plaintiff_id, plaintiff_name, defendant_name,
+                    judgment_amount, entry_date, enforcement_stage,
+                    collectability_score
+                )
+                VALUES (%s, %s, %s, %s, %s, current_date, %s, %s)
+                """,
+                (
+                    f"OVW-{uuid.uuid4().hex[:8].upper()}",
+                    plaintiff_id,
+                    "Overview Test Plaintiff",
+                    "Test Defendant",
+                    Decimal("15000"),
+                    test_stage,
+                    75,  # High collectability -> 'high' tier
+                ),
+            )
+
+            # Query the view for our test stage
+            cur.execute(
+                """
+                SELECT enforcement_stage, collectability_tier, case_count, total_judgment_amount
+                FROM public.v_enforcement_overview
+                WHERE enforcement_stage = %s
+                """,
+                (test_stage,),
+            )
+            rows = cur.fetchall()
+
+        assert len(rows) >= 1, f"Expected at least 1 row for stage '{test_stage}'"
+        row = dict(rows[0])
+        assert row["enforcement_stage"] == test_stage
+        assert row["collectability_tier"] == "high"  # score 75 >= 70
+        assert row["case_count"] >= 1
+        assert Decimal(row["total_judgment_amount"]) >= Decimal("15000")
+    finally:
+        conn.rollback()
+        conn.close()
