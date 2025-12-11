@@ -123,8 +123,8 @@ CREATE OR REPLACE VIEW public.v_live_feed_events AS WITH recent_jobs AS (
     ), recent_packets AS (
         SELECT 'packet' AS event_type,
             id::text AS event_id,
-            'Packet generated: ' || COALESCE(strategy, 'enforcement') AS message,
-            COALESCE(estimated_recovery, 0) AS amount,
+            'Packet generated: ' || COALESCE(packet_type, 'enforcement') AS message,
+            0::numeric AS amount,
             status::text AS status,
             COALESCE(updated_at, created_at) AS event_time
         FROM enforcement.draft_packets
