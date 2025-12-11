@@ -95,7 +95,7 @@ $$;
 -- This aggregates from multiple sources into a single stream
 CREATE OR REPLACE VIEW public.v_live_feed_events AS WITH recent_jobs AS (
         SELECT 'job' AS event_type,
-            id AS event_id,
+            id::text AS event_id,
             CASE
                 WHEN status = 'completed' THEN 'Job completed: ' || COALESCE(job_type, 'processing')
                 WHEN status = 'failed' THEN 'Job failed: ' || COALESCE(last_error, 'unknown error')
