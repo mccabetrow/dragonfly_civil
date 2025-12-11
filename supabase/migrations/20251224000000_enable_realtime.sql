@@ -113,7 +113,7 @@ CREATE OR REPLACE VIEW public.v_live_feed_events AS WITH recent_jobs AS (
         SELECT 'judgment' AS event_type,
             id::text AS event_id,
             'New judgment: ' || COALESCE(defendant_name, 'Unknown') AS message,
-            COALESCE(principal_amount, 0) AS amount,
+            COALESCE(judgment_amount, 0) AS amount,
             'ingested' AS status,
             created_at AS event_time
         FROM public.judgments
