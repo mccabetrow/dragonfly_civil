@@ -23,6 +23,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from ..config import get_settings
 from ..core.security import AuthContext, get_current_user
 from ..db import get_pool
 from ..services.intake_service import IntakeService
@@ -351,6 +352,13 @@ async def list_batches(
                 ORDER BY created_at DESC
                 LIMIT %s OFFSET %s
             """
+
+        # DEV-ONLY: Assert placeholder/param count match to prevent regression
+        settings = get_settings()
+        if settings.is_development:
+            assert data_query.count("%s") == len(
+                data_params
+            ), f"SQL placeholder mismatch: {data_query.count('%s')} placeholders vs {len(data_params)} params"
 
         from psycopg.rows import dict_row
 
