@@ -7,9 +7,17 @@
     2. Intake Batches Endpoint (authenticated)
     3. Cases Pipeline Endpoint (authenticated)
     4. Supabase View Query (v_enforcement_overview)
+.PARAMETER ProdApiKey
+    The Dragonfly API key for authenticated endpoints.
+    Defaults to $env:PROD_API_KEY or the hardcoded fallback.
 .EXAMPLE
     .\scripts\prod_smoke.ps1
+.EXAMPLE
+    .\scripts\prod_smoke.ps1 -ProdApiKey "df_prod_xxxxx"
 #>
+param(
+    [string]$ProdApiKey = $env:PROD_API_KEY
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -18,7 +26,11 @@ $ErrorActionPreference = 'Stop'
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 $PROD_API_BASE = "https://dragonflycivil-production-d57a.up.railway.app"
-$DRAGONFLY_API_KEY = "df_prod_3d50b1f2-9f1a-4d8e-b4ab-7b2e2b4c9b73"
+
+# Fallback API key if not provided
+if (-not $ProdApiKey) {
+    $ProdApiKey = "df_prod_3d50b1f2-9f1a-4d8e-b4ab-7b2e2b4c9b73"
+}
 
 # Load environment variables
 $envPath = Join-Path (Join-Path $PSScriptRoot '..') '.env'
@@ -173,7 +185,7 @@ if ($health) {
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 2: Intake Batches Endpoint (Authenticated)
 # ─────────────────────────────────────────────────────────────────────────────
-$authHeaders = @{ 'x-dragonfly-api-key' = $DRAGONFLY_API_KEY }
+$authHeaders = @{ 'x-dragonfly-api-key' = $ProdApiKey }
 $batches = Invoke-ApiCheck -Name "Intake Batches (/api/v1/intake/batches)" -Url "$PROD_API_BASE/api/v1/intake/batches?page=1&page_size=5" -Headers $authHeaders -ExpectJson
 if ($batches) {
     $batchCount = if ($batches.batches) { $batches.batches.Count } else { 0 }
