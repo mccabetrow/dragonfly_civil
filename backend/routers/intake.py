@@ -317,42 +317,45 @@ async def list_batches(
 
     async with pool.connection() as conn:
         # Build query with optional status filter
+        # NOTE: psycopg uses %s placeholders, not $1/$2/$3 (asyncpg style)
         where_clause = ""
-        params: list[Any] = []
+        count_params: list[Any] = []
 
         if status:
-            where_clause = "WHERE status = $1"
-            params.append(status)
+            where_clause = "WHERE status = %s"
+            count_params.append(status)
 
         # Get total count
         count_query = f"SELECT COUNT(*) FROM ops.v_intake_monitor {where_clause}"
         async with conn.cursor() as cur:
-            await cur.execute(count_query, params)
+            await cur.execute(count_query, count_params if count_params else None)
             row = await cur.fetchone()
             total = row[0] if row else 0
 
         # Get paginated results
         offset = (page - 1) * page_size
+
+        # Build data query with proper %s placeholders
         if status:
-            params.extend([page_size, offset])
-            data_query = f"""
+            data_params: list[Any] = [status, page_size, offset]
+            data_query = """
                 SELECT * FROM ops.v_intake_monitor
-                {where_clause}
+                WHERE status = %s
                 ORDER BY created_at DESC
-                LIMIT $2 OFFSET $3
+                LIMIT %s OFFSET %s
             """
         else:
-            params = [page_size, offset]
+            data_params = [page_size, offset]
             data_query = """
                 SELECT * FROM ops.v_intake_monitor
                 ORDER BY created_at DESC
-                LIMIT $1 OFFSET $2
+                LIMIT %s OFFSET %s
             """
 
         from psycopg.rows import dict_row
 
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(data_query, params)
+            await cur.execute(data_query, data_params)
             rows = await cur.fetchall()
 
         batches = [
