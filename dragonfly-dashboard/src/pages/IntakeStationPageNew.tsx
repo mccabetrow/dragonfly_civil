@@ -2,6 +2,14 @@
  * IntakeStationPage - Financial Terminal Style Intake Dashboard
  * ═══════════════════════════════════════════════════════════════════════════
  *
+ * PR-2: UI State Machine & Polling Fallback
+ *
+ * Architecture:
+ *   - uploadRequestStatus: HTTP upload result (idle/uploading/success/error)
+ *   - batchProcessingStatus: Worker-driven (pending/processing/completed/failed)
+ *   - "Upload Error" only appears if POST request fails
+ *   - Degraded Banner: shown when API returns degraded: true
+ *
  * HFT-inspired intake operations dashboard:
  *   - Intake Radar metrics (24h/7d judgment counts, AUM, validity)
  *   - Animated drag-and-drop with glowing dropzone
@@ -39,6 +47,7 @@ import {
   Timer,
   AlertTriangle,
   Check,
+  WifiOff,
 } from 'lucide-react';
 import { cn } from '../lib/design-tokens';
 import { useIntakeStationData, type IntakeBatchSummary } from '../hooks/useIntakeStationData';
@@ -808,16 +817,60 @@ const BatchHistory: FC<BatchHistoryProps> = ({ batches, isLoading, previousBatch
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// DEGRADED MODE BANNER
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface DegradedBannerProps {
+  visible: boolean;
+}
+
+const DegradedBanner: FC<DegradedBannerProps> = ({ visible }) => {
+  if (!visible) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 flex items-center gap-3"
+    >
+      <WifiOff className="h-5 w-5 text-amber-400 flex-shrink-0" />
+      <div>
+        <p className="text-sm font-medium text-amber-300">
+          Live updates paused
+        </p>
+        <p className="text-xs text-amber-400/70">
+          Data may be delayed. Polling continues in the background.
+        </p>
+      </div>
+    </motion.div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
 const IntakeStationPage: FC = () => {
-  const { radar, batches, isLoading, refetch, startPolling, stopPolling, isPolling } = useIntakeStationData();
+  // PR-2: Extract isDegraded from hook for conditional banner display
+  const { 
+    radar, 
+    batches, 
+    isLoading, 
+    refetch, 
+    startPolling, 
+    stopPolling, 
+    isPolling,
+    isDegraded,
+    isRealtimeConnected,
+  } = useIntakeStationData();
+  
   const [previousBatches, setPreviousBatches] = useState<IntakeBatchSummary[]>([]);
   const [realtimeFlash, setRealtimeFlash] = useState(false);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // REALTIME SUBSCRIPTION - Auto-refetch when jobs complete
+  // REALTIME SUBSCRIPTION - Auto-refetch when jobs complete (SECONDARY)
+  // Polling runs independently - realtime is an enhancement only
   // ═══════════════════════════════════════════════════════════════════════════
   const { isConnected: realtimeConnected } = useJobQueueRealtime({
     onJobComplete: (jobId, status) => {
@@ -855,7 +908,8 @@ const IntakeStationPage: FC = () => {
     }
   }, [batches]);
 
-  // Start polling on mount, stop on unmount
+  // Polling is enabled by default in the hook (PR-2)
+  // startPolling/stopPolling are still exposed for manual control
   useEffect(() => {
     startPolling();
     return () => stopPolling();
@@ -883,6 +937,11 @@ const IntakeStationPage: FC = () => {
         )}
       </AnimatePresence>
 
+      {/* PR-2: Degraded Mode Banner - shown when API returns degraded: true */}
+      <AnimatePresence>
+        <DegradedBanner visible={isDegraded} />
+      </AnimatePresence>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -890,19 +949,34 @@ const IntakeStationPage: FC = () => {
             INTAKE STATION
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Real-time judgment ingestion • {realtimeConnected ? 'Realtime connected' : (isPolling ? 'Polling active' : 'Paused')}
+            Real-time judgment ingestion • {
+              isDegraded 
+                ? 'Degraded mode' 
+                : realtimeConnected || isRealtimeConnected
+                  ? 'Realtime connected' 
+                  : isPolling 
+                    ? 'Polling active' 
+                    : 'Paused'
+            }
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Degraded indicator */}
+          {isDegraded && (
+            <div className="flex items-center gap-2 text-xs text-amber-400 font-mono">
+              <WifiOff className="h-3.5 w-3.5" />
+              Degraded
+            </div>
+          )}
           {/* Realtime indicator */}
-          {realtimeConnected && (
+          {!isDegraded && (realtimeConnected || isRealtimeConnected) && (
             <div className="flex items-center gap-2 text-xs text-emerald-400 font-mono">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
               Realtime
             </div>
           )}
-          {/* Polling indicator (fallback) */}
-          {!realtimeConnected && isPolling && (
+          {/* Polling indicator (shown when realtime is down but polling continues) */}
+          {!isDegraded && !(realtimeConnected || isRealtimeConnected) && isPolling && (
             <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
               <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
               Polling

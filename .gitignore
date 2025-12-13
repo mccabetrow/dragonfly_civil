@@ -2,6 +2,7 @@
 logs/
 supabase/.temp/
 etl/src/auth/session.json
+state/session.json
 *.playwright/
 playwright/.auth/**
 

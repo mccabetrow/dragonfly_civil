@@ -2,11 +2,17 @@
  * useIntakeStationData - Unified data hook for Intake Station page
  * ═══════════════════════════════════════════════════════════════════════════
  *
+ * PR-2: UI State Machine & Polling Fallback
+ *
+ * Architecture:
+ *   - PRIMARY: Polling Timer (fetch /intake/state every 5s) - never stops
+ *   - SECONDARY: Realtime subscription (triggers immediate refetch on events)
+ *   - Resilience: If Realtime fails/reconnects, Polling continues uninterrupted
+ *
  * Combines:
  *   - Intake radar metrics (24h/7d judgment counts, AUM, validity rate)
  *   - Batch history (recent uploads with status) via API
- *   - Real-time polling support (auto-refresh every 30s)
- *   - Supabase Realtime subscriptions for instant updates
+ *   - Degraded mode detection from PR-1 envelope
  *
  * Design:
  *   - Skeleton-ready loading states (no spinners)
@@ -60,6 +66,8 @@ export interface IntakeStationData {
   isFlashing: boolean;
   /** Whether connected to realtime channel */
   isRealtimeConnected: boolean;
+  /** True if backend returned degraded: true (partial data, downstream failure) */
+  isDegraded: boolean;
 }
 
 export interface UseIntakeStationDataResult extends IntakeStationData {
@@ -158,7 +166,19 @@ function normalizeRadar(raw: RawRadarRow): IntakeRadarMetrics {
   };
 }
 
-// API response type from /api/v1/intake/batches
+// PR-1 Envelope: API responses wrap data in { ok, data, degraded, error, meta }
+interface ApiEnvelope<T> {
+  ok: boolean;
+  data: T | null;
+  degraded?: boolean;
+  error?: string | null;
+  meta?: {
+    trace_id: string;
+    timestamp: string;
+  };
+}
+
+// API response type from /api/v1/intake/batches (inside envelope.data)
 interface ApiBatchRow {
   id: string;
   filename: string;
@@ -172,6 +192,10 @@ interface ApiBatchRow {
   created_at: string;
   completed_at: string | null;
   duration_seconds: number | null;
+}
+
+interface ApiBatchesData {
+  batches: ApiBatchRow[];
 }
 
 function normalizeApiBatch(raw: ApiBatchRow): IntakeBatchSummary {
@@ -198,7 +222,7 @@ function normalizeApiBatch(raw: ApiBatchRow): IntakeBatchSummary {
 // HOOK
 // ═══════════════════════════════════════════════════════════════════════════
 
-const POLLING_INTERVAL_MS = 5_000; // 5 seconds for real-time feel
+const POLLING_INTERVAL_MS = 5_000; // 5 seconds - PRIMARY data source
 const FLASH_DURATION_MS = 1500; // Duration of green flash animation
 
 export function useIntakeStationData(): UseIntakeStationDataResult {
@@ -211,10 +235,13 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
     lastUpdated: null,
     isFlashing: false,
     isRealtimeConnected: false,
+    isDegraded: false,
   });
 
-  const [pollingEnabled, setPollingEnabled] = useState(false);
+  // Polling is ALWAYS enabled by default - never depends on realtime
+  const [pollingEnabled, setPollingEnabled] = useState(true);
   const flashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Flash animation handler
   const triggerFlash = useCallback(() => {
@@ -249,9 +276,12 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
         isPolling: pollingEnabled,
         error: null,
         lastUpdated: new Date(),
+        isDegraded: false,
       }));
       return;
     }
+
+    let isDegraded = false;
 
     try {
       // Fetch radar metrics via Supabase RPC
@@ -263,15 +293,27 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
         console.warn('Intake radar RPC error:', radarError);
       }
 
-      // Fetch batch history via API endpoint (ops schema not exposed via PostgREST)
+      // Fetch batch history via API endpoint (PR-1 envelope format)
       let batches: IntakeBatchSummary[] = [];
       try {
-        const batchResponse = await apiClient.get<{ batches: ApiBatchRow[] }>('/api/v1/intake/batches?limit=25');
-        if (batchResponse.batches) {
-          batches = batchResponse.batches.map(normalizeApiBatch);
+        // API now returns envelope: { ok, data: { batches }, degraded, error, meta }
+        const envelope = await apiClient.get<ApiEnvelope<ApiBatchesData>>('/api/v1/intake/batches?limit=25');
+        
+        // Check for degraded mode from PR-1 envelope
+        if (envelope.degraded) {
+          isDegraded = true;
+          console.warn('[useIntakeStationData] API returned degraded mode:', envelope.error);
+        }
+        
+        // Extract batches from envelope.data
+        if (envelope.ok && envelope.data?.batches) {
+          batches = envelope.data.batches.map(normalizeApiBatch);
+        } else if (!envelope.ok) {
+          console.warn('[useIntakeStationData] API error:', envelope.error);
         }
       } catch (batchErr) {
         console.warn('Intake batches API error:', batchErr);
+        // Don't set global error - polling should continue
       }
 
       // Normalize radar data
@@ -286,6 +328,7 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
         isPolling: pollingEnabled,
         error: null,
         lastUpdated: new Date(),
+        isDegraded,
       }));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load intake data';
@@ -293,18 +336,21 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
         ...prev,
         isLoading: false,
         error: message,
+        isDegraded: true,
       }));
     }
   }, [pollingEnabled]);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // REALTIME SUBSCRIPTIONS
+  // REALTIME SUBSCRIPTIONS (SECONDARY - enhancement, not dependency)
+  // Realtime events trigger immediate refetch, but polling continues regardless
   // ═══════════════════════════════════════════════════════════════════════════
 
   // Subscribe to job queue updates (job completions trigger refetch)
   const jobRealtime = useJobQueueRealtime({
     onJobComplete: (_jobId, status) => {
       if (status === 'completed' || status === 'failed') {
+        // Realtime is an enhancement - trigger immediate refetch
         fetchData();
       }
     },
@@ -315,13 +361,14 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
   // Subscribe to new judgment ingestions
   const judgmentRealtime = useJudgmentRealtime({
     onJudgmentIngested: () => {
+      // Realtime is an enhancement - trigger immediate refetch
       fetchData();
     },
     onFlash: triggerFlash,
     enabled: !IS_DEMO_MODE,
   });
 
-  // Update realtime connection status
+  // Update realtime connection status (informational only - doesn't affect polling)
   useEffect(() => {
     const isConnected = jobRealtime.isConnected || judgmentRealtime.isConnected;
     setData((prev) => {
@@ -337,15 +384,29 @@ export function useIntakeStationData(): UseIntakeStationDataResult {
     fetchData();
   }, [fetchData]);
 
-  // Polling interval
+  // ═══════════════════════════════════════════════════════════════════════════
+  // POLLING TIMER (PRIMARY - always runs, never depends on realtime)
+  // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
-    if (!pollingEnabled) return;
+    if (!pollingEnabled) {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      return;
+    }
 
-    const interval = setInterval(() => {
+    // Start polling interval - runs independently of realtime status
+    pollingRef.current = setInterval(() => {
       fetchData();
     }, POLLING_INTERVAL_MS);
 
-    return () => clearInterval(interval);
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
   }, [pollingEnabled, fetchData]);
 
   // Listen for global refresh events
