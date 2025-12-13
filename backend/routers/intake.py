@@ -474,6 +474,9 @@ async def list_batches(
     """
     List all intake batches with pagination.
 
+    PR-3: Hardened to query ONLY ops.ingest_batches base table.
+    No complex view dependencies - computes derived fields in Python.
+
     Degrade Guard: On any error, returns 200 OK with degraded envelope.
     The UI must NEVER crash.
     """
@@ -486,7 +489,6 @@ async def list_batches(
             from psycopg.rows import dict_row
 
             # Build query with explicit parameter ordering
-            # LIMIT and OFFSET always appended with their params in strict order
             params: list[Any] = []
             where_clause = ""
 
@@ -494,19 +496,31 @@ async def list_batches(
                 where_clause = "WHERE status = %s"
                 params.append(status)
 
-            # Get total count
-            count_query = f"SELECT COUNT(*) FROM ops.v_intake_monitor {where_clause}"
+            # Get total count from base table
+            count_query = f"SELECT COUNT(*) FROM ops.ingest_batches {where_clause}"
             async with conn.cursor() as cur:
                 await cur.execute(count_query, params if params else None)
                 row = await cur.fetchone()
                 total = row[0] if row else 0
 
-            # Get paginated results
+            # Get paginated results from BASE TABLE ONLY (PR-3)
             offset = (page - 1) * page_size
 
-            # Build data query - explicit placeholder ordering
+            # Query only required columns from ops.ingest_batches
+            # No joins, no views - maximum reliability
             base_query = f"""
-                SELECT * FROM ops.v_intake_monitor
+                SELECT
+                    id,
+                    source,
+                    filename,
+                    row_count_raw AS total_rows,
+                    row_count_valid AS valid_rows,
+                    row_count_invalid AS error_rows,
+                    status,
+                    created_at,
+                    completed_at,
+                    started_at
+                FROM ops.ingest_batches
                 {where_clause}
                 ORDER BY created_at DESC
             """
@@ -519,25 +533,51 @@ async def list_batches(
                 await cur.execute(data_query, data_params)
                 rows = await cur.fetchall()
 
-            batches = [
-                BatchSummary(
-                    id=str(row["id"]),
-                    filename=row["filename"],
-                    source=row["source"],
-                    status=row["status"],
-                    total_rows=row["total_rows"] or 0,
-                    valid_rows=row["valid_rows"] or 0,
-                    error_rows=row["error_rows"] or 0,
-                    success_rate=float(row["success_rate"] or 0),
-                    duration_seconds=(
-                        float(row["duration_seconds"]) if row["duration_seconds"] else None
-                    ),
-                    health_status=row["health_status"],
-                    created_at=row["created_at"].isoformat() if row["created_at"] else "",
-                    completed_at=(row["completed_at"].isoformat() if row["completed_at"] else None),
+            # Compute derived fields in Python (previously in view)
+            batches = []
+            for row in rows:
+                total_rows = row["total_rows"] or 0
+                valid_rows = row["valid_rows"] or 0
+                error_rows = row["error_rows"] or 0
+
+                # Compute success_rate
+                success_rate = 0.0
+                if total_rows > 0:
+                    success_rate = round((valid_rows / total_rows) * 100, 2)
+
+                # Compute duration_seconds
+                duration_seconds: float | None = None
+                if row["completed_at"] and row["started_at"]:
+                    delta = row["completed_at"] - row["started_at"]
+                    duration_seconds = round(delta.total_seconds(), 2)
+
+                # Compute health_status based on success rate and status
+                health_status = "healthy"
+                if row["status"] == "failed":
+                    health_status = "critical"
+                elif error_rows > 0 and success_rate < 80:
+                    health_status = "critical"
+                elif error_rows > 0 and success_rate < 95:
+                    health_status = "warning"
+
+                batches.append(
+                    BatchSummary(
+                        id=str(row["id"]),
+                        filename=row["filename"] or "unknown",
+                        source=row["source"] or "unknown",
+                        status=row["status"] or "pending",
+                        total_rows=total_rows,
+                        valid_rows=valid_rows,
+                        error_rows=error_rows,
+                        success_rate=success_rate,
+                        duration_seconds=duration_seconds,
+                        health_status=health_status,
+                        created_at=row["created_at"].isoformat() if row["created_at"] else "",
+                        completed_at=(
+                            row["completed_at"].isoformat() if row["completed_at"] else None
+                        ),
+                    )
                 )
-                for row in rows
-            ]
 
             data = BatchListData(
                 batches=batches,
