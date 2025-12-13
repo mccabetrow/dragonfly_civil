@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..api import ApiResponse, api_response, degraded_response
 from ..config import get_settings
 from ..db import fetch_val, get_pool
 
@@ -19,6 +20,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/health", tags=["Health"])
 
 
+class HealthData(BaseModel):
+    """Health check data payload for ApiResponse envelope."""
+
+    status: str
+    timestamp: str
+    environment: str
+
+
+# Keep legacy model for backward compatibility
 class HealthResponse(BaseModel):
     """Basic health check response."""
 
@@ -50,11 +60,11 @@ class DBHealthResponse(BaseModel):
 
 @router.get(
     "",
-    response_model=HealthResponse,
+    response_model=ApiResponse[HealthData],
     summary="Basic health check",
     description="Returns OK if the service is running. No authentication required.",
 )
-async def health_check() -> HealthResponse:
+async def health_check() -> ApiResponse[HealthData]:
     """
     Canonical health probe for the Dragonfly system.
 
@@ -64,19 +74,21 @@ async def health_check() -> HealthResponse:
     - Railway load balancer
     - Uptime monitoring services
 
-    Returns:
-        status: "ok" if service is running
-        timestamp: ISO 8601 UTC timestamp
-        environment: Current environment (dev/staging/prod)
+    Returns standard API envelope with:
+        data.status: "ok" if service is running
+        data.timestamp: ISO 8601 UTC timestamp
+        data.environment: Current environment (dev/staging/prod)
+        meta.trace_id: Request trace ID for debugging
 
     No authentication required - this endpoint is public.
     """
     settings = get_settings()
-    return HealthResponse(
+    data = HealthData(
         status="ok",
         timestamp=datetime.utcnow().isoformat() + "Z",
         environment=settings.environment,
     )
+    return api_response(data=data)
 
 
 @router.get(

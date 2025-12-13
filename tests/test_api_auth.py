@@ -41,9 +41,12 @@ class TestHealthEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "ok"
-        assert "environment" in data
-        assert "timestamp" in data
+        # Response is now wrapped in API envelope
+        assert data["ok"] is True
+        assert data["data"]["status"] == "ok"
+        assert "environment" in data["data"]
+        assert "timestamp" in data["data"]
+        assert "trace_id" in data["meta"]
 
     def test_health_returns_environment(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -55,7 +58,8 @@ class TestHealthEndpoint:
         assert response.status_code == 200
         data = response.json()
         # Environment comes from settings, which is set to dev/staging/prod
-        assert data["environment"] in ["dev", "staging", "prod"]
+        # Response is now wrapped in API envelope
+        assert data["data"]["environment"] in ["dev", "staging", "prod"]
 
 
 class TestApiKeyAuth:

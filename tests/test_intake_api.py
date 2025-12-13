@@ -175,3 +175,146 @@ class TestIntakeUploadErrorHandling:
         body = response.json()
         assert body["error"] == "intake_upload_failed"
         assert "boom" in body["message"]
+
+
+@pytest.mark.unit
+class TestIntakeStateEndpoint:
+    """Tests for the minimal /api/v1/intake/state endpoint."""
+
+    @pytest.fixture
+    def client(self) -> TestClient:
+        """Create a TestClient for the FastAPI app."""
+        from backend.main import create_app
+
+        app = create_app()
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_state_endpoint_exists(self, client: TestClient) -> None:
+        """GET /api/v1/intake/state should exist and return 200."""
+        response = client.get("/api/v1/intake/state")
+        # Should never 404 - endpoint must exist
+        assert response.status_code != 404
+        # Should return 200 even without DB (returns degraded state)
+        assert response.status_code == 200
+
+    def test_state_returns_valid_response_shape(self, client: TestClient) -> None:
+        """Response should have all required fields."""
+        response = client.get("/api/v1/intake/state")
+        assert response.status_code == 200
+        body = response.json()
+
+        # Required fields always present
+        assert "ok" in body
+        assert "degraded" in body
+        assert "checked_at" in body
+        assert "pending" in body
+        assert "processing" in body
+        assert "completed" in body
+        assert "failed" in body
+        assert "total_batches" in body
+        assert "queue_depth" in body
+
+        # Types are correct
+        assert isinstance(body["ok"], bool)
+        assert isinstance(body["degraded"], bool)
+        assert isinstance(body["pending"], int)
+        assert isinstance(body["processing"], int)
+        assert isinstance(body["completed"], int)
+        assert isinstance(body["failed"], int)
+        assert isinstance(body["total_batches"], int)
+        assert isinstance(body["queue_depth"], int)
+
+    def test_state_never_throws_on_db_error(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """State endpoint must return degraded response, never throw."""
+
+        async def boom():
+            raise RuntimeError("Database connection failed")
+
+        monkeypatch.setattr("backend.routers.intake.get_pool", boom)
+
+        response = client.get("/api/v1/intake/state")
+
+        # Must still return 200 with degraded state
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert body["degraded"] is True
+        assert body["error"] is not None
+        assert "Database connection failed" in body["error"]
+        # Counts should be zero when degraded
+        assert body["pending"] == 0
+        assert body["processing"] == 0
+        assert body["completed"] == 0
+        assert body["failed"] == 0
+        assert body["queue_depth"] == 0
+
+    def test_state_no_auth_required(self, client: TestClient) -> None:
+        """State endpoint should not require authentication."""
+        # No auth headers provided - should still work
+        response = client.get("/api/v1/intake/state")
+        assert response.status_code == 200
+
+
+@pytest.mark.unit
+class TestListBatchesDegradeGuard:
+    """Tests for the list_batches degrade guard pattern."""
+
+    @pytest.fixture
+    def client(self) -> TestClient:
+        """Create a TestClient with mocked auth."""
+        from backend.core.security import AuthContext, get_current_user
+        from backend.main import create_app
+
+        app = create_app()
+
+        async def mock_auth() -> AuthContext:
+            return AuthContext(subject="test-user", via="api_key")
+
+        app.dependency_overrides[get_current_user] = mock_auth
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_batches_returns_200_on_db_error(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """list_batches must return 200 OK with degraded response on DB error."""
+
+        async def boom():
+            raise RuntimeError("SQL placeholder mismatch")
+
+        monkeypatch.setattr("backend.routers.intake.get_pool", boom)
+
+        response = client.get("/api/v1/intake/batches")
+
+        # MUST return 200 - never 500
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert body["degraded"] is True
+        assert body["data"] == []
+        assert "error" in body
+
+    def test_batches_without_filter_returns_200(self, client: TestClient) -> None:
+        """GET /api/v1/intake/batches should return 200 OK."""
+        response = client.get("/api/v1/intake/batches")
+        # Should return 200 (either normal or degraded)
+        assert response.status_code == 200
+
+    def test_batches_with_status_filter_returns_200(self, client: TestClient) -> None:
+        """GET /api/v1/intake/batches?status=completed should return 200 OK."""
+        response = client.get("/api/v1/intake/batches?status=completed")
+        # Should return 200 (either normal or degraded)
+        assert response.status_code == 200
+
+    def test_batches_with_pagination_returns_200(self, client: TestClient) -> None:
+        """GET /api/v1/intake/batches?page=2&page_size=10 should return 200 OK."""
+        response = client.get("/api/v1/intake/batches?page=2&page_size=10")
+        # Should return 200 (either normal or degraded)
+        assert response.status_code == 200
+
+    def test_batches_with_filter_and_pagination_returns_200(self, client: TestClient) -> None:
+        """GET /api/v1/intake/batches?status=pending&page=1&page_size=5 should return 200 OK."""
+        response = client.get("/api/v1/intake/batches?status=pending&page=1&page_size=5")
+        # Should return 200 (either normal or degraded)
+        assert response.status_code == 200

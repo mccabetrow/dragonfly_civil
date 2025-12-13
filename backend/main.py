@@ -36,6 +36,7 @@ from .core.middleware import (  # noqa: E402
     ResponseSanitizationMiddleware,
     get_request_id,
 )
+from .core.trace_middleware import TraceMiddleware, get_trace_id  # noqa: E402
 from .db import close_db_pool, init_db_pool  # noqa: E402
 
 # Router imports - explicit for clarity
@@ -173,8 +174,11 @@ def create_app() -> FastAPI:
     # 4. Performance logging (slow query detection)
     app.add_middleware(PerformanceLoggingMiddleware, threshold_s=1.0)
 
-    # 5. Request logging (innermost - logs after CORS/rate limit decisions)
+    # 5. Request logging (logs after CORS/rate limit decisions)
     app.add_middleware(RequestLoggingMiddleware)
+
+    # 6. Trace ID middleware (innermost - generates trace_id for every request)
+    app.add_middleware(TraceMiddleware)
 
     # ==========================================================================
     # GLOBAL EXCEPTION HANDLERS WITH CORS HEADERS
@@ -201,17 +205,19 @@ def create_app() -> FastAPI:
 
         - Logs FULL stack trace to console (visible in Railway logs)
         - Returns CLEAN JSON to frontend (no internal details)
-        - Includes request_id for correlation
+        - Includes request_id and trace_id for correlation
         """
         req_id = get_request_id() or "unknown"
+        trace_id = get_trace_id()
 
         # Log full stack trace for debugging (Railway logs)
         tb_str = traceback.format_exception(type(exc), exc, exc.__traceback__)
         logger.error(
-            f"[{req_id}] 🔥 UNHANDLED EXCEPTION on {request.method} {request.url.path}\n"
+            f"[{req_id}] [trace:{trace_id}] 🔥 UNHANDLED EXCEPTION on {request.method} {request.url.path}\n"
             f"{''.join(tb_str)}",
             extra={
                 "request_id": req_id,
+                "trace_id": trace_id,
                 "path": request.url.path,
                 "method": request.method,
                 "exception_type": type(exc).__name__,
@@ -225,6 +231,7 @@ def create_app() -> FastAPI:
                 "error": "Internal System Error",
                 "code": "500",
                 "request_id": req_id,
+                "trace_id": trace_id,
             },
             headers=_get_cors_headers(settings),
         )

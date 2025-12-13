@@ -23,6 +23,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from ..api import ApiResponse, api_response, degraded_response
 from ..config import get_settings
 from ..core.security import AuthContext, get_current_user
 from ..db import get_pool
@@ -125,6 +126,69 @@ class ErrorResponse(BaseModel):
     detail: Optional[str] = None
 
 
+class BatchListDegradedResponse(BaseModel):
+    """Response when batch listing fails - degrade guard pattern."""
+
+    ok: bool = Field(False, description="Always False for degraded response")
+    degraded: bool = Field(True, description="Always True for degraded response")
+    error: Optional[str] = Field(None, description="Error message")
+    data: list[Any] = Field(default_factory=list, description="Empty list on failure")
+
+
+class IntakeStateData(BaseModel):
+    """
+    Intake state data payload.
+
+    This is the data field inside the ApiResponse envelope.
+    """
+
+    # Aggregate batch counts by status
+    pending: int = Field(0, description="Batches waiting to start")
+    processing: int = Field(0, description="Batches currently processing")
+    completed: int = Field(0, description="Batches finished successfully")
+    failed: int = Field(0, description="Batches that failed")
+
+    # Recent activity
+    total_batches: int = Field(0, description="Total batch count")
+    last_batch_at: Optional[str] = Field(None, description="ISO timestamp of most recent batch")
+
+    # Job queue depth
+    queue_depth: int = Field(0, description="Pending jobs in ops.job_queue")
+
+    # Metadata
+    checked_at: str = Field(..., description="ISO timestamp of this check")
+
+
+# Keep old response for backward compatibility during transition
+class IntakeStateResponse(BaseModel):
+    """
+    Minimal, always-available intake state.
+
+    Designed for UI health checks - never throws, returns partial state with flags.
+    Queries base tables only (no views).
+    """
+
+    ok: bool = Field(..., description="True if data was retrieved without errors")
+    degraded: bool = Field(False, description="True if partial data due to errors")
+    error: Optional[str] = Field(None, description="Error message if degraded")
+
+    # Aggregate batch counts by status
+    pending: int = Field(0, description="Batches waiting to start")
+    processing: int = Field(0, description="Batches currently processing")
+    completed: int = Field(0, description="Batches finished successfully")
+    failed: int = Field(0, description="Batches that failed")
+
+    # Recent activity
+    total_batches: int = Field(0, description="Total batch count")
+    last_batch_at: Optional[str] = Field(None, description="ISO timestamp of most recent batch")
+
+    # Job queue depth
+    queue_depth: int = Field(0, description="Pending jobs in ops.job_queue")
+
+    # Metadata
+    checked_at: str = Field(..., description="ISO timestamp of this check")
+
+
 # ---------------------------------------------------------------------------
 # Background Task Handler
 # ---------------------------------------------------------------------------
@@ -182,6 +246,92 @@ async def process_upload_background(
 async def intake_health() -> dict[str, str]:
     """Health check for the intake subsystem."""
     return {"status": "ok", "subsystem": "intake_fortress"}
+
+
+@router.get(
+    "/state",
+    response_model=ApiResponse[IntakeStateData],
+    summary="Get intake system state",
+    description="""
+Minimal, read-only, always-available intake state endpoint.
+
+Returns aggregate batch counts and status wrapped in standard API envelope.
+Never throws - on error, returns envelope with `degraded=True` and error message.
+
+Designed for UI health checks and dashboard widgets that need
+reliable state without complex view dependencies.
+""",
+)
+async def intake_state() -> ApiResponse[IntakeStateData]:
+    """
+    Get minimal intake state from base tables only.
+
+    Never throws - wraps all errors and returns degraded envelope.
+    """
+    from datetime import datetime, timezone
+
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    try:
+        pool = await get_pool()
+
+        async with pool.connection() as conn:
+            # Simple aggregate query on base tables only - no views, no joins
+            # Query batch counts from ops.ingest_batches
+            batch_query = """
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                    COUNT(*) FILTER (WHERE status = 'processing') AS processing,
+                    COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+                    COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+                    COUNT(*) AS total,
+                    MAX(created_at) AS last_batch_at
+                FROM ops.ingest_batches
+            """
+            async with conn.cursor() as cur:
+                await cur.execute(batch_query)
+                batch_row = await cur.fetchone()
+
+            # Query job queue depth from ops.job_queue
+            queue_depth = 0
+            try:
+                queue_query = """
+                    SELECT COUNT(*) FROM ops.job_queue WHERE status = 'pending'
+                """
+                async with conn.cursor() as cur:
+                    await cur.execute(queue_query)
+                    queue_row = await cur.fetchone()
+                    queue_depth = queue_row[0] if queue_row else 0
+            except Exception:
+                # job_queue may not exist - graceful fallback
+                queue_depth = 0
+
+            if batch_row:
+                pending, processing, completed, failed, total, last_batch_at = batch_row
+                data = IntakeStateData(
+                    pending=pending or 0,
+                    processing=processing or 0,
+                    completed=completed or 0,
+                    failed=failed or 0,
+                    total_batches=total or 0,
+                    last_batch_at=last_batch_at.isoformat() if last_batch_at else None,
+                    queue_depth=queue_depth,
+                    checked_at=checked_at,
+                )
+                return api_response(data=data)
+            else:
+                # No rows - empty but valid
+                data = IntakeStateData(
+                    queue_depth=queue_depth,
+                    checked_at=checked_at,
+                )
+                return api_response(data=data)
+
+    except Exception as e:
+        # Never throw - return degraded envelope
+        logger.warning(f"Intake state check degraded: {e}")
+        data = IntakeStateData(checked_at=checked_at)
+        return degraded_response(error=str(e)[:200], data=data)
 
 
 @router.post(
@@ -300,98 +450,109 @@ async def upload_csv(
         )
 
 
+class BatchListData(BaseModel):
+    """Batch list data payload for ApiResponse envelope."""
+
+    batches: list[BatchSummary]
+    total: int
+    page: int
+    page_size: int
+
+
 @router.get(
     "/batches",
-    response_model=BatchListResponse,
+    response_model=ApiResponse[BatchListData],
     summary="List all intake batches",
-    description="Returns paginated list of all intake batches with summary stats.",
+    description="Returns paginated list of all intake batches with summary stats wrapped in standard API envelope. Never crashes - returns degraded response on error.",
 )
 async def list_batches(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Results per page"),
     status: Optional[str] = Query(None, description="Filter by status"),
     auth: AuthContext = Depends(get_current_user),
-) -> BatchListResponse:
-    """List all intake batches with pagination."""
+) -> ApiResponse[BatchListData]:
+    """
+    List all intake batches with pagination.
 
-    pool = await get_pool()
+    Degrade Guard: On any error, returns 200 OK with degraded envelope.
+    The UI must NEVER crash.
+    """
+    from ..core.trace_middleware import get_trace_id
 
-    async with pool.connection() as conn:
-        # Build query with optional status filter
-        # NOTE: psycopg uses %s placeholders, not $1/$2/$3 (asyncpg style)
-        where_clause = ""
-        count_params: list[Any] = []
+    try:
+        pool = await get_pool()
 
-        if status:
-            where_clause = "WHERE status = %s"
-            count_params.append(status)
+        async with pool.connection() as conn:
+            from psycopg.rows import dict_row
 
-        # Get total count
-        count_query = f"SELECT COUNT(*) FROM ops.v_intake_monitor {where_clause}"
-        async with conn.cursor() as cur:
-            await cur.execute(count_query, count_params if count_params else None)
-            row = await cur.fetchone()
-            total = row[0] if row else 0
+            # Build query with explicit parameter ordering
+            # LIMIT and OFFSET always appended with their params in strict order
+            params: list[Any] = []
+            where_clause = ""
 
-        # Get paginated results
-        offset = (page - 1) * page_size
+            if status:
+                where_clause = "WHERE status = %s"
+                params.append(status)
 
-        # Build data query with proper %s placeholders
-        if status:
-            data_params: list[Any] = [status, page_size, offset]
-            data_query = """
+            # Get total count
+            count_query = f"SELECT COUNT(*) FROM ops.v_intake_monitor {where_clause}"
+            async with conn.cursor() as cur:
+                await cur.execute(count_query, params if params else None)
+                row = await cur.fetchone()
+                total = row[0] if row else 0
+
+            # Get paginated results
+            offset = (page - 1) * page_size
+
+            # Build data query - explicit placeholder ordering
+            base_query = f"""
                 SELECT * FROM ops.v_intake_monitor
-                WHERE status = %s
+                {where_clause}
                 ORDER BY created_at DESC
-                LIMIT %s OFFSET %s
-            """
-        else:
-            data_params = [page_size, offset]
-            data_query = """
-                SELECT * FROM ops.v_intake_monitor
-                ORDER BY created_at DESC
-                LIMIT %s OFFSET %s
             """
 
-        # DEV-ONLY: Assert placeholder/param count match to prevent regression
-        settings = get_settings()
-        if settings.is_development:
-            assert data_query.count("%s") == len(
-                data_params
-            ), f"SQL placeholder mismatch: {data_query.count('%s')} placeholders vs {len(data_params)} params"
+            # Append LIMIT/OFFSET with params in strict order
+            data_query = base_query + " LIMIT %s OFFSET %s"
+            data_params = params + [page_size, offset]
 
-        from psycopg.rows import dict_row
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(data_query, data_params)
+                rows = await cur.fetchall()
 
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(data_query, data_params)
-            rows = await cur.fetchall()
+            batches = [
+                BatchSummary(
+                    id=str(row["id"]),
+                    filename=row["filename"],
+                    source=row["source"],
+                    status=row["status"],
+                    total_rows=row["total_rows"] or 0,
+                    valid_rows=row["valid_rows"] or 0,
+                    error_rows=row["error_rows"] or 0,
+                    success_rate=float(row["success_rate"] or 0),
+                    duration_seconds=(
+                        float(row["duration_seconds"]) if row["duration_seconds"] else None
+                    ),
+                    health_status=row["health_status"],
+                    created_at=row["created_at"].isoformat() if row["created_at"] else "",
+                    completed_at=(row["completed_at"].isoformat() if row["completed_at"] else None),
+                )
+                for row in rows
+            ]
 
-        batches = [
-            BatchSummary(
-                id=str(row["id"]),
-                filename=row["filename"],
-                source=row["source"],
-                status=row["status"],
-                total_rows=row["total_rows"] or 0,
-                valid_rows=row["valid_rows"] or 0,
-                error_rows=row["error_rows"] or 0,
-                success_rate=float(row["success_rate"] or 0),
-                duration_seconds=(
-                    float(row["duration_seconds"]) if row["duration_seconds"] else None
-                ),
-                health_status=row["health_status"],
-                created_at=row["created_at"].isoformat() if row["created_at"] else "",
-                completed_at=(row["completed_at"].isoformat() if row["completed_at"] else None),
+            data = BatchListData(
+                batches=batches,
+                total=total,
+                page=page,
+                page_size=page_size,
             )
-            for row in rows
-        ]
+            return api_response(data=data)
 
-        return BatchListResponse(
-            batches=batches,
-            total=total,
-            page=page,
-            page_size=page_size,
-        )
+    except Exception as e:
+        # DEGRADE GUARD: Never 500 - return degraded envelope with trace_id
+        trace_id = get_trace_id()
+        logger.error(f"[trace:{trace_id}] list_batches failed, returning degraded response: {e}")
+        data = BatchListData(batches=[], total=0, page=page, page_size=page_size)
+        return degraded_response(error=str(e)[:200], data=data)
 
 
 @router.get(
