@@ -1511,54 +1511,61 @@ def run_worker_loop() -> None:
     """
     Main worker loop - polls for pending jobs and processes them.
     """
+    from backend.workers.heartbeat import HeartbeatContext
+
     env = get_supabase_env()
     dsn = get_supabase_db_url(env)
 
-    logger.info(f"🚀 Starting Ingest Processor Worker (env={env})")
+    logger.info(f"Starting Ingest Processor Worker (env={env})")
     logger.info(f"   Poll interval: {POLL_INTERVAL_SECONDS}s")
     logger.info(f"   Job type: {JOB_TYPE}")
 
     conn = psycopg.connect(dsn)
 
-    try:
-        while True:
-            try:
-                job = claim_pending_job(conn)
+    # Start heartbeat thread
+    with HeartbeatContext("ingest_processor", lambda: dsn) as heartbeat:
+        logger.info(f"   Worker ID: {heartbeat.worker_id}")
 
-                if job:
-                    logger.info(f"Claimed job: {job['id']}")
-                    process_job(conn, job)
-                else:
-                    # No jobs available, sleep before polling again
+        try:
+            while True:
+                try:
+                    job = claim_pending_job(conn)
+
+                    if job:
+                        logger.info(f"Claimed job: {job['id']}")
+                        process_job(conn, job)
+                    else:
+                        # No jobs available, sleep before polling again
+                        import time
+
+                        time.sleep(POLL_INTERVAL_SECONDS)
+
+                except psycopg.OperationalError as e:
+                    logger.error(f"Database connection error: {e}")
+                    heartbeat.set_error(str(e))
+                    # Reconnect
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    import time
+
+                    time.sleep(5)
+                    conn = psycopg.connect(dsn)
+
+                except KeyboardInterrupt:
+                    logger.info("Worker interrupted by user")
+                    break
+
+                except Exception as e:
+                    logger.exception(f"Unexpected error in worker loop: {e}")
                     import time
 
                     time.sleep(POLL_INTERVAL_SECONDS)
 
-            except psycopg.OperationalError as e:
-                logger.error(f"Database connection error: {e}")
-                # Reconnect
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                import time
-
-                time.sleep(5)
-                conn = psycopg.connect(dsn)
-
-            except KeyboardInterrupt:
-                logger.info("Worker interrupted by user")
-                break
-
-            except Exception as e:
-                logger.exception(f"Unexpected error in worker loop: {e}")
-                import time
-
-                time.sleep(POLL_INTERVAL_SECONDS)
-
-    finally:
-        conn.close()
-        logger.info("Worker shutdown complete")
+        finally:
+            conn.close()
+            logger.info("Worker shutdown complete")
 
 
 # =============================================================================

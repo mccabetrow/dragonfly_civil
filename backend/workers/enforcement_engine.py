@@ -382,31 +382,38 @@ def run_forever(db_url: str) -> None:
     """
     Main polling loop. Runs until interrupted.
     """
+    from backend.workers.heartbeat import HeartbeatContext
+
     logger.info(f"Starting enforcement_engine worker (poll={POLL_INTERVAL_SECONDS}s)")
     logger.info(f"Handling job types: {JOB_TYPES}")
     logger.info(f"Lock timeout: {LOCK_TIMEOUT_MINUTES} minutes")
 
-    while True:
-        try:
-            with psycopg.connect(db_url, row_factory=dict_row) as conn:
-                if run_once(conn):
-                    # Job processed - check for more immediately
-                    continue
-                else:
-                    # No jobs - sleep before next poll
-                    time.sleep(POLL_INTERVAL_SECONDS)
+    # Start heartbeat thread
+    with HeartbeatContext("enforcement_engine", lambda: db_url) as heartbeat:
+        logger.info(f"Worker ID: {heartbeat.worker_id}")
 
-        except psycopg.OperationalError as e:
-            logger.error(f"Database connection error: {e}")
-            time.sleep(10.0)  # Back off on connection errors
+        while True:
+            try:
+                with psycopg.connect(db_url, row_factory=dict_row) as conn:
+                    if run_once(conn):
+                        # Job processed - check for more immediately
+                        continue
+                    else:
+                        # No jobs - sleep before next poll
+                        time.sleep(POLL_INTERVAL_SECONDS)
 
-        except KeyboardInterrupt:
-            logger.info("Shutting down enforcement_engine worker (keyboard interrupt)")
-            break
+            except psycopg.OperationalError as e:
+                logger.error(f"Database connection error: {e}")
+                heartbeat.set_error(str(e))
+                time.sleep(10.0)  # Back off on connection errors
 
-        except Exception as e:
-            logger.exception(f"Unexpected error in worker loop: {e}")
-            time.sleep(5.0)
+            except KeyboardInterrupt:
+                logger.info("Shutting down enforcement_engine worker (keyboard interrupt)")
+                break
+
+            except Exception as e:
+                logger.exception(f"Unexpected error in worker loop: {e}")
+                time.sleep(5.0)
 
 
 def main() -> None:

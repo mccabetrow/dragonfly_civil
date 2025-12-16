@@ -12,7 +12,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 from supabase import Client, ClientOptions, create_client
 
-from .settings import Settings, get_settings
+from .core_config import Settings, get_settings
 
 SupabaseClient = Any
 SupabaseEnv = Literal["dev", "prod"]

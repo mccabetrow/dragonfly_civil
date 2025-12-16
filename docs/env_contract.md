@@ -1,0 +1,219 @@
+# Environment Variable Contract
+
+This document defines the canonical environment variables used by Dragonfly Civil services.
+
+## Single Source of Truth
+
+All configuration is loaded through `src/config.py`. Both `backend/config.py` and `src/settings.py` re-export from this canonical module.
+
+## Canonical Environment Variables
+
+All variables should use UPPERCASE names. Lowercase and `_PROD/_DEV` suffixed variants are deprecated but still accepted for backward compatibility.
+
+### Required (Core)
+
+| Variable                    | Description                   | Example                                                      |
+| --------------------------- | ----------------------------- | ------------------------------------------------------------ |
+| `SUPABASE_URL`              | Supabase project REST URL     | `https://xxx.supabase.co`                                    |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role JWT (100+ chars) | `eyJhbG...`                                                  |
+| `SUPABASE_DB_URL`           | PostgreSQL connection string  | `postgresql://postgres:xxx@db.xxx.supabase.co:5432/postgres` |
+
+### Environment Control
+
+| Variable        | Description               | Values                              | Default |
+| --------------- | ------------------------- | ----------------------------------- | ------- |
+| `ENVIRONMENT`   | Deployment environment    | `dev`, `staging`, `prod`            | `dev`   |
+| `SUPABASE_MODE` | Credential selection mode | `dev`, `prod`                       | `dev`   |
+| `LOG_LEVEL`     | Logging verbosity         | `DEBUG`, `INFO`, `WARNING`, `ERROR` | `INFO`  |
+
+### API Authentication
+
+| Variable            | Description                       | Required For                 |
+| ------------------- | --------------------------------- | ---------------------------- |
+| `DRAGONFLY_API_KEY` | API key for X-API-Key header auth | API endpoints requiring auth |
+
+### Optional Integrations
+
+| Variable                 | Description                   |
+| ------------------------ | ----------------------------- |
+| `OPENAI_API_KEY`         | OpenAI API key for embeddings |
+| `DISCORD_WEBHOOK_URL`    | Discord alerts                |
+| `SENDGRID_API_KEY`       | Email notifications           |
+| `SENDGRID_FROM_EMAIL`    | Default sender email          |
+| `TWILIO_ACCOUNT_SID`     | SMS notifications             |
+| `TWILIO_AUTH_TOKEN`      | Twilio auth                   |
+| `TWILIO_FROM_NUMBER`     | E.164 sender number           |
+| `CEO_EMAIL`              | Executive briefing recipient  |
+| `OPS_EMAIL`              | Ops team email                |
+| `OPS_PHONE`              | Ops team phone (E.164)        |
+| `PROOF_API_KEY`          | Proof.com API key             |
+| `PROOF_API_URL`          | Proof.com API URL             |
+| `DRAGONFLY_CORS_ORIGINS` | Comma-separated CORS origins  |
+
+---
+
+## Service-Specific Requirements
+
+### API Service (backend/main.py)
+
+**Start command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+
+| Variable                    | Required | Notes                            |
+| --------------------------- | -------- | -------------------------------- |
+| `SUPABASE_URL`              | ✅       |                                  |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅       |                                  |
+| `SUPABASE_DB_URL`           | ✅       |                                  |
+| `ENVIRONMENT`               | ✅       | Set to `prod` for production     |
+| `PORT`                      | ✅       | Injected by Railway              |
+| `DRAGONFLY_API_KEY`         | ⚠️       | Required for protected endpoints |
+| `DRAGONFLY_CORS_ORIGINS`    | ⚠️       | Required for frontend access     |
+
+### Ingest Worker (backend/workers/ingest_processor.py)
+
+**Start command:** `python -m backend.workers.ingest_processor`
+
+| Variable                    | Required | Notes          |
+| --------------------------- | -------- | -------------- |
+| `SUPABASE_URL`              | ✅       |                |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅       |                |
+| `SUPABASE_DB_URL`           | ✅       |                |
+| `SUPABASE_MODE`             | ✅       | Must match API |
+| `LOG_LEVEL`                 | ⚪       | Optional       |
+
+### Enforcement Worker (backend/workers/enforcement_engine.py)
+
+**Start command:** `python -m backend.workers.enforcement_engine`
+
+| Variable                    | Required | Notes                     |
+| --------------------------- | -------- | ------------------------- |
+| `SUPABASE_URL`              | ✅       |                           |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅       |                           |
+| `SUPABASE_DB_URL`           | ✅       |                           |
+| `SUPABASE_MODE`             | ✅       | Must match API            |
+| `OPENAI_API_KEY`            | ⚠️       | For AI-powered strategies |
+| `LOG_LEVEL`                 | ⚪       | Optional                  |
+
+---
+
+## Environment Examples
+
+### Development (.env)
+
+```bash
+# Core
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJhbG...your-dev-key
+SUPABASE_DB_URL=postgresql://postgres:password@aws-0-us-east-1.pooler.supabase.com:5432/postgres
+
+# Environment
+ENVIRONMENT=dev
+SUPABASE_MODE=dev
+LOG_LEVEL=DEBUG
+
+# API Auth (optional for local dev)
+DRAGONFLY_API_KEY=dev-test-key-123
+
+# CORS (optional - defaults to localhost)
+DRAGONFLY_CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+```
+
+### Production (Railway)
+
+```bash
+# Core
+SUPABASE_URL=https://production-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJhbG...your-prod-key
+SUPABASE_DB_URL=postgresql://postgres:password@aws-0-us-east-1.pooler.supabase.com:5432/postgres
+
+# Environment
+ENVIRONMENT=prod
+SUPABASE_MODE=prod
+LOG_LEVEL=INFO
+
+# API Auth
+DRAGONFLY_API_KEY=secure-random-key-minimum-32-chars
+
+# CORS
+DRAGONFLY_CORS_ORIGINS=https://dragonfly-console1.vercel.app,https://dragonfly-console1-git-main-user.vercel.app
+
+# PORT injected by Railway automatically
+```
+
+---
+
+## Deprecated Variables
+
+The following variables are deprecated but still accepted for backward compatibility. A startup warning is emitted when they are used.
+
+### Lowercase Variants (use UPPERCASE instead)
+
+| Deprecated                  | Use Instead                 |
+| --------------------------- | --------------------------- |
+| `supabase_url`              | `SUPABASE_URL`              |
+| `supabase_service_role_key` | `SUPABASE_SERVICE_ROLE_KEY` |
+| `supabase_db_url`           | `SUPABASE_DB_URL`           |
+| `environment`               | `ENVIRONMENT`               |
+| `supabase_mode`             | `SUPABASE_MODE`             |
+| `log_level`                 | `LOG_LEVEL`                 |
+
+### `_PROD` Suffix Variants (use `SUPABASE_MODE=prod` instead)
+
+| Deprecated                       | Use Instead                                           |
+| -------------------------------- | ----------------------------------------------------- |
+| `SUPABASE_URL_PROD`              | `SUPABASE_URL` with `SUPABASE_MODE=prod`              |
+| `SUPABASE_SERVICE_ROLE_KEY_PROD` | `SUPABASE_SERVICE_ROLE_KEY` with `SUPABASE_MODE=prod` |
+| `SUPABASE_DB_URL_PROD`           | `SUPABASE_DB_URL` with `SUPABASE_MODE=prod`           |
+| `SUPABASE_DB_URL_DIRECT_PROD`    | `SUPABASE_DB_URL` with `SUPABASE_MODE=prod`           |
+
+---
+
+## Diagnostic Commands
+
+Check which environment variables are in use:
+
+```powershell
+# PowerShell - Print effective config (redacts secrets)
+.\scripts\print_effective_config.ps1
+
+# Python - Detailed config output
+python -c "from src.core_config import print_effective_config; import json; print(json.dumps(print_effective_config(), indent=2))"
+```
+
+Check for deprecated keys:
+
+```powershell
+python -c "from src.core_config import get_settings, get_deprecated_keys_used; get_settings(); print('Deprecated keys:', get_deprecated_keys_used())"
+```
+
+---
+
+## Migration Guide
+
+If you're using deprecated environment variables, update your configuration:
+
+1. **Replace lowercase with UPPERCASE:**
+
+   ```bash
+   # Before
+   supabase_url=https://xxx.supabase.co
+
+   # After
+   SUPABASE_URL=https://xxx.supabase.co
+   ```
+
+2. **Replace `_PROD` suffix with `SUPABASE_MODE`:**
+
+   ```bash
+   # Before
+   SUPABASE_URL_PROD=https://prod.supabase.co
+   SUPABASE_DB_URL_PROD=postgresql://...
+
+   # After
+   SUPABASE_MODE=prod
+   SUPABASE_URL=https://prod.supabase.co
+   SUPABASE_DB_URL=postgresql://...
+   ```
+
+3. **Use the same variables for all services:**
+   - API and workers should all use the same canonical variable names
+   - Set `SUPABASE_MODE=prod` in production Railway services
