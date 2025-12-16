@@ -181,28 +181,25 @@ async def list_cases(
     async with pool.connection() as conn:
         from psycopg.rows import dict_row
 
-        # Build WHERE clause
+        # Build WHERE clause - use %s placeholders for psycopg3
         conditions = ["(status IS NULL OR status NOT IN ('closed', 'collected', 'satisfied'))"]
         params: list[Any] = []
-        param_idx = 1
 
         if stage:
-            conditions.append(f"enforcement_stage = ${param_idx}")
+            conditions.append("enforcement_stage = %s")
             params.append(stage)
-            param_idx += 1
 
         where_clause = " AND ".join(conditions)
 
         # Get total count
         count_query = f"SELECT COUNT(*) FROM public.judgments WHERE {where_clause}"
         async with conn.cursor() as cur:
-            await cur.execute(count_query, params)
+            await cur.execute(count_query, params if params else None)
             row = await cur.fetchone()
             total = row[0] if row else 0
 
         # Get paginated data
         offset = (page - 1) * page_size
-        params.extend([page_size, offset])
 
         data_query = f"""
         SELECT
@@ -227,11 +224,14 @@ async def list_cases(
         FROM public.judgments
         WHERE {where_clause}
         ORDER BY collectability_score DESC NULLS LAST, judgment_amount DESC
-        LIMIT ${param_idx} OFFSET ${param_idx + 1}
+        LIMIT %s OFFSET %s
         """
 
+        # Build params list with pagination at the end
+        data_params = params + [page_size, offset]
+
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(data_query, params)
+            await cur.execute(data_query, data_params)
             rows = await cur.fetchall()
 
         cases = [
@@ -293,11 +293,11 @@ async def get_case(
             p.tier AS plaintiff_tier
         FROM public.judgments j
         LEFT JOIN public.plaintiffs p ON j.plaintiff_id = p.id
-        WHERE j.id = $1
+        WHERE j.id = %s
         """
 
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(query, [case_id])
+            await cur.execute(query, (case_id,))
             row = await cur.fetchone()
 
         if not row:

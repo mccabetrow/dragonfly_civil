@@ -617,7 +617,7 @@ async def get_batch(
 
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                "SELECT * FROM ops.v_intake_monitor WHERE id = $1",
+                "SELECT * FROM ops.v_intake_monitor WHERE id = %s",
                 (str(batch_id),),
             )
             row = await cur.fetchone()
@@ -674,7 +674,7 @@ async def get_batch_errors(
         # Verify batch exists
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT 1 FROM ops.ingest_batches WHERE id = $1",
+                "SELECT 1 FROM ops.ingest_batches WHERE id = %s",
                 (str(batch_id),),
             )
             if not await cur.fetchone():
@@ -685,7 +685,7 @@ async def get_batch_errors(
             await cur.execute(
                 """
                 SELECT COUNT(*) FROM ops.intake_logs
-                WHERE batch_id = $1 AND status IN ('error', 'skipped')
+                WHERE batch_id = %s AND status IN ('error', 'skipped')
                 """,
                 (str(batch_id),),
             )
@@ -707,9 +707,9 @@ async def get_batch_errors(
                     judgment_id,
                     created_at
                 FROM ops.intake_logs
-                WHERE batch_id = $1 AND status IN ('error', 'skipped')
+                WHERE batch_id = %s AND status IN ('error', 'skipped')
                 ORDER BY row_index
-                LIMIT $2 OFFSET $3
+                LIMIT %s OFFSET %s
                 """,
                 (str(batch_id), page_size, offset),
             )

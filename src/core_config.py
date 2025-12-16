@@ -559,3 +559,111 @@ def ensure_parent_dir(path_str: str) -> None:
     """Ensure parent directory exists for a file path."""
     path = Path(path_str).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+# =========================================================================
+# STARTUP VALIDATION
+# =========================================================================
+
+# Required environment variables for API startup
+REQUIRED_ENV_VARS = [
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+]
+
+# Required for database operations (can be missing if only using REST)
+REQUIRED_FOR_DB = [
+    "SUPABASE_DB_URL",
+]
+
+# Recommended for production
+RECOMMENDED_PROD_VARS = [
+    "DRAGONFLY_API_KEY",
+    "DRAGONFLY_CORS_ORIGINS",
+]
+
+
+def validate_required_env(fail_fast: bool = True) -> dict[str, Any]:
+    """
+    Validate required environment variables and log a startup report.
+
+    Args:
+        fail_fast: If True, raise an exception if required vars are missing
+
+    Returns:
+        Dict with validation results:
+        {
+            "valid": bool,
+            "present": ["VAR1", "VAR2"],
+            "missing": ["VAR3"],
+            "warnings": ["message1", "message2"],
+        }
+
+    Raises:
+        RuntimeError: If fail_fast=True and required vars are missing
+    """
+    result: dict[str, Any] = {
+        "valid": True,
+        "present": [],
+        "missing": [],
+        "warnings": [],
+    }
+
+    # Check required vars
+    for var in REQUIRED_ENV_VARS:
+        value = os.environ.get(var)
+        if value and value.strip():
+            result["present"].append(var)
+        else:
+            result["missing"].append(var)
+
+    # Check DB vars (warn but don't fail)
+    for var in REQUIRED_FOR_DB:
+        value = os.environ.get(var)
+        if not value or not value.strip():
+            result["warnings"].append(f"{var} not set - database operations will fail")
+
+    # Check production recommendations
+    env = os.environ.get("ENVIRONMENT", "dev").lower()
+    if env == "prod":
+        for var in RECOMMENDED_PROD_VARS:
+            value = os.environ.get(var)
+            if not value or not value.strip():
+                result["warnings"].append(f"{var} not set (recommended for production)")
+
+    # Set overall validity
+    if result["missing"]:
+        result["valid"] = False
+
+    # Log the report
+    logger.info("=" * 60)
+    logger.info("DRAGONFLY STARTUP CONFIGURATION REPORT")
+    logger.info("=" * 60)
+    logger.info(f"Environment: {env.upper()}")
+    logger.info(f"Supabase Mode: {os.environ.get('SUPABASE_MODE', 'dev')}")
+
+    if result["present"]:
+        logger.info(f"✓ Present: {', '.join(result['present'])}")
+
+    if result["missing"]:
+        logger.error(f"✗ MISSING: {', '.join(result['missing'])}")
+
+    for warning in result["warnings"]:
+        logger.warning(f"⚠ {warning}")
+
+    # Check for deprecated keys
+    deprecated = get_deprecated_keys_used()
+    if deprecated:
+        logger.warning(f"⚠ Deprecated env vars in use: {', '.join(deprecated)}")
+
+    logger.info("=" * 60)
+
+    # Fail fast if configured
+    if fail_fast and not result["valid"]:
+        missing_str = ", ".join(result["missing"])
+        raise RuntimeError(
+            f"Missing required environment variables: {missing_str}. "
+            f"Set these in your environment or .env file."
+        )
+
+    return result

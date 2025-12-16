@@ -12,6 +12,9 @@ from __future__ import annotations
 
 # Re-export everything from the canonical config module
 from .core_config import (
+    RECOMMENDED_PROD_VARS,
+    REQUIRED_ENV_VARS,
+    REQUIRED_FOR_DB,
     Settings,
     configure_logging,
     ensure_parent_dir,
@@ -20,6 +23,7 @@ from .core_config import (
     is_demo_env,
     print_effective_config,
     reset_settings,
+    validate_required_env,
 )
 
 __all__ = [
@@ -31,4 +35,8 @@ __all__ = [
     "get_deprecated_keys_used",
     "print_effective_config",
     "reset_settings",
+    "validate_required_env",
+    "REQUIRED_ENV_VARS",
+    "REQUIRED_FOR_DB",
+    "RECOMMENDED_PROD_VARS",
 ]

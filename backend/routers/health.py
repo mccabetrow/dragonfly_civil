@@ -9,11 +9,13 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from .. import __version__
 from ..api import ApiResponse, api_response, degraded_response
 from ..config import get_settings
-from ..db import fetch_val, get_pool
+from ..db import fetch_val, get_pool, get_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -349,3 +351,120 @@ async def trigger_daily_health() -> dict[str, Any]:
         )
 
     return result
+
+
+# =========================================================================
+# VERSION & READINESS ENDPOINTS
+# =========================================================================
+
+
+class VersionResponse(BaseModel):
+    """Version information response."""
+
+    version: str
+    environment: str
+    timestamp: str
+
+
+class ReadinessResponse(BaseModel):
+    """Readiness check response."""
+
+    ready: bool
+    database: str
+    supabase: str
+    timestamp: str
+    checks: dict[str, bool]
+
+
+@router.get(
+    "/version",
+    response_model=VersionResponse,
+    summary="Get API version",
+    description="Returns the current API version and environment. No authentication required. Never queries the database.",
+)
+async def get_version() -> VersionResponse:
+    """
+    Get the current API version.
+
+    This is a cheap endpoint that never queries the database.
+    Suitable for frequent polling by monitoring tools.
+    """
+    settings = get_settings()
+    return VersionResponse(
+        version=__version__,
+        environment=settings.environment,
+        timestamp=datetime.utcnow().isoformat() + "Z",
+    )
+
+
+@router.get(
+    "/ready",
+    response_model=ReadinessResponse,
+    responses={
+        200: {"description": "Service is ready"},
+        503: {"description": "Service is not ready"},
+    },
+    summary="Readiness probe",
+    description="Validates DB and Supabase connectivity. Returns 200 if ready, 503 if not.",
+)
+async def readiness_check() -> ReadinessResponse | JSONResponse:
+    """
+    Kubernetes-style readiness probe.
+
+    Validates:
+    - Database connectivity (psycopg pool)
+    - Supabase REST API connectivity
+
+    Returns 200 OK if all checks pass, 503 Service Unavailable otherwise.
+    """
+    checks: dict[str, bool] = {}
+    db_status = "unknown"
+    supabase_status = "unknown"
+
+    # Check database connectivity
+    try:
+        pool = await get_pool()
+        if pool:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT 1")
+                    await cur.fetchone()
+            db_status = "ok"
+            checks["database"] = True
+        else:
+            db_status = "no_pool"
+            checks["database"] = False
+    except Exception as e:
+        logger.warning(f"Readiness check: DB failed - {e}")
+        db_status = f"error: {type(e).__name__}"
+        checks["database"] = False
+
+    # Check Supabase REST API connectivity
+    try:
+        client = get_supabase_client()
+        # Simple query to verify connectivity - just check we can reach the API
+        # Use a lightweight table/view check
+        client.table("plaintiffs").select("id").limit(1).execute()
+        supabase_status = "ok"
+        checks["supabase"] = True
+    except Exception as e:
+        logger.warning(f"Readiness check: Supabase failed - {e}")
+        supabase_status = f"error: {type(e).__name__}"
+        checks["supabase"] = False
+
+    is_ready = all(checks.values())
+    response = ReadinessResponse(
+        ready=is_ready,
+        database=db_status,
+        supabase=supabase_status,
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        checks=checks,
+    )
+
+    if is_ready:
+        return response
+    else:
+        return JSONResponse(
+            status_code=503,
+            content=response.model_dump(),
+        )

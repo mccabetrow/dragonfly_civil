@@ -135,11 +135,34 @@ async def get_connection() -> AsyncGenerator["AsyncConnectionWrapper", None]:
         yield wrapper
 
 
+def _convert_asyncpg_placeholders(query: str) -> str:
+    """
+    Convert asyncpg-style $1, $2, ... placeholders to psycopg3-style %s.
+
+    This provides backward compatibility for code migrated from asyncpg.
+    Only converts if $1-style placeholders are detected and %s are not present.
+    """
+    import re
+
+    # If query already uses %s, don't convert
+    if "%s" in query:
+        return query
+
+    # Check if query uses $N placeholders
+    if not re.search(r"\$\d+", query):
+        return query
+
+    # Replace $1, $2, etc. with %s (psycopg3 uses positional %s)
+    converted = re.sub(r"\$\d+", "%s", query)
+    return converted
+
+
 class AsyncConnectionWrapper:
     """
     Wrapper around psycopg.AsyncConnection that provides asyncpg-like interface.
 
     Provides fetch(), fetchrow(), and execute() methods that match asyncpg's API.
+    Automatically converts $1, $2 style placeholders to %s for psycopg3.
     """
 
     def __init__(self, conn: psycopg.AsyncConnection):
@@ -147,6 +170,7 @@ class AsyncConnectionWrapper:
 
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
         """Fetch all rows as a list of dicts."""
+        query = _convert_asyncpg_placeholders(query)
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(query, args or None)
             rows = await cur.fetchall()
@@ -154,6 +178,7 @@ class AsyncConnectionWrapper:
 
     async def fetchrow(self, query: str, *args: Any) -> Optional[dict[str, Any]]:
         """Fetch a single row as a dict."""
+        query = _convert_asyncpg_placeholders(query)
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(query, args or None)
             row = await cur.fetchone()
@@ -161,6 +186,7 @@ class AsyncConnectionWrapper:
 
     async def fetchval(self, query: str, *args: Any) -> Any:
         """Fetch a single value."""
+        query = _convert_asyncpg_placeholders(query)
         async with self._conn.cursor() as cur:
             await cur.execute(query, args or None)
             row = await cur.fetchone()
@@ -168,6 +194,7 @@ class AsyncConnectionWrapper:
 
     async def execute(self, query: str, *args: Any) -> str:
         """Execute a query without returning results."""
+        query = _convert_asyncpg_placeholders(query)
         async with self._conn.cursor() as cur:
             await cur.execute(query, args or None)
             return cur.statusmessage or ""

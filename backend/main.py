@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
 from . import __version__  # noqa: E402
-from .config import configure_logging, get_settings  # noqa: E402
+from .config import configure_logging, get_settings, validate_required_env  # noqa: E402
 from .core.middleware import (  # noqa: E402
     PerformanceLoggingMiddleware,
     RateLimitMiddleware,
@@ -66,6 +66,15 @@ from .scheduler import init_scheduler  # noqa: E402
 # Configure logging before anything else
 configure_logging()
 logger = logging.getLogger(__name__)
+
+# Validate required environment variables at import time
+# Fail fast if critical vars are missing
+try:
+    validate_required_env(fail_fast=True)
+except RuntimeError as e:
+    # Log but don't crash during import - let lifespan handle it
+    logging.error(f"Configuration validation failed: {e}")
+    raise
 
 
 @asynccontextmanager
@@ -329,6 +338,36 @@ def create_app() -> FastAPI:
             "version": __version__,
             "health": "/api/health",
         }
+
+    @app.get("/api/version", tags=["health"])
+    async def api_version() -> dict[str, str]:
+        """
+        Get API version - cheap, no DB queries.
+
+        Suitable for frequent polling by monitoring tools.
+        """
+        from datetime import datetime
+
+        return {
+            "version": __version__,
+            "environment": settings.environment,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+
+    @app.get("/api/ready", tags=["health"])
+    async def api_ready() -> JSONResponse:
+        """
+        Readiness probe - validates DB and Supabase connectivity.
+
+        Returns 200 if ready, 503 if not.
+        """
+        from .routers.health import readiness_check
+
+        result = await readiness_check()
+        # readiness_check returns either ReadinessResponse or JSONResponse
+        if isinstance(result, JSONResponse):
+            return result
+        return JSONResponse(content=result.model_dump())
 
     logger.info(f"FastAPI app created: {app.title}")
 
