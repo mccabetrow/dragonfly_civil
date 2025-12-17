@@ -32,6 +32,7 @@ from typing import Callable, Optional
 from uuid import uuid4
 
 import psycopg
+import psycopg.errors
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +90,14 @@ class WorkerHeartbeat:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._status = "running"
+        self._disabled = False  # Circuit breaker: True if heartbeat table missing
 
     def start(self) -> None:
         """Start the background heartbeat thread."""
+        if self._disabled:
+            logger.debug("Heartbeat disabled (table missing), not starting thread")
+            return
+
         if self._thread is not None and self._thread.is_alive():
             logger.warning("Heartbeat thread already running")
             return
@@ -142,25 +148,46 @@ class WorkerHeartbeat:
         # Send initial heartbeat immediately
         try:
             self._send_heartbeat()
+        except psycopg.errors.UndefinedTable:
+            self._disable_heartbeats("ops.worker_heartbeats")
+            return
         except Exception as e:
             logger.error(f"Failed to send initial heartbeat: {e}")
 
         while not self._stop_event.is_set():
+            # Circuit breaker: stop loop if disabled
+            if self._disabled:
+                break
+
             # Wait for interval or stop signal
             if self._stop_event.wait(timeout=self._interval):
                 break  # Stop event was set
 
             try:
                 self._send_heartbeat()
+            except psycopg.errors.UndefinedTable:
+                self._disable_heartbeats("ops.worker_heartbeats")
+                break
             except psycopg.OperationalError as e:
+                # Network blips - retry on next loop, do NOT disable
                 logger.warning(f"Heartbeat DB connection error: {e}")
-                # Brief delay before retry on next loop
                 time.sleep(HEARTBEAT_RETRY_DELAY)
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
 
+    def _disable_heartbeats(self, table_name: str) -> None:
+        """Circuit breaker: permanently disable heartbeats for this process."""
+        if not self._disabled:
+            logger.warning(
+                f"Heartbeat table missing ({table_name}), disabling heartbeats for this process"
+            )
+            self._disabled = True
+
     def _send_heartbeat(self, status: Optional[str] = None) -> None:
         """Send a single heartbeat to the database."""
+        if self._disabled:
+            return
+
         status = status or self._status
         db_url = self._get_db_url()
 
