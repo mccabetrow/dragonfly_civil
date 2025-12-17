@@ -22,10 +22,23 @@ REQUIRED for API key authentication (X-API-Key header):
   DRAGONFLY_API_KEY        – Read from os.environ ONLY (not file secrets)
                              If missing in prod, logs warning but does not crash
 
+SAFE MODE:
+  For diagnostic/preflight scenarios where full Settings validation would fail,
+  use load_settings_safe() from backend.core.preflight to get a dict of env
+  values without triggering Pydantic validation errors.
+
 See src/core_config.py for complete environment variable documentation.
 """
 
 import logging
+
+# Re-export preflight utilities for worker startup validation
+from backend.preflight import (
+    load_settings_safe,
+    print_diagnostic_env,
+    run_preflight_checks,
+    validate_worker_env,
+)
 
 # Re-export everything from the canonical config module
 from src.core_config import (
@@ -38,18 +51,21 @@ from src.core_config import (
     get_deprecated_keys_used,
     get_settings,
     is_demo_env,
+    log_startup_diagnostics,
     print_effective_config,
     reset_settings,
     validate_required_env,
 )
 
 __all__ = [
+    # Core config
     "Settings",
     "get_settings",
     "configure_logging",
     "ensure_parent_dir",
     "is_demo_env",
     "get_deprecated_keys_used",
+    "log_startup_diagnostics",
     "print_effective_config",
     "reset_settings",
     "validate_required_env",
@@ -57,6 +73,11 @@ __all__ = [
     "REQUIRED_FOR_DB",
     "RECOMMENDED_PROD_VARS",
     "settings",
+    # Preflight utilities
+    "validate_worker_env",
+    "run_preflight_checks",
+    "load_settings_safe",
+    "print_diagnostic_env",
 ]
 
 # Export settings instance for convenience

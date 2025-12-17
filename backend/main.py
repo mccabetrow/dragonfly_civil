@@ -28,7 +28,12 @@ from fastapi.responses import JSONResponse  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
 from . import __version__  # noqa: E402
-from .config import configure_logging, get_settings, validate_required_env  # noqa: E402
+from .config import (  # noqa: E402
+    configure_logging,
+    get_settings,
+    log_startup_diagnostics,
+    validate_required_env,
+)
 from .core.middleware import (  # noqa: E402
     PerformanceLoggingMiddleware,
     RateLimitMiddleware,
@@ -43,6 +48,7 @@ from .db import close_db_pool, init_db_pool  # noqa: E402
 from .routers.analytics import router as analytics_router  # noqa: E402
 from .routers.budget import router as budget_router  # noqa: E402
 from .routers.cases import router as cases_router  # noqa: E402
+from .routers.ceo_metrics import router as ceo_metrics_router  # noqa: E402
 from .routers.enforcement import router as enforcement_router  # noqa: E402
 from .routers.events import router as events_router  # noqa: E402
 from .routers.finance import router as finance_router  # noqa: E402
@@ -56,6 +62,7 @@ from .routers.intelligence import router as intelligence_router  # noqa: E402
 from .routers.offers import router as offers_router  # noqa: E402
 from .routers.ops_guardian import router as ops_guardian_router  # noqa: E402
 from .routers.packets import router as packets_router  # noqa: E402
+from .routers.platform import router as platform_router  # noqa: E402
 from .routers.portfolio import router as portfolio_router  # noqa: E402
 from .routers.search import router as search_router  # noqa: E402
 from .routers.system import router as system_router  # noqa: E402
@@ -87,6 +94,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     - Shutdown: Close database pool
     """
     settings = get_settings()
+
+    # Log startup diagnostics (same format as workers)
+    log_startup_diagnostics("DragonflyAPI")
 
     # Startup
     logger.info(f"🚀 Starting Dragonfly Engine v{__version__} (Asset Class)")
@@ -250,6 +260,9 @@ def create_app() -> FastAPI:
     # ROUTERS - Explicit wiring with versioned prefixes
     # ==========================================================================
 
+    # Platform endpoints - /api/version and /api/ready (no auth required)
+    app.include_router(platform_router, prefix="/api", tags=["platform"])
+
     # Health check - no auth required, root-level for load balancers
     app.include_router(health_router, prefix="/api", tags=["health"])
 
@@ -290,6 +303,9 @@ def create_app() -> FastAPI:
         analytics_router, prefix="/api", tags=["analytics"]
     )  # internal: /v1/analytics
     app.include_router(budget_router, prefix="/api", tags=["budget"])  # internal: /v1/budget
+    app.include_router(
+        ceo_metrics_router, prefix="/api", tags=["ceo"]
+    )  # internal: /v1/ceo (12 CEO Metrics)
     app.include_router(
         intelligence_router, prefix="/api", tags=["intelligence"]
     )  # internal: /v1/intelligence
