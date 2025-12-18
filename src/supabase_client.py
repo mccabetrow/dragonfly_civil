@@ -174,11 +174,28 @@ def _resolve_project_ref(settings: Settings, suffix: str) -> str | None:
 
 
 def get_supabase_db_url(env: _EnvInput = None) -> str:
+    """
+    Resolve the Supabase database URL.
+
+    Priority order:
+    1. SUPABASE_DB_URL (canonical) - if present, use it regardless of mode
+    2. SUPABASE_DB_URL_DIRECT_PROD (prod only, for direct non-pooler connections)
+    3. SUPABASE_DB_URL_PROD / SUPABASE_DB_URL_DEV (legacy fallback by mode)
+    4. Construct from SUPABASE_DB_PASSWORD + SUPABASE_PROJECT_REF
+    """
     supabase_env = _coerce_supabase_env(env)
     settings = get_settings()
 
-    suffix = "_PROD" if supabase_env == "prod" else ""
+    # Priority 1: Canonical SUPABASE_DB_URL - use if present regardless of mode
+    canonical = _strip(os.getenv("SUPABASE_DB_URL"))
+    if not canonical:
+        canonical = _setting_value(settings, "SUPABASE_DB_URL")
+    if canonical:
+        return canonical
 
+    suffix = "_PROD" if supabase_env == "prod" else "_DEV"
+
+    # Priority 2: Direct connection URL (prod only, for migrations/direct queries)
     if supabase_env == "prod":
         direct_env = _strip(os.getenv("SUPABASE_DB_URL_DIRECT_PROD"))
         if not direct_env:
@@ -186,26 +203,24 @@ def get_supabase_db_url(env: _EnvInput = None) -> str:
         if direct_env:
             return direct_env
 
+    # Priority 3: Environment-suffixed URL (legacy)
     explicit_name = f"SUPABASE_DB_URL{suffix}"
     explicit = _strip(os.getenv(explicit_name))
-    if not explicit and supabase_env == "prod":
-        explicit = _setting_value(settings, "SUPABASE_DB_URL_PROD")
+    if not explicit:
+        explicit = _setting_value(settings, explicit_name)
     if explicit:
         return explicit
 
+    # Priority 4: Construct from components
     password_name = f"SUPABASE_DB_PASSWORD{suffix}"
     password = _strip(os.getenv(password_name))
     project_ref = _resolve_project_ref(settings, suffix)
 
     if not password or not project_ref:
-        suffix_hint = suffix or ""
         raise RuntimeError(
-            "Missing Supabase database configuration for {env}. Set SUPABASE_DB_URL{suffix} or "
-            "SUPABASE_DB_PASSWORD{suffix} and SUPABASE_PROJECT_REF{suffix}/SUPABASE_URL{url_suffix}.".format(
-                env=supabase_env,
-                suffix=suffix_hint,
-                url_suffix="_PROD" if supabase_env == "prod" else "",
-            )
+            f"Missing Supabase database configuration for {supabase_env}. "
+            f"Set SUPABASE_DB_URL (preferred) or SUPABASE_DB_URL{suffix} or "
+            f"SUPABASE_DB_PASSWORD{suffix} + SUPABASE_PROJECT_REF{suffix}."
         )
 
     region_host = _strip(os.getenv("SUPABASE_DB_HOST"))
