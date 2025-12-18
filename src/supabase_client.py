@@ -177,64 +177,89 @@ def get_supabase_db_url(env: _EnvInput = None) -> str:
     """
     Resolve the Supabase database URL.
 
-    Priority order:
-    1. SUPABASE_DB_URL (canonical) - if present, use it regardless of mode
-    2. SUPABASE_DB_URL_DIRECT_PROD (prod only, for direct non-pooler connections)
-    3. SUPABASE_DB_URL_PROD / SUPABASE_DB_URL_DEV (legacy fallback by mode)
-    4. Construct from SUPABASE_DB_PASSWORD + SUPABASE_PROJECT_REF
+    Priority order (CANONICAL FIRST):
+    1. SUPABASE_DB_URL - THE CANONICAL SOURCE. Use immediately if present.
+    2. SUPABASE_DB_URL_PROD / SUPABASE_DB_URL_DEV (legacy fallback by mode)
+    3. SUPABASE_DB_URL_DIRECT_PROD (prod only, for direct non-pooler connections)
+    4. Construct from SUPABASE_DB_PASSWORD + SUPABASE_PROJECT_REF (legacy)
+
+    Security: Error messages use [REDACTED] for any variable values.
     """
     supabase_env = _coerce_supabase_env(env)
     settings = get_settings()
 
-    # Priority 1: Canonical SUPABASE_DB_URL - use if present regardless of mode
+    # ==========================================================================
+    # PRIORITY 1: CANONICAL SUPABASE_DB_URL - USE IMMEDIATELY IF PRESENT
+    # This is the Railway-standard variable. No mode checking needed.
+    # ==========================================================================
     canonical = _strip(os.getenv("SUPABASE_DB_URL"))
     if not canonical:
         canonical = _setting_value(settings, "SUPABASE_DB_URL")
     if canonical:
+        logger.debug("Using canonical SUPABASE_DB_URL")
         return canonical
 
+    # ==========================================================================
+    # LEGACY FALLBACKS (for backwards compatibility)
+    # ==========================================================================
     suffix = "_PROD" if supabase_env == "prod" else "_DEV"
 
-    # Priority 2: Direct connection URL (prod only, for migrations/direct queries)
-    if supabase_env == "prod":
-        direct_env = _strip(os.getenv("SUPABASE_DB_URL_DIRECT_PROD"))
-        if not direct_env:
-            direct_env = _setting_value(settings, "SUPABASE_DB_URL_DIRECT_PROD")
-        if direct_env:
-            return direct_env
-
-    # Priority 3: Environment-suffixed URL (legacy)
+    # Priority 2: Environment-suffixed URL (legacy)
     explicit_name = f"SUPABASE_DB_URL{suffix}"
     explicit = _strip(os.getenv(explicit_name))
     if not explicit:
         explicit = _setting_value(settings, explicit_name)
     if explicit:
+        logger.debug("Using legacy %s", explicit_name)
         return explicit
 
-    # Priority 4: Construct from components
+    # Priority 3: Direct connection URL (prod only, for migrations/direct queries)
+    if supabase_env == "prod":
+        direct_env = _strip(os.getenv("SUPABASE_DB_URL_DIRECT_PROD"))
+        if not direct_env:
+            direct_env = _setting_value(settings, "SUPABASE_DB_URL_DIRECT_PROD")
+        if direct_env:
+            logger.debug("Using SUPABASE_DB_URL_DIRECT_PROD")
+            return direct_env
+
+    # Priority 4: Construct from components (legacy)
     password_name = f"SUPABASE_DB_PASSWORD{suffix}"
     password = _strip(os.getenv(password_name))
     project_ref = _resolve_project_ref(settings, suffix)
 
-    if not password or not project_ref:
-        raise RuntimeError(
-            f"Missing Supabase database configuration for {supabase_env}. "
-            f"Set SUPABASE_DB_URL (preferred) or SUPABASE_DB_URL{suffix} or "
-            f"SUPABASE_DB_PASSWORD{suffix} + SUPABASE_PROJECT_REF{suffix}."
-        )
+    if password and project_ref:
+        region_host = _strip(os.getenv("SUPABASE_DB_HOST"))
+        if supabase_env == "prod":
+            region_host = _strip(os.getenv("SUPABASE_DB_HOST_PROD")) or region_host
+        if not region_host:
+            region_host = "aws-1-us-east-2.pooler.supabase.com"
 
-    region_host = _strip(os.getenv("SUPABASE_DB_HOST"))
-    if supabase_env == "prod":
-        region_host = _strip(os.getenv("SUPABASE_DB_HOST_PROD")) or region_host
+        logger.debug("Constructing DB URL from components")
+        return (
+            "postgresql://postgres:{password}@"
+            "{host}:5432/postgres"
+            "?user=postgres.{project_ref}&sslmode=require"
+        ).format(password=password, project_ref=project_ref, host=region_host)
 
-    if not region_host:
-        region_host = "aws-1-us-east-2.pooler.supabase.com"
+    # ==========================================================================
+    # FAILURE: No valid configuration found
+    # Security: Never include raw values in error messages
+    # ==========================================================================
+    checked_vars = [
+        "SUPABASE_DB_URL",
+        f"SUPABASE_DB_URL{suffix}",
+        password_name,
+        f"SUPABASE_PROJECT_REF{suffix}",
+    ]
+    present = [v for v in checked_vars if _strip(os.getenv(v))]
+    missing = [v for v in checked_vars if not _strip(os.getenv(v))]
 
-    return (
-        "postgresql://postgres:{password}@"
-        "{host}:5432/postgres"
-        "?user=postgres.{project_ref}&sslmode=require"
-    ).format(password=password, project_ref=project_ref, host=region_host)
+    raise RuntimeError(
+        f"Missing Supabase database configuration for '{supabase_env}'. "
+        f"Set SUPABASE_DB_URL (preferred). "
+        f"Checked: {', '.join(checked_vars)}. "
+        f"Present: {len(present)} [REDACTED]. Missing: {', '.join(missing)}."
+    )
 
 
 def describe_db_url(db_url: str) -> Tuple[str, str, str]:

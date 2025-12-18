@@ -36,7 +36,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Any, Callable, Dict, Generator, Optional, TypeVar
+from typing import Any, Callable, Dict, Generator, Literal, Optional, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
@@ -619,12 +619,98 @@ class _SimpleFormatter(logging.Formatter):
         )
 
 
+# =============================================================================
+# Redacting Formatter (Security: masks secrets in log output)
+# =============================================================================
+
+import re
+
+# Patterns that should be redacted from log messages
+_REDACT_PATTERNS = [
+    # JWTs (eyJ... format)
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*"), "[JWT_REDACTED]"),
+    # Supabase service role keys (typically start with eyJ)
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{50,}"), "[SERVICE_KEY_REDACTED]"),
+    # API keys (sk_..., pk_..., api_...)
+    (re.compile(r"\b(sk_|pk_|api_)[A-Za-z0-9_-]{20,}"), "[API_KEY_REDACTED]"),
+    # Bearer tokens
+    (re.compile(r"Bearer\s+[A-Za-z0-9_-]{20,}", re.IGNORECASE), "Bearer [TOKEN_REDACTED]"),
+    # Database URLs with passwords
+    (re.compile(r"(postgresql://[^:]+:)[^@]+(@)"), r"\1[REDACTED]\2"),
+    # Generic secrets in key=value format
+    (
+        re.compile(r"(password|secret|token|key|credential)[=:]\s*['\"]?[^\s'\"]+", re.IGNORECASE),
+        r"\1=[REDACTED]",
+    ),
+]
+
+
+class RedactingFormatter(logging.Formatter):
+    """
+    Formatter that redacts sensitive patterns from log messages.
+
+    Automatically masks:
+    - JWTs (eyJ... format)
+    - API keys (sk_*, pk_*, api_*)
+    - Bearer tokens
+    - Database URLs with passwords
+    - Generic secrets in key=value format
+
+    Usage:
+        formatter = RedactingFormatter(
+            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+        )
+    """
+
+    def __init__(
+        self,
+        fmt: str | None = None,
+        datefmt: str | None = None,
+        style: Literal["%", "{", "$"] = "%",
+    ):
+        if fmt is None:
+            fmt = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+        if datefmt is None:
+            datefmt = "%Y-%m-%d %H:%M:%S"
+        super().__init__(fmt=fmt, datefmt=datefmt, style=style)
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Format the record, redacting sensitive patterns."""
+        # Format normally first
+        formatted = super().format(record)
+
+        # Apply all redaction patterns
+        for pattern, replacement in _REDACT_PATTERNS:
+            formatted = pattern.sub(replacement, formatted)
+
+        return formatted
+
+    @staticmethod
+    def redact_string(text: str) -> str:
+        """Utility method to redact a string without formatting."""
+        for pattern, replacement in _REDACT_PATTERNS:
+            text = pattern.sub(replacement, text)
+        return text
+
+
+class _RedactingSimpleFormatter(RedactingFormatter):
+    """Simple format with redaction for workers."""
+
+    def __init__(self):
+        super().__init__(
+            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+
+
 def configure_worker_logging(
     worker_name: str,
     level: str = "INFO",
 ) -> logging.Logger:
     """
     Configure logging for a worker process with split stdout/stderr streams.
+
+    Security: Uses RedactingFormatter to mask JWTs, API keys, and secrets.
 
     - DEBUG, INFO → stdout (avoids NativeCommandError in PowerShell/CI)
     - WARNING, ERROR, CRITICAL → stderr
@@ -643,8 +729,8 @@ def configure_worker_logging(
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # Create split handlers with simple format
-    formatter = _SimpleFormatter()
+    # Create split handlers with REDACTING format (security: masks secrets)
+    formatter = _RedactingSimpleFormatter()
     handlers = _create_split_handlers(formatter, getattr(logging, level.upper()))
     for handler in handlers:
         root_logger.addHandler(handler)

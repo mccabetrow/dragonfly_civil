@@ -10,14 +10,28 @@
 #   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL
 #   SUPABASE_MODE=prod, ENVIRONMENT=prod
 
+# Explicit Python provider
+providers = ["python"]
+
 [phases.setup]
-nixPkgs = ["python312", "postgresql"]
+# Python 3.12 + gcc (for native extensions) + postgresql (for psycopg)
+nixPkgs = ["python312", "gcc", "postgresql"]
 
 [phases.install]
-# Use python -m pip (never bare pip) for Nixpacks compatibility
-cmds = ["python -m pip install --upgrade pip", "python -m pip install -r requirements.txt"]
+# Create venv, upgrade pip, install dependencies
+cmds = [
+    "python -m venv /opt/venv",
+    ". /opt/venv/bin/activate && python -m pip install --upgrade pip",
+    ". /opt/venv/bin/activate && python -m pip install -r requirements.txt"
+]
+
+[phases.build]
+# Redundant safety check - ensure all deps are installed
+cmds = [
+    ". /opt/venv/bin/activate && python -m pip install -r requirements.txt"
+]
 
 [start]
 # Default start command for API service
 # Workers override this via Railway dashboard Start Command setting
-cmd = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+cmd = ". /opt/venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
