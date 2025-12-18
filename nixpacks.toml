@@ -1,12 +1,23 @@
 # Dragonfly Civil - Nixpacks Configuration
 # Ensures consistent Python builds across all Railway services
+#
+# CANONICAL BUILD PATH FOR ALL SERVICES:
+# - API: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+# - Ingest Worker: python -m backend.workers.ingest_processor
+# - Enforcement Worker: python -m backend.workers.enforcement_engine
+#
+# Required env vars (set in Railway dashboard):
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL
+#   SUPABASE_MODE=prod, ENVIRONMENT=prod
 
 [phases.setup]
 nixPkgs = ["python312", "postgresql"]
 
 [phases.install]
-cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]
+# Use python -m pip (never bare pip) for Nixpacks compatibility
+cmds = ["python -m pip install --upgrade pip", "python -m pip install -r requirements.txt"]
 
 [start]
-# Default start command (override per-service in Railway dashboard)
+# Default start command for API service
+# Workers override this via Railway dashboard Start Command setting
 cmd = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
