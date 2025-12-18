@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -41,7 +42,8 @@ from src.supabase_client import get_supabase_db_url, get_supabase_env
 logger = configure_worker_logging("prod_gate")
 
 # Constants
-PROD_API_URL = "https://dragonflycivil-production-d57a.up.railway.app"
+# Allow override via environment variable for flexibility
+PROD_API_URL = os.getenv("API_BASE_URL_PROD", "https://dragonfly-api-production.up.railway.app")
 EVALUATOR_PASS_THRESHOLD = 0.95  # 95% minimum pass rate
 
 
@@ -311,22 +313,29 @@ def check_api_readiness() -> GateResult:
             status_code = response.getcode()
             body = json.loads(response.read().decode("utf-8"))
 
-            if status_code == 200 and body.get("status") == "ok":
+            # Handle both wrapped and unwrapped response formats
+            # Wrapped: {"ok": true, "data": {"status": "ok", ...}}
+            # Unwrapped: {"status": "ok", ...}
+            data = body.get("data", body)
+            status = data.get("status")
+            is_ok = body.get("ok", True) and status == "ok"
+
+            if status_code == 200 and is_ok:
                 return GateResult(
                     name="API Readiness",
                     passed=True,
                     message="API health check passed",
                     details={
-                        "status": body.get("status"),
-                        "environment": body.get("environment"),
-                        "version": body.get("version"),
+                        "status": status,
+                        "environment": data.get("environment"),
+                        "version": data.get("version"),
                     },
                 )
             else:
                 return GateResult(
                     name="API Readiness",
                     passed=False,
-                    message=f"API returned status: {body.get('status')}",
+                    message=f"API returned status: {status}",
                     details={"response": body},
                 )
 
