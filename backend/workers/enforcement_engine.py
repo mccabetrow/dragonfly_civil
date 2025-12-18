@@ -28,7 +28,8 @@ Usage:
 
 Environment:
     SUPABASE_MODE: dev | prod (determines which Supabase project to use)
-    SUPABASE_DB_URL_DEV / SUPABASE_DB_URL_PROD: Postgres connection strings
+    SUPABASE_DB_URL: Postgres connection string (canonical, recommended)
+    SUPABASE_DB_URL_DEV / SUPABASE_DB_URL_PROD: Legacy fallbacks (deprecated)
 """
 
 from __future__ import annotations
