@@ -504,6 +504,35 @@ gh run list --limit 5
 | Railway Dashboard  | https://railway.app                                     |
 | GitHub Actions     | https://github.com/mccabetrow/dragonfly_civil/actions   |
 
+### Troubleshooting: Worker Crashes
+
+#### If worker crashes on "SUPABASE_SERVICE_ROLE_KEY too short"
+
+**Symptom:** Worker exits immediately with preflight error:
+
+```
+[CRITICAL] PREFLIGHT CHECK FAILED
+ERROR 1: SUPABASE_SERVICE_ROLE_KEY is TOO SHORT (50 chars)
+   Required: At least 100 characters
+   Current:  50 characters
+   This looks like a truncated key. Copy the full key from Supabase.
+```
+
+**Root Cause:** The service role key was truncated when copying to Railway.
+
+**Fix:**
+
+1. Go to **Supabase Dashboard** → Project Settings → API
+2. Copy the **full** `service_role` key (should be 200+ characters, starts with `ey`)
+3. In **Railway Dashboard**, go to the failing service
+4. Delete the existing `SUPABASE_SERVICE_ROLE_KEY` variable
+5. Create new variable, paste the **full** key (no truncation)
+6. Click Deploy or wait for automatic redeploy
+
+**Prevention:** Always run `python scripts/railway_env_audit.py --check` before deploying.
+
+See also: [Railway Deployment Guide](deploy/railway.md#troubleshooting)
+
 ### Emergency Contacts
 
 | Issue             | Action                                        |

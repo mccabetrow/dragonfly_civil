@@ -1,0 +1,590 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "2.1.0",
+  "description": "Golden dataset for Dragonfly AI/ML regression testing. Contains REAL edge cases encountered in production for ingestion normalization, strategy selection, and agent evaluations. THIS IS YOUR TRUTH - the more accurate this file, the smarter your system becomes.",
+  "schema": {
+    "id": "string (required) - Unique identifier for test case",
+    "agent": "string (optional) - Agent identifier: 'ingestion', 'strategy', 'copilot'. Defaults to 'default'",
+    "input_context": "object (required) - Input data for the agent, aliased as 'input' for legacy compat",
+    "expected_output": "object (required) - Expected output from the agent",
+    "strictness": "string (optional) - 'exact_match' or 'semantic_match'. Defaults to 'exact_match'"
+  },
+  "cases": [
+    {
+      "id": "ingest-001",
+      "agent": "ingestion",
+      "category": "ingestion",
+      "name": "Currency with dollar sign and commas",
+      "description": "Tests normalization of '$1,200.00' style currency values - COMMON in Simplicity exports",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "2024-CV-12345",
+          "Plaintiff": "ACME Collections LLC",
+          "Defendant": "John Q. Debtor",
+          "Judgment Amount": "$ 1,200.00",
+          "Filing Date": "03/15/2024",
+          "County": "Kings"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "2024-CV-12345",
+        "plaintiff_name": "ACME Collections LLC",
+        "defendant_name": "John Q. Debtor",
+        "judgment_amount": "1200.00",
+        "filing_date": "2024-03-15",
+        "county": "Kings"
+      }
+    },
+    {
+      "id": "ingest-002",
+      "agent": "ingestion",
+      "category": "ingestion",
+      "name": "Whitespace padding everywhere",
+      "description": "Excel exports often have leading/trailing spaces - MUST trim all fields",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "  2023-SC-00789  ",
+          "Plaintiff": "  First National Bank  ",
+          "Defendant": "  Jane M. Smith  ",
+          "Judgment Amount": "5000",
+          "Filing Date": "2023-07-20",
+          "County": "  New York  "
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "2023-SC-00789",
+        "plaintiff_name": "First National Bank",
+        "defendant_name": "Jane M. Smith",
+        "judgment_amount": "5000",
+        "filing_date": "2023-07-20",
+        "county": "New York"
+      }
+    },
+    {
+      "id": "ingest-003",
+      "agent": "ingestion",
+      "category": "ingestion",
+      "name": "Empty filing date (optional field)",
+      "description": "Some old judgments have no filing date - should normalize to null, NOT crash",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "2024-DC-99999",
+          "Plaintiff": "Credit Recovery Associates",
+          "Defendant": "Robert Brown",
+          "Judgment Amount": "$750.50",
+          "Filing Date": "",
+          "County": "Queens"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "2024-DC-99999",
+        "plaintiff_name": "Credit Recovery Associates",
+        "defendant_name": "Robert Brown",
+        "judgment_amount": "750.50",
+        "filing_date": null,
+        "county": "Queens"
+      }
+    },
+    {
+      "id": "ingest-004",
+      "agent": "ingestion",
+      "category": "ingestion",
+      "name": "Special characters in party names",
+      "description": "REAL CASE: O'Brien & Associates, José García-Hernández - apostrophes, accents, ampersands MUST be preserved",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "2021-NY-12345",
+          "Plaintiff": "O'Brien & Associates, LLC",
+          "Defendant": "José García-Hernández",
+          "Judgment Amount": "$1,000.00",
+          "Filing Date": "03/15/2021",
+          "County": "New York"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "2021-NY-12345",
+        "plaintiff_name": "O'Brien & Associates, LLC",
+        "defendant_name": "José García-Hernández",
+        "judgment_amount": "1000.00",
+        "filing_date": "2021-03-15",
+        "county": "New York"
+      }
+    },
+    {
+      "id": "ingest-005",
+      "agent": "ingestion",
+      "category": "ingestion",
+      "name": "Negative judgment amount (rare but valid)",
+      "description": "Negative amounts can occur in corrections/reversals - parse correctly",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "2024-REV-001",
+          "Plaintiff": "Court Corrections Dept",
+          "Defendant": "Previous Judgment Holder",
+          "Judgment Amount": "-$500.00",
+          "Filing Date": "06/01/2024",
+          "County": "Kings"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "2024-REV-001",
+        "plaintiff_name": "Court Corrections Dept",
+        "defendant_name": "Previous Judgment Holder",
+        "judgment_amount": "-500.00",
+        "filing_date": "2024-06-01",
+        "county": "Kings"
+      }
+    },
+    {
+      "id": "ingest-006",
+      "agent": "ingestion",
+      "category": "ingestion",
+      "name": "Very large judgment amount with multiple commas",
+      "description": "High-value commercial judgments can exceed $1M - handle $999,999,999.99 format",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "2024-COM-001",
+          "Plaintiff": "Mega Corp Holdings Inc",
+          "Defendant": "Failed Ventures LLC",
+          "Judgment Amount": "$1,234,567.89",
+          "Filing Date": "01/15/2024",
+          "County": "New York"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "2024-COM-001",
+        "plaintiff_name": "Mega Corp Holdings Inc",
+        "defendant_name": "Failed Ventures LLC",
+        "judgment_amount": "1234567.89",
+        "filing_date": "2024-01-15",
+        "county": "New York"
+      }
+    },
+    {
+      "id": "ingest-007",
+      "agent": "ingestion",
+      "category": "ingestion",
+      "name": "Zero amount (valid edge case)",
+      "description": "Zero-dollar judgments exist for declaratory judgments - technically valid",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "2024-DEC-001",
+          "Plaintiff": "Declaratory Plaintiff",
+          "Defendant": "Declaratory Defendant",
+          "Judgment Amount": "$0.00",
+          "Filing Date": "04/20/2024",
+          "County": "Bronx"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "2024-DEC-001",
+        "plaintiff_name": "Declaratory Plaintiff",
+        "defendant_name": "Declaratory Defendant",
+        "judgment_amount": "0.00",
+        "filing_date": "2024-04-20",
+        "county": "Bronx"
+      }
+    },
+    {
+      "id": "ingest-008",
+      "agent": "ingestion",
+      "category": "ingestion",
+      "name": "Cents-only amount",
+      "description": "REAL EDGE CASE: Some test judgments have $.99 style amounts - normalize to 0.99 with leading zero",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "2024-TEST-001",
+          "Plaintiff": "Test Plaintiff",
+          "Defendant": "Test Defendant",
+          "Judgment Amount": "$.99",
+          "Filing Date": "05/01/2024",
+          "County": "Staten Island"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "2024-TEST-001",
+        "plaintiff_name": "Test Plaintiff",
+        "defendant_name": "Test Defendant",
+        "judgment_amount": "0.99",
+        "filing_date": "2024-05-01",
+        "county": "Staten Island"
+      }
+    },
+    {
+      "id": "ingest-009",
+      "agent": "ingestion",
+      "category": "ingestion",
+      "name": "Very long case number",
+      "description": "Some jurisdictions have extremely long case numbers - preserve entire string",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "2024-NYS-SUPREME-KINGS-COMM-DIV-123456789-A",
+          "Plaintiff": "Long Case Plaintiff",
+          "Defendant": "Long Case Defendant",
+          "Judgment Amount": "$10,000.00",
+          "Filing Date": "07/04/2024",
+          "County": "Kings"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "2024-NYS-SUPREME-KINGS-COMM-DIV-123456789-A",
+        "plaintiff_name": "Long Case Plaintiff",
+        "defendant_name": "Long Case Defendant",
+        "judgment_amount": "10000.00",
+        "filing_date": "2024-07-04",
+        "county": "Kings"
+      }
+    },
+    {
+      "id": "strategy-001",
+      "agent": "strategy",
+      "category": "strategy",
+      "name": "Employer known - Wage Garnishment (Priority 1)",
+      "description": "DECISION TREE: Employer found = Wage Garnishment. Walmart employee with bank account still gets wage garnishment.",
+      "strictness": "exact_match",
+      "input": {
+        "debtor_intelligence": {
+          "judgment_id": "test-judgment-001",
+          "employer_name": "Walmart Inc.",
+          "employer_address": "702 SW 8th St, Bentonville, AR 72716",
+          "income_band": "40k-60k",
+          "bank_name": "Bank of America",
+          "bank_address": "100 N Tryon St, Charlotte, NC",
+          "home_ownership": "renter",
+          "has_benefits_only_account": false
+        }
+      },
+      "expected_output": {
+        "strategy_type": "wage_garnishment",
+        "strategy_reason_contains": ["Walmart", "employer"]
+      }
+    },
+    {
+      "id": "strategy-002",
+      "agent": "strategy",
+      "category": "strategy",
+      "name": "Bank only (no employer) - Bank Levy (Priority 2)",
+      "description": "DECISION TREE: No employer, but bank found = Bank Levy. Even if homeowner, bank takes priority over lien.",
+      "strictness": "exact_match",
+      "input": {
+        "debtor_intelligence": {
+          "judgment_id": "test-judgment-002",
+          "employer_name": null,
+          "employer_address": null,
+          "income_band": null,
+          "bank_name": "Bank of America",
+          "bank_address": "100 N Tryon St, Charlotte, NC 28255",
+          "home_ownership": "owner",
+          "has_benefits_only_account": false
+        }
+      },
+      "expected_output": {
+        "strategy_type": "bank_levy",
+        "strategy_reason_contains": ["Bank of America", "bank"]
+      }
+    },
+    {
+      "id": "strategy-003",
+      "agent": "strategy",
+      "category": "strategy",
+      "name": "Benefits-only bank account - SKIP bank levy (CPLR 5222(d))",
+      "description": "CRITICAL LEGAL RULE: Benefits-only accounts (SSI, disability) are EXEMPT under CPLR 5222(d). Must NOT levy.",
+      "strictness": "exact_match",
+      "input": {
+        "debtor_intelligence": {
+          "judgment_id": "test-judgment-003",
+          "employer_name": null,
+          "employer_address": null,
+          "income_band": null,
+          "bank_name": "Chase Bank",
+          "bank_address": "123 Main St, New York, NY",
+          "home_ownership": "owner",
+          "has_benefits_only_account": true
+        }
+      },
+      "expected_output": {
+        "strategy_type": "property_lien",
+        "strategy_reason_contains": ["homeowner", "property"]
+      }
+    },
+    {
+      "id": "strategy-004",
+      "agent": "strategy",
+      "category": "strategy",
+      "name": "Homeowner only - Property Lien (Priority 3)",
+      "description": "DECISION TREE: No employer, no bank, but homeowner = Property Lien",
+      "strictness": "exact_match",
+      "input": {
+        "debtor_intelligence": {
+          "judgment_id": "test-judgment-004",
+          "employer_name": null,
+          "employer_address": null,
+          "income_band": null,
+          "bank_name": null,
+          "bank_address": null,
+          "home_ownership": "owner",
+          "has_benefits_only_account": false
+        }
+      },
+      "expected_output": {
+        "strategy_type": "property_lien",
+        "strategy_reason_contains": ["homeowner", "property"]
+      }
+    },
+    {
+      "id": "strategy-005",
+      "agent": "strategy",
+      "category": "strategy",
+      "name": "No intel at all - Surveillance (Priority 4/Fallback)",
+      "description": "DECISION TREE: No employer, no bank, not homeowner = Queue for surveillance/enrichment",
+      "strictness": "exact_match",
+      "input": {
+        "debtor_intelligence": {
+          "judgment_id": "test-judgment-005",
+          "employer_name": null,
+          "employer_address": null,
+          "income_band": null,
+          "bank_name": null,
+          "bank_address": null,
+          "home_ownership": "renter",
+          "has_benefits_only_account": false
+        }
+      },
+      "expected_output": {
+        "strategy_type": "surveillance",
+        "strategy_reason_contains": ["surveillance", "research"]
+      }
+    },
+    {
+      "id": "strategy-006",
+      "agent": "strategy",
+      "category": "strategy",
+      "name": "Empty string employer treated as no employer",
+      "description": "EDGE CASE: Empty string employer_name should be treated as null, not as a valid employer",
+      "strictness": "exact_match",
+      "input": {
+        "debtor_intelligence": {
+          "judgment_id": "test-judgment-006",
+          "employer_name": "",
+          "employer_address": null,
+          "income_band": null,
+          "bank_name": "Wells Fargo",
+          "bank_address": "420 Montgomery St, San Francisco, CA",
+          "home_ownership": "renter",
+          "has_benefits_only_account": false
+        }
+      },
+      "expected_output": {
+        "strategy_type": "bank_levy",
+        "strategy_reason_contains": ["Wells Fargo", "bank"]
+      }
+    },
+    {
+      "id": "strategy-007",
+      "agent": "strategy",
+      "category": "strategy",
+      "name": "Whitespace-only employer treated as no employer",
+      "description": "EDGE CASE: Whitespace-only employer_name should be treated as null",
+      "strictness": "exact_match",
+      "input": {
+        "debtor_intelligence": {
+          "judgment_id": "test-judgment-007",
+          "employer_name": "   ",
+          "employer_address": null,
+          "income_band": null,
+          "bank_name": null,
+          "bank_address": null,
+          "home_ownership": "owner",
+          "has_benefits_only_account": false
+        }
+      },
+      "expected_output": {
+        "strategy_type": "property_lien",
+        "strategy_reason_contains": ["homeowner"]
+      }
+    },
+    {
+      "id": "strategy-008",
+      "agent": "strategy",
+      "category": "strategy",
+      "name": "Government employer - still wage garnishment",
+      "description": "REAL CASE: Government employees can have wages garnished. NYC Dept of Education, NYPD, etc.",
+      "strictness": "exact_match",
+      "input": {
+        "debtor_intelligence": {
+          "judgment_id": "test-judgment-008",
+          "employer_name": "NYC Department of Education",
+          "employer_address": "52 Chambers St, New York, NY 10007",
+          "income_band": "60k-80k",
+          "bank_name": null,
+          "bank_address": null,
+          "home_ownership": "renter",
+          "has_benefits_only_account": false
+        }
+      },
+      "expected_output": {
+        "strategy_type": "wage_garnishment",
+        "strategy_reason_contains": ["NYC Department of Education", "employer"]
+      }
+    },
+    {
+      "id": "strategy-009",
+      "agent": "strategy",
+      "category": "strategy",
+      "name": "Major retailer employer - Amazon warehouse",
+      "description": "REAL CASE: Amazon warehouse workers are common debtors - valid wage garnishment target",
+      "strictness": "exact_match",
+      "input": {
+        "debtor_intelligence": {
+          "judgment_id": "test-judgment-009",
+          "employer_name": "Amazon Fulfillment Services",
+          "employer_address": "1 Amazon Way, Staten Island, NY 10314",
+          "income_band": "30k-40k",
+          "bank_name": "Chime",
+          "bank_address": null,
+          "home_ownership": "renter",
+          "has_benefits_only_account": false
+        }
+      },
+      "expected_output": {
+        "strategy_type": "wage_garnishment",
+        "strategy_reason_contains": ["Amazon", "employer"]
+      }
+    },
+    {
+      "id": "proxy-001-normal",
+      "agent": "ingest",
+      "category": "ingestion",
+      "name": "Proxy data - clean CSV row",
+      "description": "Standard clean data, standard formatting. Proxy for real client data arriving next week.",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "CV-2024-001",
+          "Plaintiff": "Capital One Bank (USA) N.A.",
+          "Defendant": "John Arthur Doe",
+          "Judgment Amount": "1500.00",
+          "Filing Date": "01/15/2024",
+          "County": "Kings"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "CV-2024-001",
+        "plaintiff_name": "Capital One Bank (USA) N.A.",
+        "defendant_name": "John Arthur Doe",
+        "judgment_amount": "1500.00",
+        "filing_date": "2024-01-15",
+        "county": "Kings"
+      }
+    },
+    {
+      "id": "proxy-002-messy",
+      "agent": "ingest",
+      "category": "ingestion",
+      "name": "Proxy data - messy formatting",
+      "description": "Common real-world issues: leading/trailing whitespace, currency symbols. Tests normalization pipeline robustness.",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": " cv-24-002 ",
+          "Plaintiff": "MIDLAND FUNDING LLC   ",
+          "Defendant": "  SMITH , JANE E.  ",
+          "Judgment Amount": "$ 2,450.50 ",
+          "Filing Date": "01/15/2024",
+          "County": "  Queens  "
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "cv-24-002",
+        "plaintiff_name": "MIDLAND FUNDING LLC",
+        "defendant_name": "SMITH , JANE E.",
+        "judgment_amount": "2450.50",
+        "filing_date": "2024-01-15",
+        "county": "Queens"
+      }
+    },
+    {
+      "id": "proxy-003-edge",
+      "agent": "ingest",
+      "category": "ingestion",
+      "name": "Proxy data - edge case (empty date, zero amount, special chars)",
+      "description": "Tests handling of: empty optional fields (date -> null), zero amounts (declaratory/administrative judgments), Unicode names (accents, apostrophes).",
+      "strictness": "exact_match",
+      "input": {
+        "csv_row": {
+          "Case Number": "CV-2024-X99",
+          "Plaintiff": "O'Malley & O'Brien Assoc.",
+          "Defendant": "Nuñez-Garcia, José",
+          "Judgment Amount": "0.00",
+          "Filing Date": "",
+          "County": "Bronx"
+        },
+        "format": "simplicity"
+      },
+      "expected_output": {
+        "case_number": "CV-2024-X99",
+        "plaintiff_name": "O'Malley & O'Brien Assoc.",
+        "defendant_name": "Nuñez-Garcia, José",
+        "judgment_amount": "0.00",
+        "filing_date": null,
+        "county": "Bronx"
+      }
+    }
+  ],
+  "metadata": {
+    "created_at": "2025-12-17",
+    "updated_at": "2025-12-17",
+    "author": "Dragonfly Engineering",
+    "purpose": "Regression testing for ingestion normalization and strategy selection logic",
+    "pass_threshold": 0.95,
+    "deployment_gate": true,
+    "notes": [
+      "=== INGESTION EDGE CASES ===",
+      "ingest-001: Currency with $ and commas - COMMON Simplicity format",
+      "ingest-002: Whitespace padding - Excel export artifact",
+      "ingest-003: Empty date field - null handling",
+      "ingest-004: Special chars (O'Brien, José García) - Unicode/apostrophe preservation",
+      "ingest-005: Negative amount - reversal/correction judgments",
+      "ingest-006: Large amount ($1M+) - commercial judgments",
+      "ingest-007: Zero amount - declaratory judgments",
+      "ingest-008: Cents-only ($.99) - test data edge case",
+      "ingest-009: Very long case number - jurisdiction variation",
+      "",
+      "=== PROXY DATA TEST CASES ===",
+      "proxy-001-normal: Clean civil court export - baseline verification",
+      "proxy-002-messy: Whitespace, case normalization, currency parsing",
+      "proxy-003-edge: Empty date->null, zero amount, Unicode names",
+      "",
+      "=== STRATEGY DECISION TREE ===",
+      "Priority 1: Wage Garnishment (employer found)",
+      "Priority 2: Bank Levy (bank found, NOT benefits-only)",
+      "Priority 3: Property Lien (homeowner)",
+      "Priority 4: Surveillance (fallback for enrichment)",
+      "",
+      "=== LEGAL RULES ===",
+      "CPLR 5222(d): Benefits-only accounts are EXEMPT from levy",
+      "Empty/whitespace employer = no employer",
+      "Government employers are valid garnishment targets"
+    ]
+  }
+}

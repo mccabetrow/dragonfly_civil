@@ -46,11 +46,20 @@ class KeyTablePolicy:
     force_rls: bool = False
 
 
+# Tables that must have NO anon/authenticated access at all
 RESTRICTED_TABLES: Set[str] = {
     "import_runs",
+    "enforcement_evidence",
+}
+
+# Tables that allow SELECT for dashboard but no writes from public roles
+# These are checked by KEY_TABLE_POLICIES for write access
+READ_ONLY_DASHBOARD_TABLES: Set[str] = {
     "enforcement_cases",
     "enforcement_events",
-    "enforcement_evidence",
+    "enforcement_timeline",
+    "plaintiff_call_attempts",
+    "plaintiff_tasks",
 }
 
 PIPELINE_VIEWS: Set[str] = {
@@ -71,8 +80,10 @@ KEY_TABLE_POLICIES: Dict[str, KeyTablePolicy] = {
         require_rls=True,
         force_rls=True,
     ),
+    # plaintiffs: authenticated can UPDATE for dashboard status changes
+    # INSERT/DELETE restricted to service_role
     "plaintiffs": KeyTablePolicy(
-        write_roles=frozenset({"service_role"}),
+        write_roles=frozenset({"service_role", "authenticated"}),
         require_rls=True,
         force_rls=True,
     ),
@@ -261,6 +272,16 @@ def evaluate_rules(relations: Sequence[RelationSecurity]) -> List[str]:
 
         if rel.name in RESTRICTED_TABLES:
             _assert_no_grants(violations, rel, ("anon", "authenticated", "public"))
+
+        # Tables that allow SELECT for dashboard but no writes
+        if rel.name in READ_ONLY_DASHBOARD_TABLES:
+            for role in ("anon", "authenticated"):
+                privs = rel.grants.get(role, set())
+                invalid = privs - READ_ONLY_PRIVS
+                if invalid:
+                    violations.append(
+                        f"{rel.name}: role '{role}' must only have SELECT but has {sorted(invalid)}"
+                    )
 
         if rel.kind == "v" and rel.name not in PIPELINE_VIEWS:
             _assert_no_grants(violations, rel, ("anon", "authenticated", "public"))

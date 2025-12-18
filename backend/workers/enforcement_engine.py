@@ -49,15 +49,12 @@ from psycopg.rows import dict_row
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+from backend.core.logging import configure_worker_logging
+from src.core_config import log_startup_diagnostics
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("enforcement_engine")
+# Configure logging (INFO->stdout, WARNING+->stderr)
+logger = configure_worker_logging("enforcement_engine")
 
 # Worker configuration
 POLL_INTERVAL_SECONDS = 5.0
@@ -418,6 +415,8 @@ def run_forever(db_url: str) -> None:
 
 def main() -> None:
     """Entry point for the enforcement engine worker."""
+    log_startup_diagnostics("EnforcementEngine")
+
     env = get_supabase_env()
     db_url = get_supabase_db_url()
 
@@ -428,4 +427,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Preflight validation - MUST be first!
+    from backend.preflight import validate_worker_env
+
+    validate_worker_env("enforcement_engine")
+
     main()

@@ -4,13 +4,23 @@ on:
   push:
     paths:
       - "src/core_config.py"
+      - "backend/config.py"
+      - "backend/preflight.py"
+      - "scripts/railway_env_audit.py"
       - ".env.example"
       - "docs/env.md"
+      - "docs/env_contract.md"
+      - "docs/deploy/railway.md"
   pull_request:
     paths:
       - "src/core_config.py"
+      - "backend/config.py"
+      - "backend/preflight.py"
+      - "scripts/railway_env_audit.py"
       - ".env.example"
       - "docs/env.md"
+      - "docs/env_contract.md"
+      - "docs/deploy/railway.md"
 
 jobs:
   check-env-schema:
@@ -30,3 +40,37 @@ jobs:
       - name: Validate env schema sync
         run: |
           python scripts/check_env_schema.py
+
+  env-contract-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Railway env contract audit
+        id: audit
+        run: |
+          # Set dummy env vars for CI (contract validation only, not runtime)
+          export SUPABASE_URL="https://test.supabase.co"
+          export SUPABASE_SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRlc3QiLCJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxNjQwMDAwMDAwLCJleHAiOjE5NTUzNjAwMDB9.test-signature-padding-to-make-it-long-enough-for-validation"
+          export SUPABASE_DB_URL="postgresql://test:test@localhost:5432/test"
+          export ENVIRONMENT="prod"
+          export SUPABASE_MODE="prod"
+
+          python scripts/railway_env_audit.py --check
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -ge 2 ]; then
+            echo "::error::Railway env audit failed with critical errors (exit code $EXIT_CODE)"
+            exit $EXIT_CODE
+          elif [ $EXIT_CODE -eq 1 ]; then
+            echo "::warning::Railway env audit passed with warnings"
+            exit 0  # Warnings are acceptable in CI
+          else
+            echo "Railway env audit passed cleanly"
+            exit 0
+          fi

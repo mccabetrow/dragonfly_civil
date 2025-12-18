@@ -93,17 +93,19 @@ $$;
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Create a unified view of recent events for the live feed ticker
 -- This aggregates from multiple sources into a single stream
+-- NOTE: All enum columns (job_type, status, packet_type) must be cast to text
+-- for COALESCE with string literals and for UNION compatibility
 CREATE OR REPLACE VIEW public.v_live_feed_events AS WITH recent_jobs AS (
         SELECT 'job' AS event_type,
             id::text AS event_id,
             CASE
-                WHEN status = 'completed' THEN 'Job completed: ' || COALESCE(job_type, 'processing')
+                WHEN status = 'completed' THEN 'Job completed: ' || COALESCE(job_type::text, 'processing')
                 WHEN status = 'failed' THEN 'Job failed: ' || COALESCE(last_error, 'unknown error')
-                WHEN status = 'processing' THEN 'Processing: ' || COALESCE(job_type, 'job')
-                ELSE 'Job ' || status
+                WHEN status = 'processing' THEN 'Processing: ' || COALESCE(job_type::text, 'job')
+                ELSE 'Job ' || status::text
             END AS message,
             COALESCE((payload::jsonb->>'principal')::numeric, 0) AS amount,
-            status,
+            status::text AS status,
             COALESCE(updated_at, created_at) AS event_time
         FROM ops.job_queue
         WHERE created_at > NOW() - INTERVAL '24 hours'
@@ -114,7 +116,7 @@ CREATE OR REPLACE VIEW public.v_live_feed_events AS WITH recent_jobs AS (
             id::text AS event_id,
             'New judgment: ' || COALESCE(defendant_name, 'Unknown') AS message,
             COALESCE(judgment_amount, 0) AS amount,
-            'ingested' AS status,
+            'ingested'::text AS status,
             created_at AS event_time
         FROM public.judgments
         WHERE created_at > NOW() - INTERVAL '24 hours'
@@ -123,7 +125,7 @@ CREATE OR REPLACE VIEW public.v_live_feed_events AS WITH recent_jobs AS (
     ), recent_packets AS (
         SELECT 'packet' AS event_type,
             id::text AS event_id,
-            'Packet generated: ' || COALESCE(packet_type, 'enforcement') AS message,
+            'Packet generated: ' || COALESCE(packet_type::text, 'enforcement') AS message,
             0::numeric AS amount,
             status::text AS status,
             COALESCE(updated_at, created_at) AS event_time

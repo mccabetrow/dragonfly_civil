@@ -34,20 +34,17 @@ from psycopg.rows import dict_row
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+from backend.core.logging import configure_worker_logging
 from backend.services.simplicity_mapper import (
     BatchResult,
     is_simplicity_format,
     process_simplicity_batch,
 )
+from src.core_config import log_startup_diagnostics
 from src.supabase_client import create_supabase_client, get_supabase_db_url, get_supabase_env
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("simplicity_ingest_worker")
+# Configure logging (INFO->stdout, WARNING+->stderr)
+logger = configure_worker_logging("simplicity_ingest_worker")
 
 # Worker configuration
 POLL_INTERVAL_SECONDS = 2.0
@@ -249,6 +246,9 @@ def run_worker_loop() -> None:
     """
     Main worker loop - polls for pending simplicity_ingest jobs.
     """
+    # Emit startup diagnostics for Railway/production traceability
+    log_startup_diagnostics("simplicity_ingest_worker")
+
     env = get_supabase_env()
     dsn = get_supabase_db_url(env)
 
@@ -349,6 +349,11 @@ def process_csv_file(
 
 if __name__ == "__main__":
     import argparse
+
+    # Preflight validation - MUST be first (before arg parsing to catch env issues early)!
+    from backend.preflight import validate_worker_env
+
+    validate_worker_env("simplicity_ingest_worker")
 
     parser = argparse.ArgumentParser(description="Simplicity Ingest Worker")
     parser.add_argument(

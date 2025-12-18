@@ -217,3 +217,161 @@ If you're using deprecated environment variables, update your configuration:
 3. **Use the same variables for all services:**
    - API and workers should all use the same canonical variable names
    - Set `SUPABASE_MODE=prod` in production Railway services
+
+---
+
+## Railway Deployment Checklist
+
+### ⚠️ Mandatory Rules
+
+1. **UPPERCASE keys only** – Delete any lowercase duplicates. On Linux (Railway), `LOG_LEVEL` and `log_level` are separate variables. If both exist with different values, startup will fail with a collision error.
+
+2. **ENVIRONMENT must be `dev`, `staging`, or `prod`** – Values like `production` or `development` are normalized automatically but emit a deprecation warning.
+
+3. **Never expose `SUPABASE_SERVICE_ROLE_KEY` to frontend apps** – This key grants admin access. Only backend services should have it.
+
+4. **Delete deprecated `_PROD` suffix variables** – After migrating to `SUPABASE_MODE=prod`, remove `SUPABASE_URL_PROD`, `SUPABASE_DB_URL_PROD`, etc.
+
+### Pre-Deploy Audit
+
+Before deploying to Railway:
+
+```powershell
+# 1. Check for deprecated keys in local env
+python -c "from src.core_config import get_settings, get_deprecated_keys_used; get_settings(); used = get_deprecated_keys_used(); print('OK' if not used else f'DEPRECATED: {used}')"
+
+# 2. Validate required env vars
+python -c "from src.core_config import validate_required_env; validate_required_env(fail_fast=True)"
+
+# 3. Print effective config (redacts secrets)
+python -c "from src.core_config import print_effective_config; import json; print(json.dumps(print_effective_config(), indent=2))"
+```
+
+---
+
+## Required Variables by Service (Copy/Paste Reference)
+
+### API Service
+
+| Variable                    | Required | Notes                               |
+| --------------------------- | -------- | ----------------------------------- |
+| `SUPABASE_URL`              | ✅       | Supabase project URL                |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅       | Server-side only, never in frontend |
+| `SUPABASE_DB_URL`           | ✅       | Use pooler URL in prod              |
+| `ENVIRONMENT`               | ✅       | `prod` for production               |
+| `SUPABASE_MODE`             | ✅       | `prod` for production               |
+| `PORT`                      | ✅       | Injected by Railway                 |
+| `DRAGONFLY_API_KEY`         | ⚠️       | Required for protected endpoints    |
+| `DRAGONFLY_CORS_ORIGINS`    | ⚠️       | Comma-separated frontend URLs       |
+| `LOG_LEVEL`                 | ⚪       | Default: `INFO`                     |
+
+**Start command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+
+### Ingest Worker
+
+| Variable                    | Required | Notes                  |
+| --------------------------- | -------- | ---------------------- |
+| `SUPABASE_URL`              | ✅       | Supabase project URL   |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅       | Server-side only       |
+| `SUPABASE_DB_URL`           | ✅       | Use pooler URL in prod |
+| `ENVIRONMENT`               | ✅       | Must match API         |
+| `SUPABASE_MODE`             | ✅       | Must match API         |
+| `LOG_LEVEL`                 | ⚪       | Default: `INFO`        |
+
+**Start command:** `python -m backend.workers.ingest_processor`
+
+### Enforcement Worker
+
+| Variable                    | Required | Notes                               |
+| --------------------------- | -------- | ----------------------------------- |
+| `SUPABASE_URL`              | ✅       | Supabase project URL                |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅       | Server-side only                    |
+| `SUPABASE_DB_URL`           | ✅       | Use pooler URL in prod              |
+| `ENVIRONMENT`               | ✅       | Must match API                      |
+| `SUPABASE_MODE`             | ✅       | Must match API                      |
+| `OPENAI_API_KEY`            | ⚠️       | Required for AI strategy generation |
+| `LOG_LEVEL`                 | ⚪       | Default: `INFO`                     |
+
+**Start command:** `python -m backend.workers.enforcement_engine`
+
+### Quick Copy Reference (Production)
+
+```bash
+# === REQUIRED FOR ALL SERVICES ===
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_DB_URL=postgresql://postgres.xxxxx:password@aws-0-us-east-1.pooler.supabase.com:5432/postgres
+ENVIRONMENT=prod
+SUPABASE_MODE=prod
+LOG_LEVEL=INFO
+
+# === API ONLY ===
+DRAGONFLY_API_KEY=your-secure-api-key-32-chars-min
+DRAGONFLY_CORS_ORIGINS=https://your-app.vercel.app
+
+# === ENFORCEMENT WORKER ONLY ===
+OPENAI_API_KEY=sk-...
+```
+
+### Legend
+
+| Symbol | Meaning                                     |
+| ------ | ------------------------------------------- |
+| ✅     | Required - service will fail without it     |
+| ⚠️     | Conditionally required - some features need |
+| ⚪     | Optional - has sensible default             |
+
+---
+
+## CI Environment Contract Check
+
+The repository includes automated CI checks that run on every push affecting environment configuration:
+
+### Workflow: `.github/workflows/env-schema-check.yml`
+
+Two jobs run automatically:
+
+1. **check-env-schema** – Validates that `core_config.py`, `.env.example`, and `docs/env.md` stay synchronized.
+2. **env-contract-check** – Runs `scripts/railway_env_audit.py --check` to detect deprecated keys and collision risks.
+
+### Local Audit Command
+
+Before deploying to Railway, run the audit locally:
+
+```powershell
+# Print canonical env contract
+python scripts/railway_env_audit.py
+
+# CI mode (fails on deprecated keys or collisions)
+python scripts/railway_env_audit.py --check
+```
+
+### Exit Codes
+
+| Code | Meaning                                                            |
+| ---- | ------------------------------------------------------------------ |
+| 0    | OK – all clear                                                     |
+| 1    | Warnings only – deprecated keys detected but no collisions         |
+| 2    | Errors – deprecated keys found (CI should fail)                    |
+| 3    | Critical – potential collisions (lowercase + uppercase duplicates) |
+
+---
+
+## ⚠️ Linux/Railway Collision Warning
+
+On Linux (Railway's runtime), environment variables are **case-sensitive**:
+
+```
+LOG_LEVEL=INFO     # uppercase – correct
+log_level=DEBUG    # lowercase – separate variable!
+```
+
+If both exist with different values, `railway_env_audit.py` will detect a collision and fail with exit code 3.
+
+**Action required:** Delete all lowercase duplicates from your Railway service variables before deploying.
+
+To check for collisions locally:
+
+```powershell
+python scripts/railway_env_audit.py --check
+```

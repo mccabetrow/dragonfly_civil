@@ -271,6 +271,48 @@ class ColoredConsoleFormatter(logging.Formatter):
 
 
 # =============================================================================
+# Split-Stream Handler (stdout for INFO/DEBUG, stderr for WARNING+)
+# =============================================================================
+
+
+class _MaxLevelFilter(logging.Filter):
+    """Filter that passes records at or below a maximum level."""
+
+    def __init__(self, max_level: int):
+        super().__init__()
+        self.max_level = max_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno <= self.max_level
+
+
+def _create_split_handlers(
+    formatter: logging.Formatter,
+    level: int = logging.DEBUG,
+) -> list[logging.Handler]:
+    """
+    Create handlers that route logs to stdout/stderr based on level.
+
+    - DEBUG, INFO → stdout
+    - WARNING, ERROR, CRITICAL → stderr
+
+    This prevents PowerShell/CI from treating INFO logs as errors.
+    """
+    # stdout handler: DEBUG and INFO only
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(level)
+    stdout_handler.addFilter(_MaxLevelFilter(logging.INFO))
+    stdout_handler.setFormatter(formatter)
+
+    # stderr handler: WARNING and above
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setLevel(logging.WARNING)
+    stderr_handler.setFormatter(formatter)
+
+    return [stdout_handler, stderr_handler]
+
+
+# =============================================================================
 # Logger Configuration
 # =============================================================================
 
@@ -282,6 +324,10 @@ def configure_structured_logging(
 ) -> None:
     """
     Configure structured logging for the application.
+
+    Log routing:
+    - DEBUG, INFO → stdout (avoids NativeCommandError in PowerShell/CI)
+    - WARNING, ERROR, CRITICAL → stderr
 
     Args:
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -295,16 +341,16 @@ def configure_structured_logging(
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # Create handler
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(getattr(logging, level.upper()))
-
+    # Create formatter
     if json_output:
-        handler.setFormatter(StructuredJsonFormatter())
+        formatter = StructuredJsonFormatter()
     else:
-        handler.setFormatter(ColoredConsoleFormatter())
+        formatter = ColoredConsoleFormatter()
 
-    root_logger.addHandler(handler)
+    # Create split handlers (stdout for INFO-, stderr for WARNING+)
+    handlers = _create_split_handlers(formatter, getattr(logging, level.upper()))
+    for handler in handlers:
+        root_logger.addHandler(handler)
 
     # Set context
     set_context(service=service_name)
@@ -561,3 +607,46 @@ def configure_logging(
         json_output=json_output,
         service_name=service_name,
     )
+
+
+class _SimpleFormatter(logging.Formatter):
+    """Simple timestamp | level | name | message format for workers."""
+
+    def __init__(self):
+        super().__init__(
+            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+
+
+def configure_worker_logging(
+    worker_name: str,
+    level: str = "INFO",
+) -> logging.Logger:
+    """
+    Configure logging for a worker process with split stdout/stderr streams.
+
+    - DEBUG, INFO → stdout (avoids NativeCommandError in PowerShell/CI)
+    - WARNING, ERROR, CRITICAL → stderr
+
+    Args:
+        worker_name: Name of the worker (used as logger name).
+        level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+
+    Returns:
+        Configured logger instance for the worker.
+    """
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, level.upper()))
+
+    # Remove existing handlers to avoid duplicates
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Create split handlers with simple format
+    formatter = _SimpleFormatter()
+    handlers = _create_split_handlers(formatter, getattr(logging, level.upper()))
+    for handler in handlers:
+        root_logger.addHandler(handler)
+
+    return logging.getLogger(worker_name)

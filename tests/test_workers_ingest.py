@@ -612,7 +612,8 @@ class TestProcessJob:
 
     def test_empty_csv_marks_completed(self):
         """Empty CSV file marks job as completed with 0 rows."""
-        from backend.workers.ingest_processor import process_job
+        from backend.services.ingest_hardening import DuplicateCheckResult
+        from backend.workers.ingest_processor import LoadedCSV, process_job
 
         mock_cursor = MagicMock()
         mock_conn = MagicMock()
@@ -622,11 +623,17 @@ class TestProcessJob:
         job = {"id": "job-123", "payload": {"file_path": "test.csv", "batch_id": "batch-1"}}
 
         empty_df = pd.DataFrame()
+        empty_loaded = LoadedCSV(df=empty_df, raw_content=b"", file_hash="empty_hash")
+        not_duplicate = DuplicateCheckResult(is_duplicate=False)
 
         with (
             patch(
                 "backend.workers.ingest_processor.load_csv_from_storage",
-                return_value=empty_df,
+                return_value=empty_loaded,
+            ),
+            patch(
+                "backend.workers.ingest_processor.check_duplicate_import",
+                return_value=not_duplicate,
             ),
             patch("backend.workers.ingest_processor.mark_job_completed") as mock_complete,
             patch("backend.workers.ingest_processor.update_batch_status") as mock_batch,
@@ -679,9 +686,11 @@ class TestLoadCsvFromStorage:
             temp_path = f.name
 
         try:
-            df = load_csv_from_storage(f"file://{temp_path}")
-            assert len(df) == 1
-            assert str(df.iloc[0]["Case Number"]) == "12345"
+            loaded = load_csv_from_storage(f"file://{temp_path}")
+            assert len(loaded.df) == 1
+            assert str(loaded.df.iloc[0]["Case Number"]) == "12345"
+            assert loaded.file_hash  # Hash should be computed
+            assert loaded.raw_content  # Raw content should be preserved
         finally:
             os.unlink(temp_path)
 
@@ -702,12 +711,13 @@ class TestLoadCsvFromStorage:
             "backend.workers.ingest_processor.create_supabase_client",
             return_value=mock_client,
         ):
-            df = load_csv_from_storage("intake/batch_123.csv")
+            loaded = load_csv_from_storage("intake/batch_123.csv")
 
         # Should use 'intake' bucket and 'batch_123.csv' path
         mock_storage.from_.assert_called_with("intake")
         mock_storage.from_.return_value.download.assert_called_with("batch_123.csv")
-        assert len(df) == 1
+        assert len(loaded.df) == 1
+        assert loaded.file_hash  # Hash should be computed
 
 
 @pytest.mark.unit

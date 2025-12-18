@@ -2,9 +2,12 @@
 Dragonfly Engine - Health Check Router
 
 Provides health check endpoints for monitoring and load balancers.
+All external checks have configurable timeouts to prevent hanging probes.
 """
 
+import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +19,10 @@ from .. import __version__
 from ..api import ApiResponse, api_response, degraded_response
 from ..config import get_settings
 from ..db import fetch_val, get_pool, get_supabase_client
+
+# Default timeouts for health checks (seconds)
+HEALTH_DB_TIMEOUT = 5.0
+HEALTH_SUPABASE_TIMEOUT = 8.0
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +104,7 @@ async def health_check() -> ApiResponse[HealthData]:
     "/db",
     response_model=DBHealthResponse,
     summary="Database health check",
-    description="Checks database connectivity and pool status.",
+    description="Checks database connectivity and pool status with timeout.",
 )
 async def health_check_db() -> DBHealthResponse:
     """
@@ -105,26 +112,41 @@ async def health_check_db() -> DBHealthResponse:
 
     Executes a simple query to verify database connectivity.
     Returns pool statistics for monitoring.
+    Timeout: 5 seconds (configurable via HEALTH_DB_TIMEOUT).
     """
-    import time
-
     try:
-        pool = get_pool()
+        pool = await get_pool()
+        if pool is None:
+            raise RuntimeError("Database pool not initialized")
 
-        # Time the query
+        # Time the query with timeout
         start = time.perf_counter()
-        result = await fetch_val("SELECT 1")
+        try:
+            result = await asyncio.wait_for(
+                fetch_val("SELECT 1"),
+                timeout=HEALTH_DB_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Database check timed out after {HEALTH_DB_TIMEOUT}s",
+            )
         latency = (time.perf_counter() - start) * 1000  # Convert to ms
 
         if result != 1:
             raise ValueError(f"Unexpected result from SELECT 1: {result}")
 
+        # Get pool stats
+        stats = pool.get_stats()
+        pool_size = stats.get("pool_size", pool.min_size)
+        pool_available = stats.get("pool_available", 0)
+
         return DBHealthResponse(
             status="ok",
             timestamp=datetime.utcnow().isoformat() + "Z",
             latency_ms=round(latency, 2),
-            pool_size=pool.get_size(),
-            pool_free=pool.get_idle_size(),
+            pool_size=pool_size,
+            pool_free=pool_available,
         )
     except RuntimeError as e:
         # Pool not initialized
@@ -239,35 +261,36 @@ async def health_ops() -> OperationalHealthResponse:
                 events_24h=0,
             )
 
-        async with pool.cursor() as cur:
-            # Count pending jobs
-            await cur.execute("SELECT COUNT(*) FROM ops.job_queue WHERE status = 'pending'")
-            row = await cur.fetchone()
-            pending_jobs = row[0] if row else 0
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Count pending jobs
+                await cur.execute("SELECT COUNT(*) FROM ops.job_queue WHERE status = 'pending'")
+                row = await cur.fetchone()
+                pending_jobs = row[0] if row else 0
 
-            # Count failed jobs in last 24h
-            await cur.execute(
+                # Count failed jobs in last 24h
+                await cur.execute(
+                    """
+                    SELECT COUNT(*) FROM ops.job_queue
+                    WHERE status = 'failed'
+                    AND updated_at > now() - interval '24 hours'
                 """
-                SELECT COUNT(*) FROM ops.job_queue
-                WHERE status = 'failed'
-                AND updated_at > now() - interval '24 hours'
-            """
-            )
-            row = await cur.fetchone()
-            failed_jobs = row[0] if row else 0
+                )
+                row = await cur.fetchone()
+                failed_jobs = row[0] if row else 0
 
-            # Get last event timestamp and 24h count
-            await cur.execute(
+                # Get last event timestamp and 24h count
+                await cur.execute(
+                    """
+                    SELECT
+                        MAX(created_at) as last_event,
+                        COUNT(*) FILTER (WHERE created_at > now() - interval '24 hours') as events_24h
+                    FROM intelligence.events
                 """
-                SELECT
-                    MAX(created_at) as last_event,
-                    COUNT(*) FILTER (WHERE created_at > now() - interval '24 hours') as events_24h
-                FROM intelligence.events
-            """
-            )
-            row = await cur.fetchone()
-            last_event_at = row[0].isoformat() + "Z" if row and row[0] else None
-            events_24h = row[1] if row else 0
+                )
+                row = await cur.fetchone()
+                last_event_at = row[0].isoformat() + "Z" if row and row[0] else None
+                events_24h = row[1] if row else 0
 
         # Determine status
         status = "ok"
@@ -366,6 +389,15 @@ class VersionResponse(BaseModel):
     timestamp: str
 
 
+class SupabaseHealthResponse(BaseModel):
+    """Supabase REST API health check response."""
+
+    status: str
+    timestamp: str
+    latency_ms: float
+    endpoint: str
+
+
 class ReadinessResponse(BaseModel):
     """Readiness check response."""
 
@@ -398,6 +430,65 @@ async def get_version() -> VersionResponse:
 
 
 @router.get(
+    "/supabase",
+    response_model=SupabaseHealthResponse,
+    responses={
+        200: {"description": "Supabase is reachable"},
+        503: {"description": "Supabase is unreachable or timed out"},
+    },
+    summary="Supabase health check",
+    description="Validates Supabase REST API connectivity with timeout.",
+)
+async def health_check_supabase() -> SupabaseHealthResponse:
+    """
+    Supabase REST API health check endpoint.
+
+    Executes a lightweight query to verify Supabase connectivity.
+    Timeout: 8 seconds (configurable via HEALTH_SUPABASE_TIMEOUT).
+    """
+    settings = get_settings()
+
+    async def _check_supabase() -> tuple[bool, float]:
+        """Run Supabase check in thread pool (sync client)."""
+        import concurrent.futures
+
+        def sync_check() -> float:
+            start = time.perf_counter()
+            client = get_supabase_client()
+            # Lightweight query - just verify we can reach the API
+            client.table("plaintiffs").select("id").limit(1).execute()
+            return (time.perf_counter() - start) * 1000
+
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            latency = await loop.run_in_executor(executor, sync_check)
+        return True, latency
+
+    try:
+        _, latency = await asyncio.wait_for(
+            _check_supabase(),
+            timeout=HEALTH_SUPABASE_TIMEOUT,
+        )
+        return SupabaseHealthResponse(
+            status="ok",
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            latency_ms=round(latency, 2),
+            endpoint=settings.supabase_url or "not_configured",
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Supabase check timed out after {HEALTH_SUPABASE_TIMEOUT}s",
+        )
+    except Exception as e:
+        logger.error(f"Supabase health check failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Supabase error: {type(e).__name__}",
+        )
+
+
+@router.get(
     "/ready",
     response_model=ReadinessResponse,
     responses={
@@ -405,51 +496,73 @@ async def get_version() -> VersionResponse:
         503: {"description": "Service is not ready"},
     },
     summary="Readiness probe",
-    description="Validates DB and Supabase connectivity. Returns 200 if ready, 503 if not.",
+    description="Validates DB and Supabase connectivity with timeouts. Returns 200 if ready, 503 if not.",
 )
 async def readiness_check() -> ReadinessResponse | JSONResponse:
     """
     Kubernetes-style readiness probe.
 
-    Validates:
-    - Database connectivity (psycopg pool)
-    - Supabase REST API connectivity
+    Validates with timeouts:
+    - Database connectivity (psycopg pool) - 5s timeout
+    - Supabase REST API connectivity - 8s timeout
 
     Returns 200 OK if all checks pass, 503 Service Unavailable otherwise.
     """
+    import concurrent.futures
+
     checks: dict[str, bool] = {}
     db_status = "unknown"
     supabase_status = "unknown"
 
-    # Check database connectivity
+    # Check database connectivity with timeout
+    async def _check_db() -> tuple[str, bool]:
+        try:
+            pool = await get_pool()
+            if pool:
+                async with pool.connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute("SELECT 1")
+                        await cur.fetchone()
+                return "ok", True
+            else:
+                return "no_pool", False
+        except Exception as e:
+            logger.warning(f"Readiness check: DB failed - {e}")
+            return f"error: {type(e).__name__}", False
+
     try:
-        pool = await get_pool()
-        if pool:
-            async with pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute("SELECT 1")
-                    await cur.fetchone()
-            db_status = "ok"
-            checks["database"] = True
-        else:
-            db_status = "no_pool"
-            checks["database"] = False
-    except Exception as e:
-        logger.warning(f"Readiness check: DB failed - {e}")
-        db_status = f"error: {type(e).__name__}"
+        db_status, db_ok = await asyncio.wait_for(
+            _check_db(),
+            timeout=HEALTH_DB_TIMEOUT,
+        )
+        checks["database"] = db_ok
+    except asyncio.TimeoutError:
+        logger.warning(f"Readiness check: DB timed out after {HEALTH_DB_TIMEOUT}s")
+        db_status = f"timeout: {HEALTH_DB_TIMEOUT}s"
         checks["database"] = False
 
-    # Check Supabase REST API connectivity
+    # Check Supabase REST API connectivity with timeout
+    def _sync_supabase_check() -> tuple[str, bool]:
+        try:
+            client = get_supabase_client()
+            client.table("plaintiffs").select("id").limit(1).execute()
+            return "ok", True
+        except Exception as e:
+            logger.warning(f"Readiness check: Supabase failed - {e}")
+            return f"error: {type(e).__name__}", False
+
     try:
-        client = get_supabase_client()
-        # Simple query to verify connectivity - just check we can reach the API
-        # Use a lightweight table/view check
-        client.table("plaintiffs").select("id").limit(1).execute()
-        supabase_status = "ok"
-        checks["supabase"] = True
-    except Exception as e:
-        logger.warning(f"Readiness check: Supabase failed - {e}")
-        supabase_status = f"error: {type(e).__name__}"
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = loop.run_in_executor(executor, _sync_supabase_check)
+            supabase_status, supabase_ok = await asyncio.wait_for(
+                future,
+                timeout=HEALTH_SUPABASE_TIMEOUT,
+            )
+        checks["supabase"] = supabase_ok
+    except asyncio.TimeoutError:
+        logger.warning(f"Readiness check: Supabase timed out after {HEALTH_SUPABASE_TIMEOUT}s")
+        supabase_status = f"timeout: {HEALTH_SUPABASE_TIMEOUT}s"
         checks["supabase"] = False
 
     is_ready = all(checks.values())

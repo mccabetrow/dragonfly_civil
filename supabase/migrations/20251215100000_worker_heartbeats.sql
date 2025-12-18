@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS ops.worker_heartbeats (
 -- Index for fast lookup by worker_type when calculating system health
 CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_type_last_seen ON ops.worker_heartbeats (worker_type, last_seen_at DESC);
 -- Comment for documentation
-COMMENT ON TABLE ops.worker_heartbeats IS 'Tracks worker process heartbeats. Workers upsert every 30s. ' 'v_system_health calculates online/offline based on last_seen_at.';
+COMMENT ON TABLE ops.worker_heartbeats IS 'Tracks worker process heartbeats. Workers upsert every 30s. v_system_health calculates online/offline based on last_seen_at.';
 COMMENT ON COLUMN ops.worker_heartbeats.worker_id IS 'Unique identifier per worker instance (e.g., ingest-abc123)';
 COMMENT ON COLUMN ops.worker_heartbeats.worker_type IS 'Type of worker: ingest_processor, enforcement_engine';
 COMMENT ON COLUMN ops.worker_heartbeats.last_seen_at IS 'Last heartbeat timestamp. Workers update every ~30 seconds.';
@@ -120,7 +120,7 @@ SELECT (
         0
     ) AS queue_processing,
     now() AS checked_at;
-COMMENT ON VIEW ops.v_system_health IS 'Single-row view of system health for UI. ' 'ingest_status/enforcement_status: online if heartbeat < 60s ago, else offline.';
+COMMENT ON VIEW ops.v_system_health IS 'Single-row view of system health for UI. ingest_status/enforcement_status: online if heartbeat < 60s ago, else offline.';
 -- ============================================================================
 -- SECTION 3: GRANTS (Security)
 -- ============================================================================

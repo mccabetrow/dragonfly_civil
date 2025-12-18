@@ -160,6 +160,10 @@ class Settings(BaseSettings):
     SUPABASE_DB_URL_DIRECT_PROD: str | None = Field(
         default=None, description="[DEPRECATED] Direct prod DB URL"
     )
+    SUPABASE_DB_URL_DEV: str | None = Field(
+        default=None,
+        description="[FALLBACK] Dev DB URL, used if SUPABASE_DB_URL missing in dev mode",
+    )
     SUPABASE_DB_PASSWORD: str | None = Field(
         default=None, description="DB password for URL construction"
     )
@@ -267,12 +271,58 @@ class Settings(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _normalize_values(cls, values: dict[str, Any]) -> dict[str, Any]:
-        """Normalize string values (strip whitespace, quotes)."""
+        """Normalize string values (strip whitespace, quotes, environment aliases)."""
+        # Collision guard: check for canonical + deprecated key conflicts
+        _COLLISION_PAIRS = [
+            ("SUPABASE_URL", "supabase_url"),
+            ("SUPABASE_SERVICE_ROLE_KEY", "supabase_service_role_key"),
+            ("SUPABASE_DB_URL", "supabase_db_url"),
+            ("SUPABASE_MODE", "supabase_mode"),
+            ("ENVIRONMENT", "environment"),
+            ("LOG_LEVEL", "log_level"),
+        ]
+        collisions = []
+        for canonical, deprecated in _COLLISION_PAIRS:
+            canonical_val = os.environ.get(canonical)
+            deprecated_val = os.environ.get(deprecated)
+            if canonical_val and deprecated_val and canonical_val != deprecated_val:
+                collisions.append(
+                    f"  • {canonical}={canonical_val!r} vs {deprecated}={deprecated_val!r}"
+                )
+        if collisions:
+            raise ValueError(
+                "Configuration collision detected! Both canonical and deprecated env vars "
+                "are set with DIFFERENT values:\n"
+                + "\n".join(collisions)
+                + "\n\nFix: Remove the deprecated lowercase variant(s) and use only the "
+                "canonical UPPERCASE key."
+            )
+
         for key, value in list(values.items()):
             if isinstance(value, str):
                 # Strip whitespace and quotes
                 cleaned = value.strip().strip('"').strip("'").strip()
                 values[key] = cleaned
+
+        # Normalize ENVIRONMENT: accept 'production'→'prod', 'development'→'dev'
+        env_key = None
+        for k in ("ENVIRONMENT", "environment"):
+            if k in values:
+                env_key = k
+                break
+        if env_key:
+            raw = str(values[env_key]).lower().strip()
+            if raw == "production":
+                logger.warning("ENVIRONMENT='production' is deprecated; use 'prod'. Normalizing.")
+                values[env_key] = "prod"
+            elif raw == "development":
+                logger.warning("ENVIRONMENT='development' is deprecated; use 'dev'. Normalizing.")
+                values[env_key] = "dev"
+            elif raw not in ("dev", "staging", "prod"):
+                raise ValueError(
+                    f"ENVIRONMENT='{raw}' is invalid. Must be one of: dev, staging, prod"
+                )
+
         return values
 
     def model_post_init(self, __context: Any) -> None:
@@ -400,6 +450,10 @@ class Settings(BaseSettings):
         """
         Get the database URL for the specified mode.
 
+        Fallback order:
+        - prod: SUPABASE_DB_URL_DIRECT_PROD → SUPABASE_DB_URL_PROD → SUPABASE_DB_URL
+        - dev:  SUPABASE_DB_URL → SUPABASE_DB_URL_DEV
+
         Args:
             mode: 'dev' or 'prod'. Defaults to self.supabase_mode.
 
@@ -418,6 +472,11 @@ class Settings(BaseSettings):
         # Fall back to primary DB URL
         if self.SUPABASE_DB_URL:
             return self.SUPABASE_DB_URL
+
+        # DEV-specific fallback: check SUPABASE_DB_URL_DEV
+        if effective_mode == "dev" and self.SUPABASE_DB_URL_DEV:
+            logger.info("Using SUPABASE_DB_URL_DEV as fallback for SUPABASE_DB_URL")
+            return self.SUPABASE_DB_URL_DEV
 
         raise RuntimeError(
             f"Missing database URL for mode '{effective_mode}'. " f"Set SUPABASE_DB_URL."
@@ -667,3 +726,44 @@ def validate_required_env(fail_fast: bool = True) -> dict[str, Any]:
         )
 
     return result
+
+
+def log_startup_diagnostics(service_name: str) -> None:
+    """
+    Log safe startup diagnostics for API and worker services.
+
+    This function is intended to be called at service startup to provide
+    visibility into configuration state without exposing secrets.
+
+    Args:
+        service_name: Human-readable name of the service (e.g., 'API', 'IngestProcessor')
+    """
+    try:
+        cfg = get_settings()
+    except Exception as e:
+        logger.error(f"[{service_name}] Failed to load settings: {e}")
+        return
+
+    # Collect safe diagnostics
+    db_url_configured = bool(cfg.SUPABASE_DB_URL or cfg.SUPABASE_DB_URL_DEV)
+    service_role_key_valid = (
+        bool(cfg.SUPABASE_SERVICE_ROLE_KEY) and len(cfg.SUPABASE_SERVICE_ROLE_KEY) >= 100
+    )
+
+    # Try to get git SHA (optional)
+    git_sha = os.environ.get("GIT_SHA", os.environ.get("RENDER_GIT_COMMIT", "unknown"))[:8]
+
+    deprecated = get_deprecated_keys_used()
+
+    # Log the banner
+    logger.info("=" * 60)
+    logger.info(f"SERVICE STARTUP: {service_name}")
+    logger.info("=" * 60)
+    logger.info(f"  Environment     : {cfg.ENVIRONMENT}")
+    logger.info(f"  Supabase Mode   : {cfg.supabase_mode}")
+    logger.info(f"  DB URL Set      : {'✓' if db_url_configured else '✗'}")
+    logger.info(f"  Service Key OK  : {'✓' if service_role_key_valid else '✗'}")
+    logger.info(f"  Git SHA         : {git_sha}")
+    if deprecated:
+        logger.warning(f"  Deprecated Keys : {', '.join(deprecated)}")
+    logger.info("=" * 60)

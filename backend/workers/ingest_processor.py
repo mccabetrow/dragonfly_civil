@@ -30,9 +30,10 @@ import os
 import random
 import re
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
 import pandas as pd
@@ -42,15 +43,18 @@ from psycopg.rows import dict_row
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+from backend.core.logging import configure_worker_logging
+from backend.services.ingest_hardening import (
+    ImportErrorRecorder,
+    check_duplicate_import,
+    compute_file_hash,
+    update_batch_file_hash,
+)
+from src.core_config import log_startup_diagnostics
 from src.supabase_client import create_supabase_client, get_supabase_db_url, get_supabase_env
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("ingest_processor")
+# Configure logging (INFO->stdout, WARNING+->stderr)
+logger = configure_worker_logging("ingest_processor")
 
 # Worker configuration
 POLL_INTERVAL_SECONDS = 2.0
@@ -239,7 +243,8 @@ def process_simplicity_frame(conn: psycopg.Connection, df: pd.DataFrame, batch_i
     """Process a Simplicity DataFrame into public.judgments rows.
 
     Uses the hardened mapper with per-row error handling.
-    Invalid rows are logged to ops.intake_logs and ops.data_discrepancies.
+    Invalid rows are logged to ops.intake_logs, ops.data_discrepancies,
+    and ops.import_errors (new hardened error table).
     Every row is tracked in ops.ingest_audit_log.
 
     Returns the number of successfully inserted rows.
@@ -249,193 +254,220 @@ def process_simplicity_frame(conn: psycopg.Connection, df: pd.DataFrame, batch_i
     success_count = 0
     reconciler = ReconciliationService(conn)
 
-    for idx, row in df.iterrows():
-        raw = row.to_dict()
-        row_index = int(idx) if isinstance(idx, (int, float)) else 0
+    # Use ImportErrorRecorder for efficient batch error logging
+    with ImportErrorRecorder(conn, batch_id) as error_recorder:
+        for idx, row in df.iterrows():
+            raw = row.to_dict()
+            row_index = int(idx) if isinstance(idx, (int, float)) else 0
 
-        # Log row received
-        try:
-            reconciler.log_row_received(batch_id, row_index, raw)
-        except Exception as e:
-            logger.debug(f"Could not log row received: {e}")
-
-        try:
-            mapped = _map_simplicity_row(row)
-
-            # Log row parsed
+            # Log row received
             try:
-                case_number = mapped.get("case_number")
-                reconciler.log_row_parsed(batch_id, row_index, mapped, case_number)
+                reconciler.log_row_received(batch_id, row_index, raw)
             except Exception as e:
-                logger.debug(f"Could not log row parsed: {e}")
+                logger.debug(f"Could not log row received: {e}")
 
-        except ValueError as exc:
-            # Validation error - log and continue
-            logger.warning("Validation failed for row %s: %s", idx, exc)
-            _log_invalid_row(conn, batch_id, raw, str(exc))
-
-            # Log to audit as failed
             try:
-                reconciler.log_row_failed(
-                    batch_id, row_index, "validate", "VALIDATION_ERROR", str(exc)
-                )
-            except Exception as e:
-                logger.debug(f"Could not log row failed: {e}")
+                mapped = _map_simplicity_row(row)
 
-            # Add to Dead Letter Queue
-            try:
-                reconciler.create_discrepancy(
-                    batch_id=batch_id,
-                    row_index=row_index,
-                    raw_data=raw,
-                    error_type=ErrorType.VALIDATION_ERROR,
+                # Log row parsed
+                try:
+                    case_number = mapped.get("case_number")
+                    reconciler.log_row_parsed(batch_id, row_index, mapped, case_number)
+                except Exception as e:
+                    logger.debug(f"Could not log row parsed: {e}")
+
+            except ValueError as exc:
+                # Validation error - log and continue
+                logger.warning("Validation failed for row %s: %s", idx, exc)
+                _log_invalid_row(conn, batch_id, raw, str(exc))
+
+                # Record to ops.import_errors (hardened error table)
+                error_recorder.add_error(
+                    row_number=row_index + 1,  # 1-indexed for user display
+                    error_type="validation",
                     error_message=str(exc),
-                    error_code="VALIDATION_ERROR",
-                )
-            except Exception as e:
-                logger.debug(f"Could not create discrepancy: {e}")
-            continue
-        except Exception as exc:
-            # Unexpected error - log with full context and continue
-            logger.exception("Unexpected error mapping row %s: %s", idx, exc)
-            _log_invalid_row(conn, batch_id, raw, f"Unexpected error: {exc}")
-
-            # Log to audit as failed
-            try:
-                reconciler.log_row_failed(batch_id, row_index, "parse", "PARSE_ERROR", str(exc))
-            except Exception as e:
-                logger.debug(f"Could not log row failed: {e}")
-
-            # Add to Dead Letter Queue
-            try:
-                reconciler.create_discrepancy(
-                    batch_id=batch_id,
-                    row_index=row_index,
                     raw_data=raw,
-                    error_type=ErrorType.PARSE_ERROR,
-                    error_message=str(exc),
-                    error_code="PARSE_ERROR",
                 )
+
+                # Log to audit as failed
+                try:
+                    reconciler.log_row_failed(
+                        batch_id, row_index, "validate", "VALIDATION_ERROR", str(exc)
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not log row failed: {e}")
+
+                # Add to Dead Letter Queue
+                try:
+                    reconciler.create_discrepancy(
+                        batch_id=batch_id,
+                        row_index=row_index,
+                        raw_data=raw,
+                        error_type=ErrorType.VALIDATION_ERROR,
+                        error_message=str(exc),
+                        error_code="VALIDATION_ERROR",
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not create discrepancy: {e}")
+                continue
+
+            except Exception as exc:
+                # Unexpected error - log with full context and continue
+                logger.exception("Unexpected error mapping row %s: %s", idx, exc)
+                _log_invalid_row(conn, batch_id, raw, f"Unexpected error: {exc}")
+
+                # Record to ops.import_errors (hardened error table)
+                error_recorder.add_error(
+                    row_number=row_index + 1,
+                    error_type="parse",
+                    error_message=f"Unexpected error: {exc}",
+                    raw_data=raw,
+                )
+
+                # Log to audit as failed
+                try:
+                    reconciler.log_row_failed(batch_id, row_index, "parse", "PARSE_ERROR", str(exc))
+                except Exception as e:
+                    logger.debug(f"Could not log row failed: {e}")
+
+                # Add to Dead Letter Queue
+                try:
+                    reconciler.create_discrepancy(
+                        batch_id=batch_id,
+                        row_index=row_index,
+                        raw_data=raw,
+                        error_type=ErrorType.PARSE_ERROR,
+                        error_message=str(exc),
+                        error_code="PARSE_ERROR",
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not create discrepancy: {e}")
+                continue
+
+            # Log row validated
+            try:
+                reconciler.log_row_validated(batch_id, row_index)
             except Exception as e:
-                logger.debug(f"Could not create discrepancy: {e}")
-            continue
+                logger.debug(f"Could not log row validated: {e}")
 
-        # Log row validated
-        try:
-            reconciler.log_row_validated(batch_id, row_index)
-        except Exception as e:
-            logger.debug(f"Could not log row validated: {e}")
+            # Generate collectability score for new inserts
+            collectability_score = generate_collectability_score()
 
-        # Generate collectability score for new inserts
-        collectability_score = generate_collectability_score()
-
-        # Insert into public.judgments
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO public.judgments (
-                        case_number,
-                        plaintiff_name,
-                        defendant_name,
-                        judgment_amount,
-                        entry_date,
-                        county,
-                        collectability_score,
-                        source_file,
-                        status,
-                        created_at
+            # Insert into public.judgments
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO public.judgments (
+                            case_number,
+                            plaintiff_name,
+                            defendant_name,
+                            judgment_amount,
+                            entry_date,
+                            county,
+                            collectability_score,
+                            source_file,
+                            status,
+                            created_at
+                        )
+                        VALUES (
+                            %(case_number)s,
+                            %(plaintiff_name)s,
+                            %(defendant_name)s,
+                            %(judgment_amount)s,
+                            %(filing_date)s,
+                            %(county)s,
+                            %(collectability_score)s,
+                            %(source_file)s,
+                            'pending',
+                            now()
+                        )
+                        ON CONFLICT (case_number) DO UPDATE SET
+                            plaintiff_name = EXCLUDED.plaintiff_name,
+                            defendant_name = EXCLUDED.defendant_name,
+                            judgment_amount = EXCLUDED.judgment_amount,
+                            entry_date = EXCLUDED.entry_date,
+                            county = EXCLUDED.county,
+                            collectability_score = EXCLUDED.collectability_score,
+                            updated_at = now()
+                        RETURNING id, (xmax = 0) AS is_insert
+                        """,
+                        {
+                            **mapped,
+                            "collectability_score": collectability_score,
+                            "source_file": f"batch:{batch_id}",
+                        },
                     )
-                    VALUES (
-                        %(case_number)s,
-                        %(plaintiff_name)s,
-                        %(defendant_name)s,
-                        %(judgment_amount)s,
-                        %(filing_date)s,
-                        %(county)s,
-                        %(collectability_score)s,
-                        %(source_file)s,
-                        'pending',
-                        now()
-                    )
-                    ON CONFLICT (case_number) DO UPDATE SET
-                        plaintiff_name = EXCLUDED.plaintiff_name,
-                        defendant_name = EXCLUDED.defendant_name,
-                        judgment_amount = EXCLUDED.judgment_amount,
-                        entry_date = EXCLUDED.entry_date,
-                        county = EXCLUDED.county,
-                        collectability_score = EXCLUDED.collectability_score,
-                        updated_at = now()
-                    RETURNING id, (xmax = 0) AS is_insert
-                    """,
-                    {
+                    result = cur.fetchone()
+                    judgment_id = str(result[0]) if result else None
+                    is_insert = result[1] if result else True
+                conn.commit()
+                success_count += 1
+
+                # Log row stored successfully
+                try:
+                    reconciler.log_row_stored(batch_id, row_index, judgment_id)
+                except Exception as e:
+                    logger.debug(f"Could not log row stored: {e}")
+
+                # Log entity-level audit for data integrity guarantee
+                try:
+                    action = "INSERT" if is_insert else "UPDATE"
+                    new_values = {
                         **mapped,
                         "collectability_score": collectability_score,
                         "source_file": f"batch:{batch_id}",
-                    },
-                )
-                result = cur.fetchone()
-                judgment_id = str(result[0]) if result else None
-                is_insert = result[1] if result else True
-            conn.commit()
-            success_count += 1
+                        "status": "pending",
+                    }
+                    reconciler.log_entity_change(
+                        entity_id=judgment_id or mapped.get("case_number", "unknown"),
+                        table_name="public.judgments",
+                        action=action,
+                        old_values=None if is_insert else {},  # Could fetch old values if needed
+                        new_values=new_values,
+                        worker_id="ingest_processor",
+                        batch_id=batch_id,
+                        source_file=f"batch:{batch_id}",
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not log entity change: {e}")
 
-            # Log row stored successfully
-            try:
-                reconciler.log_row_stored(batch_id, row_index, judgment_id)
-            except Exception as e:
-                logger.debug(f"Could not log row stored: {e}")
+            except Exception as exc:
+                logger.exception("DB error inserting mapped row %s: %s", idx, exc)
+                _log_invalid_row(conn, batch_id, raw, f"DB error: {exc}")
 
-            # Log entity-level audit for data integrity guarantee
-            try:
-                action = "INSERT" if is_insert else "UPDATE"
-                new_values = {
-                    **mapped,
-                    "collectability_score": collectability_score,
-                    "source_file": f"batch:{batch_id}",
-                    "status": "pending",
-                }
-                reconciler.log_entity_change(
-                    entity_id=judgment_id or mapped.get("case_number", "unknown"),
-                    table_name="public.judgments",
-                    action=action,
-                    old_values=None if is_insert else {},  # Could fetch old values if needed
-                    new_values=new_values,
-                    worker_id="ingest_processor",
-                    batch_id=batch_id,
-                    source_file=f"batch:{batch_id}",
-                )
-            except Exception as e:
-                logger.debug(f"Could not log entity change: {e}")
-
-        except Exception as exc:
-            logger.exception("DB error inserting mapped row %s: %s", idx, exc)
-            _log_invalid_row(conn, batch_id, raw, f"DB error: {exc}")
-
-            # Log to audit as failed
-            try:
-                reconciler.log_row_failed(batch_id, row_index, "store", "DB_ERROR", str(exc))
-            except Exception as e:
-                logger.debug(f"Could not log row failed: {e}")
-
-            # Add to Dead Letter Queue
-            try:
-                reconciler.create_discrepancy(
-                    batch_id=batch_id,
-                    row_index=row_index,
+                # Record to ops.import_errors (hardened error table)
+                error_recorder.add_error(
+                    row_number=row_index + 1,
+                    error_type="db_error",
+                    error_message=f"DB error: {exc}",
                     raw_data=raw,
-                    error_type=ErrorType.DB_ERROR,
-                    error_message=str(exc),
-                    error_code="DB_ERROR",
                 )
-            except Exception as e:
-                logger.debug(f"Could not create discrepancy: {e}")
 
-            # Rollback this row's failed transaction
-            try:
-                conn.rollback()
-            except Exception:
-                pass
+                # Log to audit as failed
+                try:
+                    reconciler.log_row_failed(batch_id, row_index, "store", "DB_ERROR", str(exc))
+                except Exception as e:
+                    logger.debug(f"Could not log row failed: {e}")
+
+                # Add to Dead Letter Queue
+                try:
+                    reconciler.create_discrepancy(
+                        batch_id=batch_id,
+                        row_index=row_index,
+                        raw_data=raw,
+                        error_type=ErrorType.DB_ERROR,
+                        error_message=str(exc),
+                        error_code="DB_ERROR",
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not create discrepancy: {e}")
+
+                # Rollback this row's failed transaction
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
     return success_count
 
@@ -671,7 +703,8 @@ def process_foil_ingest_job(conn: psycopg.Connection, job: dict[str, Any]) -> No
 
     try:
         # Step 1: Load CSV from storage
-        df = load_csv_from_storage(file_path)
+        loaded = load_csv_from_storage(file_path)
+        df = loaded.df
         if df.empty:
             logger.warning(f"[{run_id}] FOIL CSV is empty: {file_path}")
             mark_job_completed(conn, job_id)
@@ -1268,25 +1301,38 @@ def update_batch_status(
         conn.commit()
 
 
-def load_csv_from_storage(file_path: str) -> pd.DataFrame:
+@dataclass
+class LoadedCSV:
+    """Result of loading a CSV file, including content for hashing."""
+
+    df: pd.DataFrame
+    raw_content: bytes
+    file_hash: str
+
+
+def load_csv_from_storage(file_path: str, compute_hash: bool = True) -> LoadedCSV:
     """
     Load a CSV file from Supabase Storage or local filesystem.
 
     Args:
         file_path: Path in storage bucket (e.g., 'intake/batch_123.csv')
                    OR local path prefixed with 'file://' for testing
+        compute_hash: If True, compute SHA-256 hash of file content
 
     Returns:
-        pandas DataFrame with CSV contents
+        LoadedCSV with DataFrame, raw content, and file hash
     """
     # Support local file paths for testing (file:// prefix)
     if file_path.startswith("file://"):
         local_path = file_path[7:]  # Strip 'file://' prefix
         logger.info(f"Loading CSV from local path: {local_path}")
         try:
-            df = pd.read_csv(local_path)
-            logger.info(f"Loaded {len(df)} rows from local file")
-            return df
+            with open(local_path, "rb") as f:
+                raw_content = f.read()
+            df = pd.read_csv(io.BytesIO(raw_content))
+            file_hash = compute_file_hash(raw_content) if compute_hash else ""
+            logger.info(f"Loaded {len(df)} rows from local file (hash={file_hash[:12]}...)")
+            return LoadedCSV(df=df, raw_content=raw_content, file_hash=file_hash)
         except Exception as e:
             logger.error(f"Failed to load local CSV: {e}")
             raise
@@ -1306,10 +1352,11 @@ def load_csv_from_storage(file_path: str) -> pd.DataFrame:
     logger.info(f"Downloading CSV from storage: bucket={bucket}, path={path}")
 
     try:
-        response = client.storage.from_(bucket).download(path)
-        df = pd.read_csv(io.BytesIO(response))
-        logger.info(f"Loaded {len(df)} rows from {file_path}")
-        return df
+        raw_content = client.storage.from_(bucket).download(path)
+        df = pd.read_csv(io.BytesIO(raw_content))
+        file_hash = compute_file_hash(raw_content) if compute_hash else ""
+        logger.info(f"Loaded {len(df)} rows from {file_path} (hash={file_hash[:12]}...)")
+        return LoadedCSV(df=df, raw_content=raw_content, file_hash=file_hash)
     except Exception as e:
         logger.error(f"Failed to load CSV from storage: {e}")
         raise
@@ -1451,17 +1498,26 @@ def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     Expected payload:
     {
         "file_path": "intake/batch_123.csv",
-        "batch_id": "uuid-of-ingest-batch"
+        "batch_id": "uuid-of-ingest-batch",
+        "force": false  // optional: skip duplicate check
     }
+
+    Hardening features:
+    - Computes SHA-256 hash of CSV file
+    - Checks for duplicate imports (unless force=true)
+    - Records file_hash in ops.ingest_batches
     """
     job_id = str(job["id"])
     payload = job.get("payload", {})
 
     file_path = payload.get("file_path")
     batch_id = payload.get("batch_id")
+    force = payload.get("force", False)
 
     run_id = str(uuid4())[:8]
-    logger.info(f"[{run_id}] Processing job {job_id}: file_path={file_path}, batch_id={batch_id}")
+    logger.info(
+        f"[{run_id}] Processing job {job_id}: file_path={file_path}, batch_id={batch_id}, force={force}"
+    )
 
     if not file_path:
         error = "Missing file_path in job payload"
@@ -1472,8 +1528,27 @@ def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
         return
 
     try:
-        # Load CSV from storage
-        df = load_csv_from_storage(file_path)
+        # Load CSV from storage (includes file hash computation)
+        loaded = load_csv_from_storage(file_path)
+        df = loaded.df
+        file_hash = loaded.file_hash
+
+        logger.info(f"[{run_id}] File hash: {file_hash}")
+
+        # Check for duplicate imports (unless force=true)
+        if not force:
+            dup_check = check_duplicate_import(conn, file_hash, force=force)
+            if dup_check.is_duplicate:
+                error = f"Duplicate import detected: {dup_check.message}"
+                logger.warning(f"[{run_id}] {error}")
+                mark_job_failed(conn, job_id, error)
+                if batch_id:
+                    update_batch_status(conn, batch_id, "failed", error_summary=error)
+                return
+
+        # Update batch with file hash
+        if batch_id and file_hash:
+            update_batch_file_hash(conn, batch_id, file_hash, force_reimport=force)
 
         if df.empty:
             logger.warning(f"[{run_id}] CSV is empty: {file_path}")
@@ -1512,6 +1587,9 @@ def run_worker_loop() -> None:
     Main worker loop - polls for pending jobs and processes them.
     """
     from backend.workers.heartbeat import HeartbeatContext
+
+    # Log startup diagnostics
+    log_startup_diagnostics("IngestProcessor")
 
     env = get_supabase_env()
     dsn = get_supabase_db_url(env)
@@ -1574,4 +1652,9 @@ def run_worker_loop() -> None:
 
 
 if __name__ == "__main__":
+    # Preflight validation - MUST be first!
+    from backend.preflight import validate_worker_env
+
+    validate_worker_env("ingest_processor")
+
     run_worker_loop()

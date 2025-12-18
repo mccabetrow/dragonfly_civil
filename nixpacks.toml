@@ -1,0 +1,12 @@
+# Dragonfly Civil - Nixpacks Configuration
+# Ensures consistent Python builds across all Railway services
+
+[phases.setup]
+nixPkgs = ["python312", "postgresql"]
+
+[phases.install]
+cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]
+
+[start]
+# Default start command (override per-service in Railway dashboard)
+cmd = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"

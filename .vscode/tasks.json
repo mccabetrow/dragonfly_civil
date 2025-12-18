@@ -626,6 +626,40 @@
         "reveal": "always",
         "panel": "dedicated"
       }
+    },
+    {
+      "label": "Prod Gate (Dev)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "tools.prod_gate", "--env", "dev"],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Run all 5 production gate checks against dev"
+    },
+    {
+      "label": "Prod Gate (Prod)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "tools.prod_gate", "--env", "prod", "--strict"],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "prod"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "⚠️ Run all 5 production gate checks against prod (strict mode)"
     }
   ],
   "inputs": [
