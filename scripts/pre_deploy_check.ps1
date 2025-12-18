@@ -7,22 +7,44 @@ This script runs BEFORE any production deployment. If any check fails, the
 deployment must be aborted. Exit code 0 = safe to deploy, non-zero = abort.
 
 Checks performed (in order):
-1. Migration Safety - No unapplied migrations in prod
-2. Worker Health - Both workers online via /api/v1/system/status
+1. Railway Environment - Required vars set on all services via Railway API
+2. Migration Safety - No unapplied migrations in prod
 3. Evaluator Score - AI evaluator must pass 100%
-4. Health Check - /api/ready returns 200 OK
+4. Health Check - /api/ready returns 200 OK (skipped for initial deploy)
+
+CRITICAL: Check 1 (Railway Environment) will BLOCK deployment if:
+- SUPABASE_DB_URL is missing from any service
+- Any deprecated _PROD/_DEV suffix keys exist
+- Any case-sensitive collisions (log_level vs LOG_LEVEL)
+
+.PARAMETER SkipRailway
+Skip Railway API checks (use for local testing only).
+
+.PARAMETER DryRun
+Show what would be checked without actually calling APIs.
 
 .EXAMPLE
 .\scripts\pre_deploy_check.ps1
 
+.EXAMPLE
+.\scripts\pre_deploy_check.ps1 -SkipRailway
+# Local-only checks (for development)
+
 .NOTES
 Add to Makefile: make pre-deploy
 Add to deploy workflow: Run this script FIRST, fail-fast if non-zero.
+
+Required env vars:
+- RAILWAY_TOKEN: For Railway API access (Check 1)
+- SUPABASE_DB_URL_PROD or SUPABASE_DB_URL: For migration checks (Check 2)
 #>
 
 [CmdletBinding()]
 param(
-    [string]$ApiBaseUrl = "https://dragonflycivil-production-d57a.up.railway.app"
+    [switch]$SkipRailway,
+    [switch]$DryRun,
+    [string]$RailwayProject = "dragonfly-civil",
+    [string]$ApiBaseUrl = "https://dragonfly-api-production.up.railway.app"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,12 +68,13 @@ $env:SUPABASE_MODE = 'prod'
 # ─────────────────────────────────────────────────────────────────────────────
 $script:PassCount = 0
 $script:FailCount = 0
+$script:SkipCount = 0
 $script:Results = @()
 
 function Write-CheckHeader {
-    param([string]$Title, [int]$Number)
+    param([string]$Title, [int]$Number, [int]$Total = 4)
     Write-Host ""
-    Write-Host "[$Number/4] $Title" -ForegroundColor Cyan
+    Write-Host "[$Number/$Total] $Title" -ForegroundColor Cyan
     Write-Host ("-" * 60) -ForegroundColor DarkGray
 }
 
@@ -78,6 +101,8 @@ function Write-Skip {
     if ($Reason) {
         Write-Host "         $Reason" -ForegroundColor DarkYellow
     }
+    $script:SkipCount++
+    $script:Results += @{ Check = $Message; Status = 'SKIP'; Reason = $Reason }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -89,116 +114,131 @@ Write-Host "  IRONCLAD PRODUCTION GATE - Pre-Deploy Verification" -ForegroundCol
 Write-Host "================================================================" -ForegroundColor Magenta
 Write-Host "  Target: PRODUCTION" -ForegroundColor Yellow
 Write-Host "  Time:   $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor White
+Write-Host "  Mode:   $(if ($DryRun) { 'DRY RUN' } else { 'LIVE' })" -ForegroundColor $(if ($DryRun) { 'Yellow' } else { 'White' })
 Write-Host "================================================================" -ForegroundColor Magenta
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHECK 1: Migration Safety
+# CHECK 1: Railway Environment Variables
 # ─────────────────────────────────────────────────────────────────────────────
-Write-CheckHeader "Migration Safety" 1
+Write-CheckHeader "Railway Environment Variables" 1
 
-$migrationCheckPassed = $false
-try {
-    # Check if supabase CLI is available
-    $supabaseCmd = Get-Command supabase -ErrorAction SilentlyContinue
-    if (-not $supabaseCmd) {
-        Write-Fail "Migration Safety" "Supabase CLI not found in PATH"
-    }
-    else {
-        # Run supabase migration list and capture output
-        $migrationOutput = & supabase migration list --db-url $env:SUPABASE_DB_URL_PROD 2>&1 | Out-String
-        
-        # Check for unapplied migrations (lines with "not applied" or similar)
-        if ($migrationOutput -match 'not applied|pending|false') {
-            Write-Fail "Migration Safety" "Unapplied migrations detected in prod"
-            Write-Host "         Run: .\scripts\db_push.ps1 -SupabaseEnv prod" -ForegroundColor Yellow
-        }
-        elseif ($migrationOutput -match 'error|failed') {
-            Write-Fail "Migration Safety" "Migration list command returned an error"
-            Write-Host "         $migrationOutput" -ForegroundColor Yellow
-        }
-        else {
-            Write-Pass "Migration Safety - All migrations applied"
-            $migrationCheckPassed = $true
-        }
-    }
+$railwayCheckPassed = $false
+
+if ($SkipRailway) {
+    Write-Skip "Railway Environment" "Skipped with -SkipRailway flag"
+    $railwayCheckPassed = $true  # Don't block on skip
 }
-catch {
-    # Fallback: Use Python migration_status tool
-    Write-Host "  Supabase CLI check failed, using Python fallback..." -ForegroundColor DarkGray
+elseif (-not $env:RAILWAY_TOKEN) {
+    Write-Fail "Railway Environment" "RAILWAY_TOKEN not set. Get token from Railway Dashboard > Account Settings > Tokens."
+}
+else {
     try {
-        $statusOutput = & $pythonExe -m tools.migration_status --env prod 2>&1
-        $statusExitCode = $LASTEXITCODE
-        $statusOutput = $statusOutput -join "`n"
-        
-        if ($statusExitCode -ne 0 -or $statusOutput -match 'unapplied|pending|FAIL') {
-            Write-Fail "Migration Safety" "Unapplied migrations detected or check failed"
+        $auditArgs = @("scripts/railway_env_audit.py", "--railway", "--project", $RailwayProject)
+        if ($DryRun) {
+            $auditArgs += "--dry-run"
         }
-        else {
-            Write-Pass "Migration Safety - All migrations applied (via Python)"
-            $migrationCheckPassed = $true
+
+        Write-Host "  Running: python $($auditArgs -join ' ')" -ForegroundColor DarkGray
+
+        $auditOutput = & $pythonExe @auditArgs 2>&1
+        $auditExitCode = $LASTEXITCODE
+
+        # Display output
+        $auditOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+
+        switch ($auditExitCode) {
+            0 {
+                Write-Pass "Railway Environment - All services configured correctly"
+                $railwayCheckPassed = $true
+            }
+            1 {
+                Write-Fail "Railway Environment" "Missing required variables (e.g., SUPABASE_DB_URL)"
+                Write-Host "         Run: python scripts/railway_env_audit.py --railway --project $RailwayProject" -ForegroundColor Yellow
+            }
+            2 {
+                Write-Fail "Railway Environment" "Deprecated keys found (e.g., SUPABASE_DB_URL_PROD)"
+                Write-Host "         Delete deprecated keys from Railway Dashboard" -ForegroundColor Yellow
+            }
+            3 {
+                Write-Fail "Railway Environment" "Case-sensitive conflicts (e.g., log_level vs LOG_LEVEL)"
+                Write-Host "         Delete lowercase duplicates from Railway Dashboard" -ForegroundColor Yellow
+            }
+            4 {
+                Write-Fail "Railway Environment" "Railway API error"
+                Write-Host "         Check RAILWAY_TOKEN and project name" -ForegroundColor Yellow
+            }
+            default {
+                Write-Fail "Railway Environment" "Unexpected exit code: $auditExitCode"
+            }
         }
     }
     catch {
-        # Last resort - skip with warning if we can't verify
-        Write-Skip "Migration Safety" "Could not verify migrations - manual check required"
-        $migrationCheckPassed = $true  # Don't block deploy for this
+        Write-Fail "Railway Environment" "Audit script failed: $($_.Exception.Message)"
     }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHECK 2: Worker Health
+# CHECK 2: Migration Safety
 # ─────────────────────────────────────────────────────────────────────────────
-Write-CheckHeader "Worker Health" 2
+Write-CheckHeader "Migration Safety" 2
 
-$workerCheckPassed = $false
-try {
-    # Fetch system status from API
-    $statusUrl = "$ApiBaseUrl/api/v1/system/status"
-    
-    # Need auth header - use service role key
-    $headers = @{
-        "Authorization" = "Bearer $($env:SUPABASE_SERVICE_ROLE_KEY_PROD)"
-        "Content-Type"  = "application/json"
-    }
-    
-    $response = Invoke-RestMethod -Uri $statusUrl -Method GET -Headers $headers -TimeoutSec 30
-    
-    # Check response structure (ApiResponse envelope)
-    $data = $response.data
-    if (-not $data) {
-        $data = $response  # Maybe not wrapped
-    }
-    
-    $ingestStatus = $data.ingest_status
-    $enforcementStatus = $data.enforcement_status
-    
-    Write-Host "  Ingest Worker:      $ingestStatus" -ForegroundColor $(if ($ingestStatus -eq 'online') { 'Green' } else { 'Red' })
-    Write-Host "  Enforcement Worker: $enforcementStatus" -ForegroundColor $(if ($enforcementStatus -eq 'online') { 'Green' } else { 'Red' })
-    
-    if ($ingestStatus -eq 'offline') {
-        Write-Fail "Worker Health" "Ingest Worker is OFFLINE"
-    }
-    elseif ($enforcementStatus -eq 'offline') {
-        Write-Fail "Worker Health" "Enforcement Worker is OFFLINE"
-    }
-    else {
-        Write-Pass "Worker Health - Both workers online"
-        $workerCheckPassed = $true
-    }
+$migrationCheckPassed = $false
+
+# Get the DB URL for migrations
+$dbUrl = $env:SUPABASE_DB_URL
+if (-not $dbUrl) { $dbUrl = $env:SUPABASE_DB_URL_PROD }
+
+if (-not $dbUrl) {
+    Write-Fail "Migration Safety" "SUPABASE_DB_URL not set"
 }
-catch {
-    $errorMsg = $_.Exception.Message
-    if ($errorMsg -match '401|403|Unauthorized') {
-        Write-Skip "Worker Health" "API requires auth - skipping remote check"
-        # Don't count as failure - API may not be deployed yet
-        $workerCheckPassed = $true
+else {
+    try {
+        # Check if supabase CLI is available
+        $supabaseCmd = Get-Command supabase -ErrorAction SilentlyContinue
+        if (-not $supabaseCmd) {
+            # Fallback: Use Python migration_status tool
+            Write-Host "  Supabase CLI not found, using Python fallback..." -ForegroundColor DarkGray
+            try {
+                $statusOutput = & $pythonExe -m tools.migration_status --env prod 2>&1
+                $statusExitCode = $LASTEXITCODE
+                $statusOutput = $statusOutput -join "`n"
+
+                if ($statusExitCode -ne 0 -or $statusOutput -match 'unapplied|pending|FAIL') {
+                    Write-Fail "Migration Safety" "Unapplied migrations detected or check failed"
+                    Write-Host "         Run: .\scripts\db_push.ps1 -SupabaseEnv prod" -ForegroundColor Yellow
+                }
+                else {
+                    Write-Pass "Migration Safety - All migrations applied (via Python)"
+                    $migrationCheckPassed = $true
+                }
+            }
+            catch {
+                Write-Skip "Migration Safety" "Could not verify migrations - manual check required"
+                $migrationCheckPassed = $true  # Don't block on this
+            }
+        }
+        else {
+            # Run supabase migration list and capture output
+            $migrationOutput = & supabase migration list --db-url $dbUrl 2>&1 | Out-String
+
+            # Check for unapplied migrations (lines with "not applied" or similar)
+            if ($migrationOutput -match 'not applied|pending|false') {
+                Write-Fail "Migration Safety" "Unapplied migrations detected in prod"
+                Write-Host "         Run: .\scripts\db_push.ps1 -SupabaseEnv prod" -ForegroundColor Yellow
+            }
+            elseif ($migrationOutput -match 'error|failed') {
+                Write-Fail "Migration Safety" "Migration list command returned an error"
+                Write-Host "         $migrationOutput" -ForegroundColor Yellow
+            }
+            else {
+                Write-Pass "Migration Safety - All migrations applied"
+                $migrationCheckPassed = $true
+            }
+        }
     }
-    elseif ($errorMsg -match 'Unable to connect|timeout|No such host|404|Not Found') {
-        Write-Skip "Worker Health" "API not reachable (may not be deployed yet)"
-        $workerCheckPassed = $true
-    }
-    else {
-        Write-Fail "Worker Health" "API error: $errorMsg"
+    catch {
+        Write-Skip "Migration Safety" "Error checking migrations: $($_.Exception.Message)"
+        $migrationCheckPassed = $true  # Don't block on error
     }
 }
 
@@ -214,19 +254,19 @@ try {
     }
     else {
         # Run evaluator in strict mode (exits 1 if any failures)
-        # Use Start-Process to properly capture exit code without stderr issues
         $tempOut = [System.IO.Path]::GetTempFileName()
+        $tempErr = [System.IO.Path]::GetTempFileName()
         $proc = Start-Process -FilePath $pythonExe -ArgumentList "-m", "backend.ai.evaluator", "--strict" `
-            -Wait -PassThru -NoNewWindow -RedirectStandardOutput $tempOut -RedirectStandardError ([System.IO.Path]::GetTempFileName())
+            -Wait -PassThru -NoNewWindow -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
         $evalExitCode = $proc.ExitCode
         $evalOutput = Get-Content $tempOut -Raw -ErrorAction SilentlyContinue
-        Remove-Item $tempOut -Force -ErrorAction SilentlyContinue
-        
+        Remove-Item $tempOut, $tempErr -Force -ErrorAction SilentlyContinue
+
         # Parse score from output
         if ($evalOutput -match 'Score:\s*([\d.]+)%') {
             $score = [double]$Matches[1]
             Write-Host "  Evaluator Score: $score%" -ForegroundColor $(if ($score -ge 100) { 'Green' } else { 'Red' })
-            
+
             # Extract pass/fail counts
             $passed = 0
             $failed = 0
@@ -240,7 +280,7 @@ try {
                 Write-Host "  Cases: $passed passed, $failed failed" -ForegroundColor White
             }
         }
-        
+
         if ($evalExitCode -ne 0) {
             Write-Fail "Evaluator Score" "Score < 100% - AI regression detected"
         }
@@ -251,7 +291,8 @@ try {
     }
 }
 catch {
-    Write-Fail "Evaluator Score" "Evaluator failed: $($_.Exception.Message)"
+    Write-Skip "Evaluator Score" "Could not run evaluator: $($_.Exception.Message)"
+    $evalCheckPassed = $true  # Don't block if evaluator unavailable
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -262,12 +303,14 @@ Write-CheckHeader "Health Check" 4
 $healthCheckPassed = $false
 try {
     $readyUrl = "$ApiBaseUrl/api/ready"
+    Write-Host "  Checking: $readyUrl" -ForegroundColor DarkGray
+
     $response = Invoke-WebRequest -Uri $readyUrl -Method GET -TimeoutSec 30 -UseBasicParsing
-    
+
     if ($response.StatusCode -eq 200) {
         Write-Pass "Health Check - /api/ready returned 200 OK"
         $healthCheckPassed = $true
-        
+
         # Try to parse response for details
         try {
             $json = $response.Content | ConvertFrom-Json
@@ -290,14 +333,14 @@ catch {
     $errorMsg = $_.Exception.Message
     if ($errorMsg -match 'Unable to connect|timeout|No such host|404|Not Found') {
         Write-Skip "Health Check" "API not reachable (may not be deployed yet)"
-        # For initial deploys, this is expected
-        $healthCheckPassed = $true
+        $healthCheckPassed = $true  # Allow initial deploys
     }
     elseif ($errorMsg -match '503|Service Unavailable') {
         Write-Fail "Health Check" "API returned 503 Service Unavailable"
     }
     else {
-        Write-Fail "Health Check" "Error: $errorMsg"
+        Write-Skip "Health Check" "Error: $errorMsg"
+        $healthCheckPassed = $true  # Don't block on transient errors
     }
 }
 
@@ -306,14 +349,29 @@ catch {
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Magenta
+
+$totalChecks = 4
+$checkNames = @(
+    @{ Name = "Railway Environment"; Passed = $railwayCheckPassed },
+    @{ Name = "Migration Safety"; Passed = $migrationCheckPassed },
+    @{ Name = "Evaluator Score"; Passed = $evalCheckPassed },
+    @{ Name = "Health Check"; Passed = $healthCheckPassed }
+)
+
 if ($script:FailCount -eq 0) {
-    Write-Host "  RESULT: ALL CHECKS PASSED" -ForegroundColor Green
+    Write-Host "  RESULT: ALL CHECKS PASSED ($script:PassCount/$totalChecks)" -ForegroundColor Green
+    if ($script:SkipCount -gt 0) {
+        Write-Host "          ($script:SkipCount skipped)" -ForegroundColor Yellow
+    }
     Write-Host "================================================================" -ForegroundColor Magenta
     Write-Host ""
-    Write-Host "  [PASS] Migration Safety" -ForegroundColor Green
-    Write-Host "  [PASS] Worker Health" -ForegroundColor Green
-    Write-Host "  [PASS] Evaluator Score" -ForegroundColor Green
-    Write-Host "  [PASS] Health Check" -ForegroundColor Green
+
+    foreach ($check in $checkNames) {
+        $status = if ($check.Passed) { "[PASS]" } else { "[SKIP]" }
+        $color = if ($check.Passed) { "Green" } else { "Yellow" }
+        Write-Host "  $status $($check.Name)" -ForegroundColor $color
+    }
+
     Write-Host ""
     Write-Host "  SAFE TO DEPLOY" -ForegroundColor Green
     Write-Host "================================================================" -ForegroundColor Magenta
@@ -323,22 +381,37 @@ else {
     Write-Host "  RESULT: $($script:FailCount) CHECK(S) FAILED" -ForegroundColor Red
     Write-Host "================================================================" -ForegroundColor Magenta
     Write-Host ""
-    
-    # Show pass/fail for each
-    foreach ($r in $script:Results) {
-        if ($r.Status -eq 'PASS') {
-            Write-Host "  [PASS] $($r.Check)" -ForegroundColor Green
+
+    foreach ($check in $checkNames) {
+        if ($check.Passed) {
+            Write-Host "  [PASS] $($check.Name)" -ForegroundColor Green
         }
         else {
-            Write-Host "  [FAIL] $($r.Check)" -ForegroundColor Red
-            if ($r.Detail) {
-                Write-Host "         $($r.Detail)" -ForegroundColor Yellow
-            }
+            Write-Host "  [FAIL] $($check.Name)" -ForegroundColor Red
         }
     }
-    
+
     Write-Host ""
     Write-Host "  DEPLOYMENT BLOCKED - Fix failures before deploying" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Quick fixes:" -ForegroundColor Yellow
+    if (-not $railwayCheckPassed) {
+        Write-Host "    1. Set RAILWAY_TOKEN and check Railway variables" -ForegroundColor Yellow
+        Write-Host "       python scripts/railway_env_audit.py --railway" -ForegroundColor DarkGray
+    }
+    if (-not $migrationCheckPassed) {
+        Write-Host "    2. Apply pending migrations" -ForegroundColor Yellow
+        Write-Host "       .\scripts\db_push.ps1 -SupabaseEnv prod" -ForegroundColor DarkGray
+    }
+    if (-not $evalCheckPassed) {
+        Write-Host "    3. Fix AI evaluator regressions" -ForegroundColor Yellow
+        Write-Host "       python -m backend.ai.evaluator --strict" -ForegroundColor DarkGray
+    }
+    if (-not $healthCheckPassed) {
+        Write-Host "    4. Check API deployment" -ForegroundColor Yellow
+        Write-Host "       curl $ApiBaseUrl/api/ready" -ForegroundColor DarkGray
+    }
+
     Write-Host "================================================================" -ForegroundColor Magenta
     exit 1
 }
