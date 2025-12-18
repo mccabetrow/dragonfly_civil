@@ -42,8 +42,9 @@ from src.supabase_client import get_supabase_db_url, get_supabase_env
 logger = configure_worker_logging("prod_gate")
 
 # Constants
-# Allow override via environment variable for flexibility
+# API URLs - allow override via environment variables
 PROD_API_URL = os.getenv("API_BASE_URL_PROD", "https://dragonfly-api-production.up.railway.app")
+DEV_API_URL = os.getenv("API_BASE_URL_DEV", "http://localhost:8000")
 EVALUATOR_PASS_THRESHOLD = 0.95  # 95% minimum pass rate
 
 
@@ -156,10 +157,13 @@ def check_migration_safety(env: str) -> GateResult:
         pending = [m for m in local_migrations if m not in applied]
 
         if pending:
+            # In dev, pending migrations are a warning, not a failure
+            is_dev = env == "dev"
             return GateResult(
                 name="Migration Safety",
-                passed=False,
-                message=f"{len(pending)} pending migration(s)",
+                passed=is_dev,  # Pass in dev (warning only), fail in prod
+                message=f"{len(pending)} pending migration(s)"
+                + (" (dev: warning only)" if is_dev else ""),
                 details={
                     "pending": pending[:5],  # Show first 5
                     "total_pending": len(pending),
@@ -297,13 +301,17 @@ def check_evaluator_pass_rate() -> GateResult:
         )
 
 
-def check_api_readiness() -> GateResult:
+def check_api_readiness(env: str) -> GateResult:
     """
     Gate 4: API readiness - /api/health returns 200 OK.
+
+    In prod, checks the Railway production API.
+    In dev, checks localhost (skips if not running).
     """
     logger.info("Checking API readiness...")
 
-    health_url = f"{PROD_API_URL}/api/health"
+    base_url = PROD_API_URL if env == "prod" else DEV_API_URL
+    health_url = f"{base_url}/api/health"
 
     try:
         req = Request(health_url, method="GET")
@@ -347,6 +355,14 @@ def check_api_readiness() -> GateResult:
             details={"url": health_url},
         )
     except URLError as e:
+        # In dev, connection refused is expected if local server isn't running
+        if env == "dev":
+            return GateResult(
+                name="API Readiness",
+                passed=True,
+                message="Skipped (dev: local API not running)",
+                details={"url": health_url, "hint": "Start with: uvicorn backend.main:app"},
+            )
         return GateResult(
             name="API Readiness",
             passed=False,
@@ -361,13 +377,23 @@ def check_api_readiness() -> GateResult:
         )
 
 
-def check_worker_status(env: str) -> GateResult:
+def check_worker_status(env: str, skip_in_dev: bool = True) -> GateResult:
     """
     Gate 5: Worker status - workers show recent heartbeats.
 
     Checks ops.worker_heartbeats for workers that have checked in recently.
+    In dev mode, skips by default (workers not typically running locally).
     """
     logger.info("Checking worker status...")
+
+    # Skip in dev mode unless explicitly enabled
+    if env == "dev" and skip_in_dev:
+        return GateResult(
+            name="Worker Status",
+            passed=True,
+            message="Skipped (dev: workers not running locally)",
+            details={"hint": "Run workers locally to enable this check"},
+        )
 
     try:
         db_url = get_supabase_db_url(env)
@@ -464,7 +490,7 @@ def run_production_gate(env: str, strict: bool = False) -> int:
     report.add(check_migration_safety(env))
     report.add(check_db_reality(env))
     report.add(check_evaluator_pass_rate())
-    report.add(check_api_readiness())
+    report.add(check_api_readiness(env))
     report.add(check_worker_status(env))
 
     report.finalize()
