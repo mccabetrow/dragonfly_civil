@@ -108,7 +108,7 @@ function Get-ElapsedMs {
 
 function Write-Step {
     param([string]$Name, [string]$Status = "RUNNING")
-    $elapsed = Get-ElapsedMs
+    $elapsed = [int](Get-ElapsedMs)
     $color = switch ($Status) {
         "PASS" { "Green" }
         "FAIL" { "Red" }
@@ -116,7 +116,8 @@ function Write-Step {
         "RUNNING" { "Cyan" }
         default { "White" }
     }
-    Write-Host "[$('{0:D6}' -f $elapsed)ms] [$Status] $Name" -ForegroundColor $color
+    $elapsedStr = $elapsed.ToString().PadLeft(6, '0')
+    Write-Host "[${elapsedStr}ms] [$Status] $Name" -ForegroundColor $color
 }
 
 function Record-Result {
@@ -394,7 +395,8 @@ function Show-MissionReport {
 
     Write-Host "Target:       $ApiBase" -ForegroundColor White
     Write-Host "CSV File:     $(Split-Path -Leaf $CsvPath)" -ForegroundColor White
-    Write-Host "Batch ID:     $($script:batchId ?? 'N/A')" -ForegroundColor White
+    $batchDisplay = if ($script:batchId) { $script:batchId } else { 'N/A' }
+    Write-Host "Batch ID:     $batchDisplay" -ForegroundColor White
     Write-Host "Total Time:   ${totalMs}ms" -ForegroundColor White
     Write-Host ""
 
@@ -425,10 +427,10 @@ function Show-MissionReport {
     Write-Host "-" * 70 -ForegroundColor DarkGray
     Write-Host ""
 
-    $passCount = ($script:results | Where-Object { $_.Status -eq "PASS" }).Count
-    $failCount = ($script:results | Where-Object { $_.Status -eq "FAIL" }).Count
-    $warnCount = ($script:results | Where-Object { $_.Status -eq "WARN" }).Count
-    $totalCount = $script:results.Count
+    $passCount = @($script:results | Where-Object { $_.Status -eq "PASS" }).Count
+    $failCount = @($script:results | Where-Object { $_.Status -eq "FAIL" }).Count
+    $warnCount = @($script:results | Where-Object { $_.Status -eq "WARN" }).Count
+    $totalCount = @($script:results).Count
 
     if ($script:allPassed) {
         Write-Host "VERDICT: ALL SYSTEMS GO" -ForegroundColor Green -BackgroundColor DarkGreen

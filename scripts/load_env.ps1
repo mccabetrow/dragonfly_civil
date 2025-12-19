@@ -63,4 +63,4 @@ Get-Content -Path $EnvPath | ForEach-Object {
     }
 }
 
-Write-Host "✓ Loaded $loadedCount variables from .env.$Mode" -ForegroundColor Green
+Write-Host "[OK] Loaded $loadedCount variables from .env.$Mode" -ForegroundColor Green
