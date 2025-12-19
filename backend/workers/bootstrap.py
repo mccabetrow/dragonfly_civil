@@ -642,13 +642,42 @@ class WorkerBootstrap:
                 self._handle_transient_failure(e, conn, throttled_log)
                 conn = None  # Force reconnect
 
+            except psycopg.errors.InFailedSqlTransaction as e:
+                # Transaction left in failed state - must rollback
+                logger.warning(f"Transaction in failed state, rolling back: {e}")
+                if conn:
+                    try:
+                        conn.rollback()
+                        logger.info("Transaction rolled back successfully")
+                    except Exception as rollback_err:
+                        logger.error(f"Rollback failed, forcing reconnect: {rollback_err}")
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                        conn = None  # Force reconnect
+
             except KeyboardInterrupt:
                 logger.info("Keyboard interrupt received")
                 break
 
             except Exception as e:
-                # Unexpected error
+                # Unexpected error - try to rollback any failed transaction first
                 logger.exception(f"Unexpected error in worker loop: {e}")
+
+                # Attempt rollback to recover connection if possible
+                if conn and not conn.closed:
+                    try:
+                        conn.rollback()
+                        logger.debug("Rolled back transaction after unexpected error")
+                    except Exception as rollback_err:
+                        logger.warning(f"Rollback after error failed: {rollback_err}")
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                        conn = None  # Force reconnect
+
                 delay = self._backoff.record_failure()
                 self._heartbeat.set_degraded(f"Unexpected error: {type(e).__name__}")
 
