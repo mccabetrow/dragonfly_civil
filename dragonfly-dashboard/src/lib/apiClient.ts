@@ -16,8 +16,21 @@
 // CONFIG & VALIDATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const _BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
-const _API_KEY = import.meta.env.VITE_DRAGONFLY_API_KEY as string | undefined;
+/**
+ * Sanitize environment variable: trim whitespace and remove trailing slashes.
+ * This defends against copy-paste errors that cause Vercel warnings.
+ */
+function sanitizeEnvVar(value: string | undefined, isUrl = false): string | undefined {
+  if (!value) return undefined;
+  let cleaned = value.trim().replace(/[\r\n]+/g, '');
+  if (isUrl) {
+    cleaned = cleaned.replace(/\/+$/, ''); // Remove trailing slashes
+  }
+  return cleaned || undefined;
+}
+
+const _BASE_URL = sanitizeEnvVar(import.meta.env.VITE_API_BASE_URL, true);
+const _API_KEY = sanitizeEnvVar(import.meta.env.VITE_DRAGONFLY_API_KEY);
 
 // Validate configuration on module load
 if (!_BASE_URL || !_API_KEY) {
@@ -32,7 +45,7 @@ if (!_BASE_URL || !_API_KEY) {
   throw new Error(errorMsg);
 }
 
-// These are guaranteed to be strings after validation
+// These are guaranteed to be clean strings after validation
 const BASE_URL: string = _BASE_URL;
 const API_KEY: string = _API_KEY;
 

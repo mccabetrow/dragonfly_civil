@@ -416,6 +416,99 @@ with psycopg.connect(get_supabase_db_url()) as conn:
 
 ---
 
+## 4. Release Gate: Pre-Deployment Validation
+
+The release gate (`tools/prod_gate.py`) is a comprehensive pre-deployment check system with two modes:
+
+### Gate Modes
+
+| Mode   | Purpose                         | When to Use                  |
+| ------ | ------------------------------- | ---------------------------- |
+| `dev`  | Local correctness (tests, lint) | Before committing, local dev |
+| `prod` | Strict production blockers      | Before deploying to Railway  |
+
+### Running the Release Gate
+
+**Dev Mode (Local Correctness):**
+
+```powershell
+# Full dev gate
+$env:SUPABASE_MODE='dev'
+python -m tools.prod_gate --mode dev
+
+# Skip slow checks
+python -m tools.prod_gate --mode dev --skip pytest evaluator
+```
+
+**Prod Mode (Deployment Readiness):**
+
+```powershell
+# Full prod gate (requires prod credentials)
+$env:SUPABASE_MODE='prod'
+python -m tools.prod_gate --mode prod
+
+# JSON output for CI/CD
+python -m tools.prod_gate --mode prod --json
+```
+
+### Check Reference
+
+| Check             | Dev Mode | Prod Mode | What It Validates                   |
+| ----------------- | -------- | --------- | ----------------------------------- |
+| PyTest Suite      | ✅       | ❌        | All tests pass                      |
+| Import Graph      | ✅       | ❌        | Key modules import without error    |
+| Lint (Ruff)       | ✅       | ❌        | No critical syntax errors           |
+| AI Evaluator      | ✅       | ✅        | ≥95% pass rate on golden dataset    |
+| API Health        | ❌       | ✅        | /api/health returns 200 OK          |
+| Worker Heartbeats | ❌       | ✅        | Workers online in last 5 minutes    |
+| DB Connectivity   | ✅       | ✅        | Database reachable, tables exist    |
+| Migration Status  | ⚠️       | ✅        | No pending migrations (warn in dev) |
+
+### Troubleshooting Gate Failures
+
+**"API Health failed: Connection failed"**
+
+- Verify `DRAGONFLY_API_URL_PROD` env var is set correctly
+- Check Railway API service is deployed and running
+- Run: `curl https://dragonflycivil-production-d57a.up.railway.app/api/health`
+
+**"Worker Heartbeats: No workers active in last 300s"**
+
+- Workers may have crashed. Check Railway logs.
+- Restart workers: Railway Dashboard → Service → Restart
+- See [Scenario 1: Worker Death](#1-scenario-worker-death-heartbeat-failure)
+
+**"Migration Status: N pending migration(s)"**
+
+- Apply migrations before deploying:
+  ```powershell
+  ./scripts/db_push.ps1 -SupabaseEnv prod
+  ```
+
+**"DB Connectivity: Connection failed"**
+
+- Check `SUPABASE_DB_URL` env var
+- Verify database is not in maintenance mode
+- Try: `python -m tools.doctor --env prod`
+
+**"AI Evaluator: below 95% threshold"**
+
+- Review failed cases in evaluator output
+- Update golden dataset if legitimate model changes
+- Do not deploy until evaluator passes
+
+### Environment Variables
+
+The release gate reads these env vars (no hardcoded URLs):
+
+| Variable                 | Required | Purpose                          |
+| ------------------------ | -------- | -------------------------------- |
+| `SUPABASE_MODE`          | ✅       | Target environment (dev/prod)    |
+| `DRAGONFLY_API_URL_PROD` | ⚪       | Prod API URL (has default)       |
+| `DRAGONFLY_API_URL_DEV`  | ⚪       | Dev API URL (defaults localhost) |
+
+---
+
 ## Quick Reference: Common SQL Snippets
 
 ```sql

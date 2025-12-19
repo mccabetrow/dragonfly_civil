@@ -345,9 +345,9 @@ class TestSimplicityPipelineIntegration:
         """Get database URL from environment."""
         import os
 
-        url = os.environ.get("SUPABASE_DB_URL_DEV") or os.environ.get("SUPABASE_DB_URL")
+        url = os.environ.get("SUPABASE_DB_URL")
         if not url:
-            pytest.skip("Database URL not configured")
+            pytest.skip("SUPABASE_DB_URL not configured")
         return url
 
     def test_create_and_process_batch(self, db_url: str, sample_df: pd.DataFrame) -> None:

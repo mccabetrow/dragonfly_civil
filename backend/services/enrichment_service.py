@@ -13,6 +13,7 @@ Observability:
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
@@ -20,6 +21,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
 from ..config import get_settings
 from ..core.logging import (
@@ -36,6 +38,73 @@ from ..db import get_pool
 logger = get_logger(__name__)
 
 settings = get_settings()
+
+
+# ---------------------------------------------------------------------------
+# Async RPC Helper: ops.queue_job (canonical)
+# ---------------------------------------------------------------------------
+
+
+async def queue_job_async(
+    pool: AsyncConnectionPool,
+    job_type: str,
+    payload: dict[str, Any],
+    priority: int = 0,
+    run_at: str | None = None,
+) -> UUID | None:
+    """
+    Queue a job using ops.queue_job RPC (async version, canonical method).
+
+    This is the preferred async method for enqueuing jobs. It replaces raw
+    INSERT INTO ops.job_queue statements and supports priority and scheduled
+    execution.
+
+    Args:
+        pool: Async connection pool
+        job_type: Type of job (must be valid ops.job_type_enum value)
+        payload: Job payload as dict
+        priority: Job priority (higher = more urgent, default: 0)
+        run_at: Optional ISO timestamp for delayed execution
+
+    Returns:
+        UUID of the created job, or None on failure
+    """
+    try:
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT ops.queue_job(
+                        p_type := %s,
+                        p_payload := %s::jsonb,
+                        p_priority := %s,
+                        p_run_at := COALESCE(%s::timestamptz, now())
+                    )
+                    """,
+                    (job_type, json.dumps(payload), priority, run_at),
+                )
+                row = await cur.fetchone()
+                if row and row.get("queue_job"):
+                    return row["queue_job"]
+                return None
+    except Exception as e:
+        logger.warning(f"Failed to queue job via RPC: {e}")
+        return None
+
+
+async def enqueue_job_async(
+    pool: AsyncConnectionPool,
+    job_type: str,
+    payload: dict[str, Any],
+    status: str = "pending",
+) -> UUID | None:
+    """
+    DEPRECATED: Use queue_job_async() instead.
+
+    Enqueue a job using ops.enqueue_job RPC (async version).
+    """
+    # Delegate to queue_job_async for forward compatibility
+    return await queue_job_async(pool, job_type, payload, priority=0)
 
 
 # ---------------------------------------------------------------------------
@@ -361,23 +430,13 @@ async def queue_enrichment(judgment_id: str, amount: float) -> Optional[UUID]:
                 logger.debug("ops.job_queue table does not exist, skipping enrichment queue")
                 return None
 
-        async with conn.transaction():
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO ops.job_queue (job_type, payload, status)
-                    VALUES (%s::ops.job_type_enum, %s::jsonb, 'pending')
-                    RETURNING id
-                    """,
-                    (job_type, psycopg.types.json.Json(payload)),
-                )
-                row = await cur.fetchone()
+        # Use ops.enqueue_job RPC instead of raw INSERT
+        job_id = await enqueue_job_async(conn, job_type, payload)
 
-        if row is None:
-            logger.warning("Failed to create job - no row returned")
+        if job_id is None:
+            logger.warning("Failed to create job - no job_id returned from RPC")
             return None
 
-        job_id = row["id"]
         logger.info(f"Queued {job_type} job {job_id} for judgment {judgment_id}")
         return job_id
 
@@ -403,21 +462,12 @@ async def queue_pdf_generation(judgment_id: str, **kwargs: Any) -> UUID:
     if conn is None:
         raise RuntimeError("Database connection not available")
 
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            """
-            INSERT INTO ops.job_queue (job_type, payload, status)
-            VALUES ('generate_pdf'::ops.job_type_enum, %s::jsonb, 'pending')
-            RETURNING id
-            """,
-            (psycopg.types.json.Json(payload),),
-        )
-        row = await cur.fetchone()
+    # Use ops.enqueue_job RPC instead of raw INSERT
+    job_id = await enqueue_job_async(conn, "generate_pdf", payload)
 
-    if row is None:
-        raise RuntimeError("Failed to create job")
+    if job_id is None:
+        raise RuntimeError("Failed to create job - RPC returned None")
 
-    job_id = row["id"]
     logger.info(f"Queued PDF generation job {job_id} for judgment {judgment_id}")
     return job_id
 
@@ -426,7 +476,7 @@ async def process_one_job() -> bool:
     """
     Attempt to claim and process one job from the queue.
 
-    Uses FOR UPDATE SKIP LOCKED for safe concurrent access.
+    Uses ops.claim_pending_job RPC for safe concurrent access.
     Jobs locked for more than 5 minutes are considered stuck and reclaimable.
 
     Returns:
@@ -440,42 +490,33 @@ async def process_one_job() -> bool:
     job: Optional[dict[str, Any]] = None
 
     try:
-        async with conn.transaction():
-            async with conn.cursor(row_factory=dict_row) as cur:
-                # Claim a job with FOR UPDATE SKIP LOCKED
-                await cur.execute(
-                    """
-                    SELECT id, job_type, payload, attempts
-                    FROM ops.job_queue
-                    WHERE status = 'pending'
-                      AND (locked_at IS NULL OR locked_at < now() - interval '5 minutes')
-                    ORDER BY created_at ASC
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                    """
+        # Claim a job using the SECURITY DEFINER RPC
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT * FROM ops.claim_pending_job(
+                    p_job_types := NULL,
+                    p_lock_timeout_minutes := 5
                 )
-                job = await cur.fetchone()
+                """
+            )
+            row = await cur.fetchone()
 
-                if job is None:
-                    return False
+            if row is None or row.get("job_id") is None:
+                return False
 
-                # Lock the job
-                await cur.execute(
-                    """
-                    UPDATE ops.job_queue
-                    SET status = 'processing',
-                        locked_at = now(),
-                        attempts = attempts + 1
-                    WHERE id = %s
-                    """,
-                    (job["id"],),
-                )
+            job = {
+                "id": row["job_id"],
+                "job_type": row.get("job_type", ""),
+                "payload": row.get("payload", {}),
+                "attempts": row.get("attempts", 1),
+            }
 
         # Process outside the lock transaction
         job_id = job["id"]
         job_type = job["job_type"]
         payload = job["payload"]
-        attempts = job["attempts"] + 1  # Already incremented in DB
+        attempts = job["attempts"]
 
         logger.info(f"Processing job {job_id} (type={job_type}, attempt={attempts})")
 
@@ -735,47 +776,47 @@ async def _apply_enrichment(judgment_id: str, result: dict[str, Any]) -> None:
 
 
 async def _mark_job_completed(conn: psycopg.AsyncConnection, job_id: UUID) -> None:
-    """Mark a job as completed."""
+    """Mark a job as completed via ops.update_job_status RPC."""
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            UPDATE ops.job_queue
-            SET status = 'completed',
-                locked_at = NULL,
-                last_error = NULL
-            WHERE id = %s
+            SELECT ops.update_job_status(
+                p_job_id := %s,
+                p_status := 'completed',
+                p_error_message := NULL
+            )
             """,
-            (job_id,),
+            (str(job_id),),
         )
 
 
 async def _mark_job_failed(conn: psycopg.AsyncConnection, job_id: UUID, error_msg: str) -> None:
-    """Mark a job as permanently failed."""
+    """Mark a job as permanently failed via ops.update_job_status RPC."""
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            UPDATE ops.job_queue
-            SET status = 'failed',
-                locked_at = NULL,
-                last_error = %s
-            WHERE id = %s
+            SELECT ops.update_job_status(
+                p_job_id := %s,
+                p_status := 'failed',
+                p_error_message := %s
+            )
             """,
-            (error_msg, job_id),
+            (str(job_id), error_msg[:2000]),
         )
 
 
 async def _mark_job_pending(conn: psycopg.AsyncConnection, job_id: UUID, error_msg: str) -> None:
-    """Mark a job as pending for retry."""
+    """Mark a job as pending for retry via ops.update_job_status RPC."""
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            UPDATE ops.job_queue
-            SET status = 'pending',
-                locked_at = NULL,
-                last_error = %s
-            WHERE id = %s
+            SELECT ops.update_job_status(
+                p_job_id := %s,
+                p_status := 'pending',
+                p_error_message := %s
+            )
             """,
-            (error_msg, job_id),
+            (str(job_id), error_msg[:2000]),
         )
 
 

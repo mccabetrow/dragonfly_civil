@@ -3,7 +3,7 @@ Tests for src/core_config.py - Production hardening features.
 
 Tests cover:
 - ENVIRONMENT normalization (production→prod, development→dev)
-- DB URL fallback (SUPABASE_DB_URL_DEV)
+- Canonical env var contract (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL)
 - Collision guard (canonical + deprecated key conflict)
 - Startup diagnostics
 """
@@ -37,6 +37,7 @@ def _minimal_env() -> dict[str, str]:
     return {
         "SUPABASE_URL": "https://test.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "a" * 120,  # Must be 100+ chars
+        "SUPABASE_DB_URL": "postgresql://test.example.com:5432/postgres",
     }
 
 
@@ -90,8 +91,8 @@ class TestEnvironmentNormalization:
             _create_settings_no_env_file(ENVIRONMENT="test")
 
 
-class TestDbUrlFallback:
-    """Tests for DB URL fallback logic."""
+class TestDbUrl:
+    """Tests for canonical DB URL behavior."""
 
     def test_uses_supabase_db_url_primary(self):
         """SUPABASE_DB_URL is used as primary."""
@@ -101,39 +102,18 @@ class TestDbUrlFallback:
         )
         assert s.get_db_url() == "postgresql://primary.example.com/db"
 
-    def test_falls_back_to_dev_url(self, caplog):
-        """When SUPABASE_DB_URL missing and mode=dev, falls back to SUPABASE_DB_URL_DEV."""
-        s = _create_settings_no_env_file(
-            SUPABASE_DB_URL_DEV="postgresql://dev.example.com/db",
-            SUPABASE_MODE="dev",
-        )
-        with caplog.at_level(logging.INFO):
-            url = s.get_db_url()
-        assert url == "postgresql://dev.example.com/db"
-        assert "SUPABASE_DB_URL_DEV" in caplog.text
+    def test_requires_db_url_at_init(self):
+        """Settings requires SUPABASE_DB_URL at initialization."""
+        from pydantic import ValidationError
 
-    def test_prod_mode_uses_prod_url(self):
-        """In prod mode, SUPABASE_DB_URL_PROD is used."""
-        s = _create_settings_no_env_file(
-            SUPABASE_DB_URL_PROD="postgresql://prod.example.com/db",
-            SUPABASE_MODE="prod",
-        )
-        assert s.get_db_url() == "postgresql://prod.example.com/db"
-
-    def test_prod_prefers_direct_url(self):
-        """In prod mode, SUPABASE_DB_URL_DIRECT_PROD is preferred."""
-        s = _create_settings_no_env_file(
-            SUPABASE_DB_URL_PROD="postgresql://pooler.example.com/db",
-            SUPABASE_DB_URL_DIRECT_PROD="postgresql://direct.example.com/db",
-            SUPABASE_MODE="prod",
-        )
-        assert s.get_db_url() == "postgresql://direct.example.com/db"
-
-    def test_raises_if_no_db_url(self):
-        """Raises RuntimeError if no DB URL is available."""
-        s = _create_settings_no_env_file(SUPABASE_MODE="dev")
-        with pytest.raises(RuntimeError, match="Missing database URL"):
-            s.get_db_url()
+        with pytest.raises(ValidationError, match="SUPABASE_DB_URL"):
+            # Create settings without SUPABASE_DB_URL
+            base = {
+                "SUPABASE_URL": "https://test.supabase.co",
+                "SUPABASE_SERVICE_ROLE_KEY": "a" * 120,
+            }
+            with patch.dict(os.environ, {}, clear=True):
+                Settings(_env_file="", **base)  # type: ignore[call-arg]
 
 
 class TestCollisionGuard:

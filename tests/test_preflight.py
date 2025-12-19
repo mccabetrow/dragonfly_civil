@@ -48,8 +48,6 @@ def clean_env():
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_DB_URL",
-        "SUPABASE_DB_URL_DEV",
-        "SUPABASE_DB_URL_PROD",
         "ENVIRONMENT",
         "SUPABASE_MODE",
         "GIT_SHA",
@@ -241,11 +239,11 @@ class TestValidateSupabaseDbUrl:
     """Tests for _validate_supabase_db_url."""
 
     def test_missing_db_url(self, clean_env):
-        """Test warning when DB URL is not set."""
+        """Test error when DB URL is not set."""
         result = PreflightResult(worker_name="test")
         _validate_supabase_db_url(result)
-        assert len(result.warnings) == 1
-        assert "not set" in result.warnings[0]
+        assert len(result.errors) == 1
+        assert "required" in result.errors[0]
 
     def test_invalid_format(self, clean_env):
         """Test error when DB URL has invalid format."""
@@ -268,14 +266,6 @@ class TestValidateSupabaseDbUrl:
         result = PreflightResult(worker_name="test")
         _validate_supabase_db_url(result)
         assert len(result.errors) == 0
-
-    def test_fallback_to_suffixed_vars(self, clean_env):
-        """Test fallback to SUPABASE_DB_URL_DEV/PROD."""
-        os.environ["SUPABASE_DB_URL_DEV"] = "postgresql://dev:pass@host/db"
-        result = PreflightResult(worker_name="test")
-        _validate_supabase_db_url(result)
-        assert len(result.errors) == 0
-        assert len(result.warnings) == 0
 
 
 # ==============================================================================
@@ -375,30 +365,30 @@ class TestValidateWorkerEnv:
     def test_fail_fast_in_prod(self, valid_env):
         """Test fail_fast defaults to True in prod."""
         os.environ["ENVIRONMENT"] = "prod"
-        # Add a warning condition
+        # Remove required DB URL to cause failure
         del os.environ["SUPABASE_DB_URL"]
 
         with pytest.raises(SystemExit) as exc_info:
             validate_worker_env("test_worker", structured_logging=False)
         assert exc_info.value.code == 1
 
-    def test_warn_mode_in_dev(self, valid_env):
-        """Test fail_fast defaults to False in dev."""
+    def test_error_in_dev_also_fails(self, valid_env):
+        """Test missing required config fails even in dev."""
         os.environ["ENVIRONMENT"] = "dev"
-        # Add a warning condition
+        # Remove required DB URL
         del os.environ["SUPABASE_DB_URL"]
 
-        # Should not exit, just warn
-        result = validate_worker_env("test_worker", exit_on_error=True, structured_logging=False)
-        assert result.is_valid is True
-        assert result.has_warnings is True
+        # Should fail since SUPABASE_DB_URL is now required
+        result = validate_worker_env("test_worker", exit_on_error=False, structured_logging=False)
+        assert result.is_valid is False
+        assert len(result.errors) >= 1
 
     def test_explicit_fail_fast_override(self, valid_env):
-        """Test fail_fast can be explicitly overridden."""
+        """Test fail_fast causes exit on errors."""
         os.environ["ENVIRONMENT"] = "dev"
         del os.environ["SUPABASE_DB_URL"]
 
-        # Override to fail_fast even in dev
+        # With fail_fast=True, should exit
         with pytest.raises(SystemExit):
             validate_worker_env("test_worker", fail_fast=True, structured_logging=False)
 

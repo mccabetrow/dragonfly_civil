@@ -6,14 +6,33 @@ Pytest configuration and shared fixtures for the Dragonfly Civil test suite.
 IMPORTANT: By default, all tests run against DEV Supabase (SUPABASE_MODE=dev).
 Tests that explicitly need PROD should set SUPABASE_MODE=prod themselves and
 are expected to be read-only / non-destructive.
+
+DUAL-CONNECTION PATTERN (Zero Trust Security Model):
+====================================================
+This module provides two database connection fixtures:
+
+  admin_db  - Connects as postgres superuser (SERVICE_ROLE)
+              Used ONLY for test setup/teardown (creating schemas, seeding data)
+              Environment: SUPABASE_DB_URL_ADMIN or falls back to SUPABASE_DB_URL
+
+  app_db    - Connects as dragonfly_app (restricted role)
+              Used for testing actual application logic
+              Environment: SUPABASE_DB_URL (should be dragonfly_app credentials)
+
+Tests should:
+  1. SETUP: Use admin_db to create schemas, insert seed data
+  2. ACTION: Use app_db to test application code (RPCs, queries)
+  3. VERIFY: Use admin_db for cleanup and verification of side effects
 """
 
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from functools import wraps
-from typing import Any, Callable
+from typing import Any, Callable, Generator
 
+import psycopg
 import pytest
 
 # =============================================================================
@@ -33,6 +52,49 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# DATABASE URL RESOLUTION
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _get_admin_db_url() -> str | None:
+    """
+    Get the admin/superuser database URL for test setup/teardown.
+
+    Priority:
+      1. SUPABASE_DB_URL_ADMIN (explicit admin connection)
+      2. SUPABASE_DB_URL (fallback - assumes postgres superuser in dev)
+      3. DATABASE_URL (legacy fallback)
+
+    The admin connection should use postgres superuser credentials and is
+    used ONLY for test fixture setup (schema creation, data seeding, cleanup).
+    """
+    return (
+        os.environ.get("SUPABASE_DB_URL_ADMIN")
+        or os.environ.get("SUPABASE_DB_URL")
+        or os.environ.get("DATABASE_URL")
+    )
+
+
+def _get_app_db_url() -> str | None:
+    """
+    Get the application database URL for testing app logic.
+
+    Priority:
+      1. SUPABASE_DB_URL_APP (explicit app connection with dragonfly_app)
+      2. SUPABASE_DB_URL (should be dragonfly_app in production tests)
+      3. DATABASE_URL (legacy fallback)
+
+    The app connection should use dragonfly_app credentials and is used
+    to test actual application behavior with least-privilege restrictions.
+    """
+    return (
+        os.environ.get("SUPABASE_DB_URL_APP")
+        or os.environ.get("SUPABASE_DB_URL")
+        or os.environ.get("DATABASE_URL")
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # SKIP DECORATORS
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -49,6 +111,20 @@ def _has_db_connection() -> bool:
         return False
 
 
+def _has_admin_db() -> bool:
+    """Check if admin database connection is available."""
+    url = _get_admin_db_url()
+    if not url:
+        return False
+    try:
+        with psycopg.connect(url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                return True
+    except Exception:
+        return False
+
+
 def skip_if_no_db(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     Decorator to skip tests that require database connection.
@@ -59,6 +135,21 @@ def skip_if_no_db(func: Callable[..., Any]) -> Callable[..., Any]:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         if not _has_db_connection():
             pytest.skip("Database connection not available")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def skip_if_no_admin_db(func: Callable[..., Any]) -> Callable[..., Any]:
+    """
+    Decorator to skip tests that require admin database connection.
+    Use this for tests that need schema creation or direct table access.
+    """
+
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if not _has_admin_db():
+            pytest.skip("Admin database connection not available")
         return func(*args, **kwargs)
 
     return wrapper
@@ -80,7 +171,114 @@ def get_test_client():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PYTEST FIXTURES
+# PYTEST FIXTURES: DATABASE CONNECTIONS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def admin_db() -> Generator[psycopg.Connection, None, None]:
+    """
+    Fixture providing an ADMIN database connection for test setup/teardown.
+
+    This connection uses postgres superuser (or service_role) credentials
+    and can perform privileged operations like:
+      - CREATE SCHEMA
+      - CREATE TABLE
+      - INSERT INTO any table
+      - DELETE FROM any table
+
+    DO NOT use this fixture to test application logic - use app_db instead.
+
+    Usage:
+        def test_something(admin_db, app_db):
+            # Setup with admin
+            with admin_db.cursor() as cur:
+                cur.execute("INSERT INTO ops.job_queue ...")
+
+            # Test with restricted app user
+            with app_db.cursor() as cur:
+                cur.execute("SELECT ops.claim_pending_job(...)")
+
+            # Cleanup with admin
+            with admin_db.cursor() as cur:
+                cur.execute("DELETE FROM ops.job_queue WHERE ...")
+    """
+    url = _get_admin_db_url()
+    if not url:
+        pytest.skip("Admin database URL not configured (SUPABASE_DB_URL_ADMIN or SUPABASE_DB_URL)")
+
+    conn = psycopg.connect(url, autocommit=False)
+    try:
+        yield conn
+    finally:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+
+
+@pytest.fixture
+def admin_db_autocommit() -> Generator[psycopg.Connection, None, None]:
+    """
+    Fixture providing an ADMIN database connection with autocommit=True.
+
+    Use this for DDL operations (CREATE, ALTER, DROP) that require autocommit.
+    """
+    url = _get_admin_db_url()
+    if not url:
+        pytest.skip("Admin database URL not configured")
+
+    conn = psycopg.connect(url, autocommit=True)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def app_db() -> Generator[psycopg.Connection, None, None]:
+    """
+    Fixture providing an APPLICATION database connection for testing app logic.
+
+    This connection uses dragonfly_app credentials (least-privilege) and
+    can only perform operations that the real application can perform:
+      - SELECT on granted tables/views
+      - EXECUTE on SECURITY DEFINER RPCs
+
+    Use this fixture to test application behavior and verify that the
+    security model is correctly enforced.
+
+    Usage:
+        def test_app_can_claim_job(admin_db, app_db):
+            # Setup: admin seeds a job
+            with admin_db.cursor() as cur:
+                cur.execute("INSERT INTO ops.job_queue ...")
+                admin_db.commit()
+
+            # Action: app claims via RPC (should work)
+            with app_db.cursor() as cur:
+                cur.execute("SELECT * FROM ops.claim_pending_job(...)")
+                job = cur.fetchone()
+                assert job is not None
+    """
+    url = _get_app_db_url()
+    if not url:
+        pytest.skip("App database URL not configured (SUPABASE_DB_URL)")
+
+    conn = psycopg.connect(url, autocommit=False)
+    try:
+        yield conn
+    finally:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PYTEST FIXTURES: SUPABASE CLIENT
 # ═══════════════════════════════════════════════════════════════════════════
 
 

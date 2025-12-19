@@ -4,14 +4,15 @@ Dragonfly Civil – Production Smoke Test
 
 Post-deployment validation that verifies:
 1. Railway API health endpoint returns 200
-2. Postgres connectivity via SUPABASE_DB_URL_PROD
+2. Postgres connectivity via SUPABASE_DB_URL (with SUPABASE_MODE=prod)
 3. Critical views are queryable:
    - enforcement.v_enforcement_pipeline_status
    - finance.v_portfolio_stats
 
 Usage:
-    # Ensure env vars are set
-    export SUPABASE_DB_URL_PROD=postgres://...
+    # Ensure env vars are set (use canonical names)
+    export SUPABASE_MODE=prod
+    export SUPABASE_DB_URL=postgres://...
 
     # Run smoke test
     python -m tools.prod_smoke
@@ -126,11 +127,11 @@ def main() -> int:
     print("=" * 60)
     print()
 
-    # Collect DSN
-    dsn = os.environ.get("SUPABASE_DB_URL_PROD")
+    # Collect DSN using canonical SUPABASE_DB_URL
+    dsn = os.environ.get("SUPABASE_DB_URL")
     if not dsn:
-        print("❌ SUPABASE_DB_URL_PROD is not set")
-        print("   Set this environment variable to the production Postgres DSN.")
+        print("❌ SUPABASE_DB_URL is not set")
+        print("   Set SUPABASE_DB_URL and SUPABASE_MODE=prod for production smoke tests.")
         return 1
 
     results: list[tuple[str, bool, str]] = []

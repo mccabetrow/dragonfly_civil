@@ -1,4 +1,7 @@
-"""Direct Supabase migration runner for production fallback."""
+"""Direct Supabase migration runner for production fallback.
+
+Uses canonical SUPABASE_DB_URL. Set SUPABASE_MODE=prod for production migrations.
+"""
 
 from __future__ import annotations
 
@@ -14,10 +17,11 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "supabase" / "migratio
 
 
 def _get_db_url() -> str:
-    db_url = os.getenv("SUPABASE_DB_URL_DIRECT_PROD")
+    db_url = os.getenv("SUPABASE_DB_URL")
     if not db_url:
+        mode = os.getenv("SUPABASE_MODE", "dev")
         print(
-            "[FAIL] SUPABASE_DB_URL_DIRECT_PROD is not set in the environment.",
+            f"[FAIL] SUPABASE_DB_URL is not set (SUPABASE_MODE={mode}).",
             file=sys.stderr,
         )
         sys.exit(1)

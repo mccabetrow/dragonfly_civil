@@ -7,18 +7,32 @@
  * - Loading skeleton support
  * - Tooltip explanations
  * - Responsive sizing
+ * - Actionable error states
+ * - Freshness timestamps
  */
 
 import { type FC, type ReactNode } from 'react';
-import { TrendingUp, TrendingDown, Minus, HelpCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, HelpCircle, RefreshCw, AlertTriangle, AlertCircle, Info } from 'lucide-react';
 import { cn } from '../../lib/design-tokens';
 import { Card } from '../ui/Card';
 import { Skeleton } from '../ui/Skeleton';
+import { FreshnessBadge } from '../ui/FreshnessBadge';
 import { formatNumber, formatCurrency, formatPercent } from '../../lib/utils/formatters';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════
+
+export interface MetricCardErrorInfo {
+  /** Error title (e.g., "API Unreachable") */
+  title: string;
+  /** Actionable hint */
+  actionHint?: string;
+  /** Severity level */
+  severity?: 'error' | 'warning' | 'info';
+  /** Error code for debugging */
+  code?: string | null;
+}
 
 export interface MetricCardProps {
   /** Label shown above the value */
@@ -62,6 +76,15 @@ export interface MetricCardProps {
 
   /** Click handler */
   onClick?: () => void;
+
+  /** ISO timestamp for freshness display (e.g., "Updated 2m ago") */
+  lastUpdated?: string | Date | null;
+
+  /** Actionable error info (replaces generic "Unable to load") */
+  errorInfo?: MetricCardErrorInfo | null;
+
+  /** Retry callback when error is shown */
+  onRetry?: () => void | Promise<void>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -155,6 +178,9 @@ export const MetricCard: FC<MetricCardProps> = ({
   upIsGood = true,
   className,
   onClick,
+  lastUpdated,
+  errorInfo,
+  onRetry,
 }) => {
   const config = sizeConfig[size];
 
@@ -181,6 +207,89 @@ export const MetricCard: FC<MetricCardProps> = ({
           <Skeleton className="h-4 w-24" />
           <Skeleton className="h-8 w-32" />
           <Skeleton className="h-3 w-16" />
+        </div>
+      </Card>
+    );
+  }
+
+  // Error state - actionable feedback
+  if (errorInfo) {
+    const severityStyles = {
+      error: {
+        border: 'border-rose-200',
+        bg: 'bg-rose-50/50',
+        iconBg: 'bg-rose-100',
+        iconColor: 'text-rose-600',
+        titleColor: 'text-rose-900',
+        textColor: 'text-rose-700',
+        buttonClass: 'border-rose-200 text-rose-700 hover:bg-rose-100',
+        Icon: AlertCircle,
+      },
+      warning: {
+        border: 'border-amber-200',
+        bg: 'bg-amber-50/50',
+        iconBg: 'bg-amber-100',
+        iconColor: 'text-amber-600',
+        titleColor: 'text-amber-900',
+        textColor: 'text-amber-700',
+        buttonClass: 'border-amber-200 text-amber-700 hover:bg-amber-100',
+        Icon: AlertTriangle,
+      },
+      info: {
+        border: 'border-sky-200',
+        bg: 'bg-sky-50/50',
+        iconBg: 'bg-sky-100',
+        iconColor: 'text-sky-600',
+        titleColor: 'text-sky-900',
+        textColor: 'text-sky-700',
+        buttonClass: 'border-sky-200 text-sky-700 hover:bg-sky-100',
+        Icon: Info,
+      },
+    };
+
+    const severity = errorInfo.severity ?? 'error';
+    const styles = severityStyles[severity];
+    const ErrorIcon = styles.Icon;
+
+    return (
+      <Card className={cn(config.padding, styles.border, styles.bg, className)}>
+        <div className="flex items-start gap-3">
+          <span className={cn('rounded-lg p-1.5', styles.iconBg, styles.iconColor)}>
+            <ErrorIcon className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <p className={cn('text-xs font-semibold uppercase tracking-wide', styles.titleColor)}>
+                {label}
+              </p>
+              {errorInfo.code && (
+                <code className="rounded bg-white/50 px-1 py-0.5 font-mono text-[9px] opacity-60">
+                  {errorInfo.code}
+                </code>
+              )}
+            </div>
+            <p className={cn('mt-1 text-sm font-medium', styles.titleColor)}>
+              {errorInfo.title}
+            </p>
+            {errorInfo.actionHint && (
+              <p className={cn('mt-0.5 text-xs', styles.textColor)}>
+                {errorInfo.actionHint}
+              </p>
+            )}
+            {onRetry && (
+              <button
+                type="button"
+                onClick={() => onRetry()}
+                className={cn(
+                  'mt-2 inline-flex items-center gap-1.5 rounded-full border bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide transition',
+                  styles.buttonClass
+                )}
+              >
+                <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                Retry
+              </button>
+            )}
+          </div>
         </div>
       </Card>
     );
@@ -255,6 +364,13 @@ export const MetricCard: FC<MetricCardProps> = ({
           </span>
         )}
       </div>
+
+      {/* Freshness timestamp */}
+      {lastUpdated && (
+        <div className="mt-3 border-t border-slate-100 pt-2">
+          <FreshnessBadge timestamp={lastUpdated} variant="compact" />
+        </div>
+      )}
     </Card>
   );
 };

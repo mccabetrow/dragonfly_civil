@@ -28,8 +28,7 @@ Usage:
 
 Environment:
     SUPABASE_MODE: dev | prod (determines which Supabase project to use)
-    SUPABASE_DB_URL: Postgres connection string (canonical, recommended)
-    SUPABASE_DB_URL_DEV / SUPABASE_DB_URL_PROD: Legacy fallbacks (deprecated)
+    SUPABASE_DB_URL: Postgres connection string (canonical)
 """
 
 from __future__ import annotations
@@ -51,6 +50,7 @@ from psycopg.rows import dict_row
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from backend.core.logging import configure_worker_logging
+from backend.workers.rpc_client import RPCClient
 from src.core_config import log_startup_diagnostics
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
@@ -70,61 +70,32 @@ JOB_TYPES = ("enforcement_strategy", "enforcement_drafting", "enforcement_genera
 
 def claim_pending_job(conn: psycopg.Connection) -> dict[str, Any] | None:
     """
-    Claim a pending enforcement job using FOR UPDATE SKIP LOCKED.
+    Claim a pending enforcement job using secure RPC.
 
     Returns the job row dict, or None if no jobs available.
     """
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(
-            """
-            UPDATE ops.job_queue
-            SET status = 'processing',
-                locked_at = now(),
-                attempts = attempts + 1
-            WHERE id = (
-                SELECT id FROM ops.job_queue
-                WHERE job_type::text = ANY(%s)
-                  AND status::text = 'pending'
-                  AND (locked_at IS NULL OR locked_at < now() - interval '%s minutes')
-                ORDER BY created_at ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING *
-            """,
-            (list(JOB_TYPES), LOCK_TIMEOUT_MINUTES),
-        )
-        row = cur.fetchone()
-        conn.commit()
-        return dict(row) if row else None
+    rpc = RPCClient(conn)
+    claimed = rpc.claim_pending_job(list(JOB_TYPES), LOCK_TIMEOUT_MINUTES)
+    if claimed:
+        return {
+            "id": claimed.job_id,
+            "job_type": claimed.job_type,
+            "payload": claimed.payload,
+            "attempts": claimed.attempts,
+        }
+    return None
 
 
 def mark_job_completed(conn: psycopg.Connection, job_id: str | UUID) -> None:
-    """Mark a job as completed."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE ops.job_queue
-            SET status = 'completed', locked_at = NULL, updated_at = now()
-            WHERE id = %s
-            """,
-            (str(job_id),),
-        )
-        conn.commit()
+    """Mark a job as completed using secure RPC."""
+    rpc = RPCClient(conn)
+    rpc.update_job_status(job_id, "completed")
 
 
 def mark_job_failed(conn: psycopg.Connection, job_id: str | UUID, error: str) -> None:
-    """Mark a job as failed with error message."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE ops.job_queue
-            SET status = 'failed', locked_at = NULL, last_error = %s, updated_at = now()
-            WHERE id = %s
-            """,
-            (error[:2000], str(job_id)),  # Truncate error to avoid column overflow
-        )
-        conn.commit()
+    """Mark a job as failed with error message using secure RPC."""
+    rpc = RPCClient(conn)
+    rpc.update_job_status(job_id, "failed", error[:2000])
 
 
 def log_job_event(
@@ -134,28 +105,16 @@ def log_job_event(
     message: str,
     raw_payload: dict[str, Any] | None = None,
 ) -> None:
-    """Write a record into ops.intake_logs for observability."""
+    """Write a record into ops.intake_logs using secure RPC."""
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO ops.intake_logs (job_id, level, message, raw_payload, created_at)
-                VALUES (%s::uuid, %s, %s, %s, now())
-                """,
-                (
-                    str(job_id) if job_id else None,
-                    level,
-                    message[:1000],
-                    json.dumps(raw_payload, default=str) if raw_payload else None,
-                ),
-            )
-            conn.commit()
+        rpc = RPCClient(conn)
+        rpc.log_intake_event(
+            message=message,
+            level=level,
+            job_id=job_id,
+            raw_payload=raw_payload,
+        )
     except Exception as e:
-        # Table might not exist yet - rollback and continue
-        try:
-            conn.rollback()
-        except Exception:
-            pass
         logger.debug(f"Could not log event to ops.intake_logs: {e}")
 
 
@@ -376,61 +335,32 @@ def run_once(conn: psycopg.Connection) -> bool:
     return True
 
 
-def run_forever(db_url: str) -> None:
+def _job_processor(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     """
-    Main polling loop. Runs until interrupted.
+    Process a single enforcement job.
+
+    This is the callback passed to WorkerBootstrap.run(). The bootstrap handles
+    job claiming; this function only processes the job.
     """
-    from backend.workers.heartbeat import HeartbeatContext
+    asyncio.run(process_job(conn, job))
 
-    logger.info(f"Starting enforcement_engine worker (poll={POLL_INTERVAL_SECONDS}s)")
-    logger.info(f"Handling job types: {JOB_TYPES}")
-    logger.info(f"Lock timeout: {LOCK_TIMEOUT_MINUTES} minutes")
 
-    # Start heartbeat thread
-    with HeartbeatContext("enforcement_engine", lambda: db_url) as heartbeat:
-        logger.info(f"Worker ID: {heartbeat.worker_id}")
-
-        while True:
-            try:
-                with psycopg.connect(db_url, row_factory=dict_row) as conn:
-                    if run_once(conn):
-                        # Job processed - check for more immediately
-                        continue
-                    else:
-                        # No jobs - sleep before next poll
-                        time.sleep(POLL_INTERVAL_SECONDS)
-
-            except psycopg.OperationalError as e:
-                logger.error(f"Database connection error: {e}")
-                heartbeat.set_error(str(e))
-                time.sleep(10.0)  # Back off on connection errors
-
-            except KeyboardInterrupt:
-                logger.info("Shutting down enforcement_engine worker (keyboard interrupt)")
-                break
-
-            except Exception as e:
-                logger.exception(f"Unexpected error in worker loop: {e}")
-                time.sleep(5.0)
+def _job_claimer(conn: psycopg.Connection) -> dict[str, Any] | None:
+    """Claim a pending enforcement job."""
+    return claim_pending_job(conn)
 
 
 def main() -> None:
     """Entry point for the enforcement engine worker."""
-    log_startup_diagnostics("EnforcementEngine")
+    from backend.workers.bootstrap import WorkerBootstrap
 
-    env = get_supabase_env()
-    db_url = get_supabase_db_url()
-
-    logger.info(f"Environment: {env}")
-    logger.info(f"Database: {db_url[:30]}...")
-
-    run_forever(db_url)
+    bootstrap = WorkerBootstrap(
+        worker_type="enforcement_engine",
+        job_types=list(JOB_TYPES),
+        poll_interval=POLL_INTERVAL_SECONDS,
+    )
+    bootstrap.run(_job_processor, _job_claimer)
 
 
 if __name__ == "__main__":
-    # Preflight validation - MUST be first!
-    from backend.preflight import validate_worker_env
-
-    validate_worker_env("enforcement_engine")
-
     main()

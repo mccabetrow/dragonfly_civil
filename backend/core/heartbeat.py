@@ -155,16 +155,17 @@ class WorkerHeartbeat:
         )
 
     async def _emit_db_heartbeat(self) -> None:
-        """Emit heartbeat to database."""
+        """Emit heartbeat to database using secure RPC."""
         try:
             # Import here to avoid circular imports
             from ..db import get_supabase_client
 
             client = get_supabase_client()
 
-            # Use the RPC function created in migrations
+            # Use the SECURITY DEFINER RPC function for secure writes
+            # Note: ops.register_heartbeat is exposed via PostgREST
             client.rpc(
-                "worker_heartbeat",
+                "register_heartbeat",
                 {
                     "p_worker_id": self.worker_id,
                     "p_worker_type": self.worker_type,

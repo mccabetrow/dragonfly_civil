@@ -4,6 +4,7 @@ import AppShell from './layouts/AppShell';
 import { ToastProvider } from './components/ui/Toast';
 import { RefreshProvider } from './context/RefreshContext';
 import CommandPalette from './components/ui/CommandPalette';
+import SystemDiagnostics from './components/debug/SystemDiagnostics';
 // Dashboard pages - using new enterprise-grade layouts
 import PortfolioDashboardPage from './pages/PortfolioDashboardPage';
 import ExecutiveDashboardPageNew from './pages/ExecutiveDashboardPageNew';
@@ -30,6 +31,7 @@ const App: React.FC = () => {
       <RefreshProvider>
         <BrowserRouter>
           <CommandPalette />
+          <SystemDiagnostics />
           <Routes>
             <Route element={<AppShell />}>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />

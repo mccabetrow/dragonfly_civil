@@ -11,9 +11,7 @@ def _base_env() -> dict[str, str]:
     return {
         "SUPABASE_URL": "https://demo.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "service-key",
-        "SUPABASE_ANON_KEY": "anon-key",
-        "SUPABASE_PROJECT_REF": "demo123",
-        "SUPABASE_DB_PASSWORD": "password",
+        "SUPABASE_DB_URL": "postgresql://example.com/postgres",
         "OPENAI_API_KEY": "sk-example",
         "N8N_API_KEY": "n8n-example",
     }
@@ -50,8 +48,6 @@ def test_evaluate_env_requirements_flags_missing_value_prod():
 
 def test_db_requirement_allows_explicit_url():
     env_values = _base_env()
-    env_values.pop("SUPABASE_DB_PASSWORD")
-    env_values["SUPABASE_DB_URL"] = "postgresql://example.com/postgres"
 
     results = config_check.evaluate_env_requirements("dev", env_values=env_values)
     statuses = {result.name: result.status for result in results}
@@ -59,24 +55,18 @@ def test_db_requirement_allows_explicit_url():
     assert statuses["SUPABASE_DB_URL"] == "OK"
 
 
-def test_db_requirement_flags_missing_when_no_password_or_url():
+def test_db_requirement_flags_missing_url():
     env_values = _base_env()
-    env_values.pop("SUPABASE_DB_PASSWORD")
+    env_values.pop("SUPABASE_DB_URL")
 
     results = config_check.evaluate_env_requirements("dev", env_values=env_values)
-    db_result = next(result for result in results if result.name == "SUPABASE_DB_PASSWORD")
+    db_result = next(result for result in results if result.name == "SUPABASE_DB_URL")
 
     assert db_result.status == "FAIL"
 
 
 def test_run_checks_includes_storage_and_db(monkeypatch):
-    env_values = _base_env() | {
-        "SUPABASE_URL_PROD": "https://prod.supabase.co",
-        "SUPABASE_SERVICE_ROLE_KEY_PROD": "prod-service",
-        "SUPABASE_ANON_KEY_PROD": "prod-anon",
-        "SUPABASE_PROJECT_REF_PROD": "prod123",
-        "SUPABASE_DB_PASSWORD_PROD": "prod-pass",
-    }
+    env_values = _base_env()
 
     monkeypatch.setattr(
         config_check,

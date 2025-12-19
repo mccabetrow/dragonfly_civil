@@ -499,94 +499,103 @@ class TestClaimPendingJob:
     """Tests for claim_pending_job with mocked DB."""
 
     def test_claim_returns_job_dict(self):
-        """Claiming a job returns the job as a dict."""
+        """Claiming a job returns the job as a dict via RPC."""
+        from unittest.mock import patch
+        from uuid import UUID
+
         from backend.workers.ingest_processor import claim_pending_job
+        from backend.workers.rpc_client import ClaimedJob
 
-        mock_job = {
-            "id": "test-job-123",
-            "job_type": "ingest_csv",
-            "status": "processing",
-            "payload": {"file_path": "test.csv", "batch_id": "batch-1"},
-        }
+        mock_claimed = ClaimedJob(
+            job_id=UUID("12345678-1234-1234-1234-123456789012"),
+            job_type="ingest_csv",
+            payload={"file_path": "test.csv", "batch_id": "batch-1"},
+            attempts=1,
+        )
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchone.return_value = mock_job
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=None)
+        mock_rpc = MagicMock()
+        mock_rpc.claim_pending_job.return_value = mock_claimed
 
-        result = claim_pending_job(mock_conn)
+        with patch("backend.workers.ingest_processor.RPCClient", return_value=mock_rpc):
+            mock_conn = MagicMock()
+            result = claim_pending_job(mock_conn)
 
-        assert result == mock_job
-        mock_conn.commit.assert_called_once()
+        assert result is not None
+        assert str(result["id"]) == str(mock_claimed.job_id)
+        assert result["job_type"] == "ingest_csv"
+        mock_rpc.claim_pending_job.assert_called_once()
 
     def test_claim_returns_none_when_no_jobs(self):
         """When no jobs are available, returns None."""
+        from unittest.mock import patch
+
         from backend.workers.ingest_processor import claim_pending_job
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchone.return_value = None
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=None)
+        mock_rpc = MagicMock()
+        mock_rpc.claim_pending_job.return_value = None
 
-        result = claim_pending_job(mock_conn)
+        with patch("backend.workers.ingest_processor.RPCClient", return_value=mock_rpc):
+            mock_conn = MagicMock()
+            result = claim_pending_job(mock_conn)
 
         assert result is None
 
 
 @pytest.mark.unit
 class TestMarkJobFunctions:
-    """Tests for mark_job_completed and mark_job_failed."""
+    """Tests for mark_job_completed and mark_job_failed (now RPC-based)."""
 
     def test_mark_completed(self):
-        """mark_job_completed updates status correctly."""
+        """mark_job_completed calls RPC with status='completed'."""
+        from unittest.mock import patch
+
         from backend.workers.ingest_processor import mark_job_completed
 
-        mock_cursor = MagicMock()
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=None)
+        mock_rpc = MagicMock()
 
-        mark_job_completed(mock_conn, "job-123")
+        with patch("backend.workers.ingest_processor.RPCClient", return_value=mock_rpc):
+            mock_conn = MagicMock()
+            mark_job_completed(mock_conn, "job-123")
 
-        # Verify UPDATE was called
-        mock_cursor.execute.assert_called_once()
-        call_args = mock_cursor.execute.call_args[0]
-        assert "SET status = 'completed'" in call_args[0]
-        mock_conn.commit.assert_called_once()
+        mock_rpc.update_job_status.assert_called_once_with(
+            job_id="job-123",
+            status="completed",
+        )
 
     def test_mark_failed(self):
-        """mark_job_failed updates status with error."""
+        """mark_job_failed calls RPC with status='failed' and error."""
+        from unittest.mock import patch
+
         from backend.workers.ingest_processor import mark_job_failed
 
-        mock_cursor = MagicMock()
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=None)
+        mock_rpc = MagicMock()
 
-        mark_job_failed(mock_conn, "job-123", "Something went wrong")
+        with patch("backend.workers.ingest_processor.RPCClient", return_value=mock_rpc):
+            mock_conn = MagicMock()
+            mark_job_failed(mock_conn, "job-123", "Something went wrong")
 
-        mock_cursor.execute.assert_called_once()
-        call_args = mock_cursor.execute.call_args[0]
-        assert "SET status = 'failed'" in call_args[0]
-        assert call_args[1][0] == "Something went wrong"
+        mock_rpc.update_job_status.assert_called_once_with(
+            job_id="job-123",
+            status="failed",
+            error="Something went wrong",
+        )
 
     def test_mark_failed_truncates_long_error(self):
-        """Long error messages are truncated to 2000 chars."""
+        """Long error messages are truncated to 2000 chars before RPC call."""
+        from unittest.mock import patch
+
         from backend.workers.ingest_processor import mark_job_failed
 
-        mock_cursor = MagicMock()
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=None)
+        mock_rpc = MagicMock()
 
-        long_error = "X" * 5000
-        mark_job_failed(mock_conn, "job-123", long_error)
+        with patch("backend.workers.ingest_processor.RPCClient", return_value=mock_rpc):
+            mock_conn = MagicMock()
+            long_error = "X" * 5000
+            mark_job_failed(mock_conn, "job-123", long_error)
 
-        call_args = mock_cursor.execute.call_args[0]
         # Error should be truncated to 2000 chars
-        assert len(call_args[1][0]) == 2000
+        call_kwargs = mock_rpc.update_job_status.call_args.kwargs
+        assert len(call_kwargs["error"]) == 2000
 
 
 @pytest.mark.unit

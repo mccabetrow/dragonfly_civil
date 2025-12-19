@@ -40,6 +40,8 @@ from backend.services.simplicity_mapper import (
     is_simplicity_format,
     process_simplicity_batch,
 )
+from backend.workers.db_connect import get_safe_application_name
+from backend.workers.rpc_client import RPCClient
 from src.core_config import log_startup_diagnostics
 from src.supabase_client import create_supabase_client, get_supabase_db_url, get_supabase_env
 
@@ -53,67 +55,27 @@ JOB_TYPE = "simplicity_ingest"
 
 
 # =============================================================================
-# Job Queue Management
+# Job Queue Management (via SECURITY DEFINER RPCs)
 # =============================================================================
 
 
-def claim_pending_job(conn: psycopg.Connection) -> dict[str, Any] | None:
+def claim_pending_job(rpc: RPCClient) -> dict[str, Any] | None:
     """
-    Claim a pending simplicity_ingest job using FOR UPDATE SKIP LOCKED.
+    Claim a pending simplicity_ingest job using ops.claim_pending_job RPC.
 
     Returns the job row dict, or None if no jobs available.
     """
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(
-            """
-            UPDATE ops.job_queue
-            SET status = 'processing',
-                locked_at = now(),
-                attempts = attempts + 1
-            WHERE id = (
-                SELECT id FROM ops.job_queue
-                WHERE job_type::text = %s
-                  AND status::text = 'pending'
-                  AND (locked_at IS NULL OR locked_at < now() - interval '%s minutes')
-                ORDER BY created_at ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING *
-            """,
-            (JOB_TYPE, LOCK_TIMEOUT_MINUTES),
-        )
-        row = cur.fetchone()
-        conn.commit()
-        return dict(row) if row else None
+    return rpc.claim_pending_job(job_type=JOB_TYPE, lock_timeout_minutes=LOCK_TIMEOUT_MINUTES)
 
 
-def mark_job_completed(conn: psycopg.Connection, job_id: str) -> None:
-    """Mark a job as completed."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE ops.job_queue
-            SET status = 'completed', locked_at = NULL
-            WHERE id = %s
-            """,
-            (job_id,),
-        )
-        conn.commit()
+def mark_job_completed(rpc: RPCClient, job_id: str) -> None:
+    """Mark a job as completed via ops.update_job_status RPC."""
+    rpc.update_job_status(job_id=job_id, status="completed")
 
 
-def mark_job_failed(conn: psycopg.Connection, job_id: str, error: str) -> None:
-    """Mark a job as failed with error message."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE ops.job_queue
-            SET status = 'failed', locked_at = NULL, last_error = %s
-            WHERE id = %s
-            """,
-            (error[:2000], job_id),
-        )
-        conn.commit()
+def mark_job_failed(rpc: RPCClient, job_id: str, error: str) -> None:
+    """Mark a job as failed with error message via ops.update_job_status RPC."""
+    rpc.update_job_status(job_id=job_id, status="failed", error_message=error[:2000])
 
 
 # =============================================================================
@@ -172,7 +134,7 @@ def load_csv_from_storage(file_path: str) -> pd.DataFrame:
 # =============================================================================
 
 
-def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
+def process_job(conn: psycopg.Connection, rpc: RPCClient, job: dict[str, Any]) -> None:
     """
     Process a single simplicity_ingest job.
 
@@ -194,7 +156,7 @@ def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     if not file_path:
         error = "Missing file_path in job payload"
         logger.error(f"[{run_id}] {error}")
-        mark_job_failed(conn, job_id, error)
+        mark_job_failed(rpc, job_id, error)
         return
 
     try:
@@ -203,14 +165,14 @@ def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
 
         if df.empty:
             logger.warning(f"[{run_id}] CSV is empty: {file_path}")
-            mark_job_completed(conn, job_id)
+            mark_job_completed(rpc, job_id)
             return
 
         # Validate format
         if not is_simplicity_format(df):
             error = f"CSV does not match Simplicity format. Columns: {list(df.columns)}"
             logger.error(f"[{run_id}] {error}")
-            mark_job_failed(conn, job_id, error)
+            mark_job_failed(rpc, job_id, error)
             return
 
         # Process through 3-step pipeline
@@ -225,16 +187,16 @@ def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
         )
 
         if result.error_summary:
-            mark_job_failed(conn, job_id, result.error_summary)
+            mark_job_failed(rpc, job_id, result.error_summary)
         else:
-            mark_job_completed(conn, job_id)
+            mark_job_completed(rpc, job_id)
 
         logger.info(f"[{run_id}] Job {job_id} completed")
 
     except Exception as e:
         error_msg = str(e)[:500]
         logger.exception(f"[{run_id}] Job {job_id} failed: {e}")
-        mark_job_failed(conn, job_id, error_msg)
+        mark_job_failed(rpc, job_id, error_msg)
 
 
 # =============================================================================
@@ -256,16 +218,18 @@ def run_worker_loop() -> None:
     logger.info(f"   Poll interval: {POLL_INTERVAL_SECONDS}s")
     logger.info(f"   Job type: {JOB_TYPE}")
 
-    conn = psycopg.connect(dsn)
+    app_name = get_safe_application_name("simplicity_ingest")
+    conn = psycopg.connect(dsn, application_name=app_name)
+    rpc = RPCClient(conn)
 
     try:
         while True:
             try:
-                job = claim_pending_job(conn)
+                job = claim_pending_job(rpc)
 
                 if job:
                     logger.info(f"Claimed job: {job['id']}")
-                    process_job(conn, job)
+                    process_job(conn, rpc, job)
                 else:
                     time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -276,7 +240,9 @@ def run_worker_loop() -> None:
                 except Exception:
                     pass
                 time.sleep(5)
-                conn = psycopg.connect(dsn)
+                app_name = get_safe_application_name("simplicity_ingest")
+                conn = psycopg.connect(dsn, application_name=app_name)
+                rpc = RPCClient(conn)
 
             except KeyboardInterrupt:
                 logger.info("Worker interrupted by user")
@@ -330,7 +296,8 @@ def process_csv_file(
 
     filename = os.path.basename(file_path)
 
-    with psycopg.connect(dsn) as conn:
+    app_name = get_safe_application_name("simplicity_direct")
+    with psycopg.connect(dsn, application_name=app_name) as conn:
         result = process_simplicity_batch(conn, df, filename, source_reference)
 
     logger.info(
@@ -400,12 +367,14 @@ if __name__ == "__main__":
         # Single job mode
         env = get_supabase_env()
         dsn = get_supabase_db_url(env)
-        conn = psycopg.connect(dsn)
+        app_name = get_safe_application_name("simplicity_once")
+        conn = psycopg.connect(dsn, application_name=app_name)
+        rpc = RPCClient(conn)
         try:
-            job = claim_pending_job(conn)
+            job = claim_pending_job(rpc)
             if job:
                 logger.info(f"Processing job: {job['id']}")
-                process_job(conn, job)
+                process_job(conn, rpc, job)
             else:
                 logger.info("No pending jobs found")
         finally:

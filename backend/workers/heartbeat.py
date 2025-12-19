@@ -5,6 +5,12 @@ Provides heartbeat functionality for background workers.
 Workers spawn a background thread that upserts to ops.worker_heartbeats
 every HEARTBEAT_INTERVAL_SECONDS (default: 30s).
 
+Features:
+- Uses ops.register_heartbeat RPC for least-privilege security
+- Throttled warning logs when DB is unavailable (avoids log spam)
+- Circuit breaker for missing heartbeat function
+- Clean shutdown with final status update
+
 Usage:
     from backend.workers.heartbeat import WorkerHeartbeat
 
@@ -24,7 +30,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 import socket
 import threading
 import time
@@ -34,11 +39,14 @@ from uuid import uuid4
 import psycopg
 import psycopg.errors
 
+from backend.workers.rpc_client import RPCClient
+
 logger = logging.getLogger(__name__)
 
 # Heartbeat configuration
 HEARTBEAT_INTERVAL_SECONDS = 30.0
 HEARTBEAT_RETRY_DELAY = 5.0
+HEARTBEAT_WARNING_INTERVAL = 60.0  # Throttle warnings to once per minute
 
 
 def _generate_worker_id(worker_type: str) -> str:
@@ -91,6 +99,10 @@ class WorkerHeartbeat:
         self._thread: Optional[threading.Thread] = None
         self._status = "running"
         self._disabled = False  # Circuit breaker: True if heartbeat table missing
+
+        # Throttled warning state to avoid log spam when DB is down
+        self._last_warning_time: float = 0.0
+        self._warning_suppress_count: int = 0
 
     def start(self) -> None:
         """Start the background heartbeat thread."""
@@ -169,11 +181,25 @@ class WorkerHeartbeat:
                 self._disable_heartbeats("ops.worker_heartbeats")
                 break
             except psycopg.OperationalError as e:
-                # Network blips - retry on next loop, do NOT disable
-                logger.warning(f"Heartbeat DB connection error: {e}")
+                # Network blips - throttled warning to avoid log spam
+                self._log_throttled_warning(
+                    f"Heartbeat DB connection error: {type(e).__name__}: {e}"
+                )
                 time.sleep(HEARTBEAT_RETRY_DELAY)
             except Exception as e:
-                logger.error(f"Heartbeat error: {e}")
+                self._log_throttled_warning(f"Heartbeat error: {type(e).__name__}: {e}")
+
+    def _log_throttled_warning(self, message: str) -> None:
+        """Log a warning with throttling to avoid spam when DB is down."""
+        now = time.monotonic()
+        if now - self._last_warning_time >= HEARTBEAT_WARNING_INTERVAL:
+            if self._warning_suppress_count > 0:
+                message = f"{message} (suppressed {self._warning_suppress_count} similar warnings)"
+            logger.warning(message)
+            self._last_warning_time = now
+            self._warning_suppress_count = 0
+        else:
+            self._warning_suppress_count += 1
 
     def _disable_heartbeats(self, table_name: str) -> None:
         """Circuit breaker: permanently disable heartbeats for this process."""
@@ -184,7 +210,7 @@ class WorkerHeartbeat:
             self._disabled = True
 
     def _send_heartbeat(self, status: Optional[str] = None) -> None:
-        """Send a single heartbeat to the database."""
+        """Send a single heartbeat to the database via RPC."""
         if self._disabled:
             return
 
@@ -192,21 +218,13 @@ class WorkerHeartbeat:
         db_url = self._get_db_url()
 
         with psycopg.connect(db_url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO ops.worker_heartbeats
-                        (worker_id, worker_type, hostname, last_seen_at, status)
-                    VALUES (%s, %s, %s, now(), %s)
-                    ON CONFLICT (worker_id) DO UPDATE SET
-                        last_seen_at = now(),
-                        hostname = EXCLUDED.hostname,
-                        status = EXCLUDED.status,
-                        updated_at = now()
-                    """,
-                    (self.worker_id, self.worker_type, self.hostname, status),
-                )
-                conn.commit()
+            rpc = RPCClient(conn)
+            rpc.register_heartbeat(
+                worker_id=self.worker_id,
+                worker_type=self.worker_type,
+                hostname=self.hostname,
+                status=status,
+            )
 
         logger.debug(f"Heartbeat sent: {self.worker_id} ({self.worker_type}) status={status}")
 

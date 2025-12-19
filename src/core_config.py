@@ -1,22 +1,22 @@
 """
 Dragonfly Engine - Unified Configuration
 
-CANONICAL ENVIRONMENT VARIABLE CONTRACT
-========================================
+CANONICAL ENVIRONMENT VARIABLE CONTRACT v2.0
+=============================================
 
 This module is the SINGLE SOURCE OF TRUTH for all Dragonfly configuration.
 Both API (backend/) and workers (backend/workers/, workers/) use this loader.
 
-CANONICAL ENV VARS (uppercase, no suffix):
-------------------------------------------
+CANONICAL ENV VARS (no suffixes, mode-based):
+---------------------------------------------
 Required:
   SUPABASE_URL                  - Supabase project REST URL (https://xxx.supabase.co)
   SUPABASE_SERVICE_ROLE_KEY     - Service role JWT (server-side only, 100+ chars)
   SUPABASE_DB_URL               - Postgres connection string (pooler recommended)
 
 Environment control:
-  ENVIRONMENT                   - dev | staging | prod (default: dev)
-  SUPABASE_MODE                 - dev | prod (for DSN resolution, default: dev)
+  SUPABASE_MODE                 - dev | prod (determines which project, default: dev)
+  ENVIRONMENT                   - dev | staging | prod (affects logging/rate limits, default: dev)
   LOG_LEVEL                     - DEBUG | INFO | WARNING | ERROR (default: INFO)
 
 Optional integrations:
@@ -27,20 +27,28 @@ Optional integrations:
   TWILIO_ACCOUNT_SID            - SMS notifications
   DRAGONFLY_CORS_ORIGINS        - Comma-separated CORS origins
 
-PROD OVERRIDES (legacy, deprecated):
-------------------------------------
-These are accepted for backward compatibility but emit warnings:
-  SUPABASE_URL_PROD             -> use SUPABASE_URL with SUPABASE_MODE=prod
+REMOVED (v2.0 - fail if present):
+---------------------------------
+The following variables are NO LONGER SUPPORTED:
+  SUPABASE_URL_PROD             - Use SUPABASE_URL with SUPABASE_MODE=prod
   SUPABASE_SERVICE_ROLE_KEY_PROD
   SUPABASE_DB_URL_PROD
+  SUPABASE_DB_URL_DEV
   SUPABASE_DB_URL_DIRECT_PROD
+  supabase_url (lowercase)      - Use SUPABASE_URL
 
-LOWERCASE ALIASES (legacy, deprecated):
----------------------------------------
-These are accepted for backward compatibility but emit warnings:
-  supabase_url                  -> SUPABASE_URL
-  supabase_service_role_key     -> SUPABASE_SERVICE_ROLE_KEY
-  supabase_db_url               -> SUPABASE_DB_URL
+FAIL-FAST BEHAVIOR:
+-------------------
+If required variables are missing, the app exits immediately with a clear message:
+
+  FATAL: Missing required environment variable: SUPABASE_DB_URL
+
+  Required for database connectivity:
+    SUPABASE_URL              ✓ set
+    SUPABASE_SERVICE_ROLE_KEY ✓ set
+    SUPABASE_DB_URL           ✗ MISSING
+
+  Current SUPABASE_MODE: dev
 
 Usage:
 ------
@@ -68,44 +76,98 @@ logger = logging.getLogger(__name__)
 # Track which deprecated keys are used (for diagnostic output)
 _DEPRECATED_KEYS_USED: set[str] = set()
 
-# Mapping of deprecated keys to canonical keys
-_DEPRECATED_TO_CANONICAL = {
-    # Lowercase variants
+# Deprecated keys that are NO LONGER SUPPORTED (v2.0)
+# If any of these are set, fail fast with a migration message
+_REMOVED_KEYS = {
+    "SUPABASE_URL_PROD",
+    "SUPABASE_SERVICE_ROLE_KEY_PROD",
+    "SUPABASE_DB_URL_PROD",
+    "SUPABASE_DB_URL_DEV",
+    "SUPABASE_DB_URL_DIRECT_PROD",
+    "SUPABASE_DB_PASSWORD",
+    "SUPABASE_DB_PASSWORD_PROD",
+}
+
+# Lowercase aliases that are deprecated but accepted (with warning)
+_LOWERCASE_ALIASES = {
     "supabase_url": "SUPABASE_URL",
     "supabase_service_role_key": "SUPABASE_SERVICE_ROLE_KEY",
     "supabase_db_url": "SUPABASE_DB_URL",
     "supabase_mode": "SUPABASE_MODE",
     "environment": "ENVIRONMENT",
     "log_level": "LOG_LEVEL",
-    # _PROD suffix variants (only needed when SUPABASE_MODE != prod)
-    "SUPABASE_URL_PROD": "SUPABASE_URL (with SUPABASE_MODE=prod)",
-    "SUPABASE_SERVICE_ROLE_KEY_PROD": "SUPABASE_SERVICE_ROLE_KEY (with SUPABASE_MODE=prod)",
-    "SUPABASE_DB_URL_PROD": "SUPABASE_DB_URL (with SUPABASE_MODE=prod)",
-    "SUPABASE_DB_URL_DIRECT_PROD": "SUPABASE_DB_URL (with SUPABASE_MODE=prod)",
 }
 
 
+def _check_removed_env_vars() -> None:
+    """Check for removed env vars and warn/fail with migration guidance.
+
+    In dev mode (SUPABASE_MODE=dev or unset): logs a warning
+    In prod mode (SUPABASE_MODE=prod): raises RuntimeError
+    """
+    found_removed = []
+    for key in _REMOVED_KEYS:
+        if os.environ.get(key):
+            found_removed.append(key)
+
+    if not found_removed:
+        return
+
+    migration_msg = """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    CONFIGURATION MIGRATION REQUIRED                          ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ The following environment variables are NO LONGER SUPPORTED:                 ║
+║                                                                              ║
+"""
+    for key in found_removed:
+        migration_msg += f"║   ✗ {key:<68} ║\n"
+
+    migration_msg += """║                                                                              ║
+║ MIGRATION: Use a single set of canonical variables per environment:         ║
+║                                                                              ║
+║   Production (Railway):                                                      ║
+║     SUPABASE_MODE=prod                                                       ║
+║     SUPABASE_URL=https://your-prod-project.supabase.co                       ║
+║     SUPABASE_SERVICE_ROLE_KEY=eyJ...                                         ║
+║     SUPABASE_DB_URL=postgresql://dragonfly_app:pass@host:5432/postgres       ║
+║                                                                              ║
+║   Development (local .env):                                                  ║
+║     SUPABASE_MODE=dev                                                        ║
+║     SUPABASE_URL=https://your-dev-project.supabase.co                        ║
+║     SUPABASE_SERVICE_ROLE_KEY=eyJ...                                         ║
+║     SUPABASE_DB_URL=postgresql://postgres:pass@host:5432/postgres            ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+    # In production mode, fail fast. In dev mode, warn but continue.
+    mode = os.environ.get("SUPABASE_MODE", "dev").lower().strip()
+    if mode in ("prod", "production"):
+        raise RuntimeError(migration_msg)
+    else:
+        logger.warning(
+            "Deprecated environment variables detected (will fail in prod):\n%s",
+            ", ".join(found_removed),
+        )
+        for key in found_removed:
+            warnings.warn(
+                f"Environment variable '{key}' is deprecated. Remove it and use canonical variables.",
+                DeprecationWarning,
+                stacklevel=4,
+            )
+
+
 def _check_deprecated_env_vars() -> None:
-    """Check for deprecated env var usage and emit warnings."""
-    for deprecated, canonical in _DEPRECATED_TO_CANONICAL.items():
+    """Check for deprecated lowercase env var usage and emit warnings."""
+    for deprecated, canonical in _LOWERCASE_ALIASES.items():
         if deprecated in os.environ:
             _DEPRECATED_KEYS_USED.add(deprecated)
-            if deprecated.islower():
-                # Lowercase variant - definitely deprecated
-                warnings.warn(
-                    f"Environment variable '{deprecated}' is deprecated. "
-                    f"Use uppercase '{canonical}' instead.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
-            elif deprecated.endswith("_PROD"):
-                # _PROD suffix - only warn if not in prod mode
-                mode = os.environ.get("SUPABASE_MODE", "").lower()
-                if mode not in ("prod", "production"):
-                    logger.info(
-                        f"Using {deprecated} for prod credentials. "
-                        f"Consider setting SUPABASE_MODE=prod and using {canonical}."
-                    )
+            warnings.warn(
+                f"Environment variable '{deprecated}' is deprecated. "
+                f"Use uppercase '{canonical}' instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
 
 
 def get_deprecated_keys_used() -> set[str]:
@@ -117,12 +179,19 @@ class Settings(BaseSettings):
     """
     Unified application settings for API and workers.
 
-    Loads from environment variables with fallback to .env file.
-    Supports both canonical uppercase and legacy lowercase/suffix keys.
+    Loads from environment variables with fallback to env file.
+
+    ONE FILE, ONE ENVIRONMENT PATTERN:
+        Set ENV_FILE to point to the correct file:
+        - ENV_FILE=.env.dev  → loads development credentials
+        - ENV_FILE=.env.prod → loads production credentials
+        - Defaults to .env.dev if ENV_FILE is not set
+
+    Supports both canonical uppercase and legacy lowercase keys.
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=os.environ.get("ENV_FILE", ".env.dev"),
         env_file_encoding="utf-8",
         case_sensitive=False,  # Accept both SUPABASE_URL and supabase_url
         populate_by_name=True,
@@ -130,10 +199,9 @@ class Settings(BaseSettings):
     )
 
     # =========================================================================
-    # CORE SUPABASE CONFIGURATION
+    # CORE SUPABASE CONFIGURATION (Canonical - no suffixes)
     # =========================================================================
 
-    # Primary credentials (for dev or when SUPABASE_MODE=prod)
     SUPABASE_URL: str = Field(
         ...,
         description="Supabase project REST URL",
@@ -145,30 +213,10 @@ class Settings(BaseSettings):
         description="Supabase service role JWT key",
         json_schema_extra={"env": ["SUPABASE_SERVICE_ROLE_KEY", "supabase_service_role_key"]},
     )
-    SUPABASE_DB_URL: str | None = Field(
-        default=None,
+    SUPABASE_DB_URL: str = Field(
+        ...,
         description="Postgres connection string (pooler recommended)",
         json_schema_extra={"env": ["SUPABASE_DB_URL", "supabase_db_url"]},
-    )
-
-    # Legacy _PROD suffixed credentials (backward compatibility)
-    SUPABASE_URL_PROD: str | None = Field(default=None, description="[DEPRECATED] Prod URL")
-    SUPABASE_SERVICE_ROLE_KEY_PROD: str | None = Field(
-        default=None, description="[DEPRECATED] Prod key"
-    )
-    SUPABASE_DB_URL_PROD: str | None = Field(default=None, description="[DEPRECATED] Prod DB URL")
-    SUPABASE_DB_URL_DIRECT_PROD: str | None = Field(
-        default=None, description="[DEPRECATED] Direct prod DB URL"
-    )
-    SUPABASE_DB_URL_DEV: str | None = Field(
-        default=None,
-        description="[FALLBACK] Dev DB URL, used if SUPABASE_DB_URL missing in dev mode",
-    )
-    SUPABASE_DB_PASSWORD: str | None = Field(
-        default=None, description="DB password for URL construction"
-    )
-    SUPABASE_DB_PASSWORD_PROD: str | None = Field(
-        default=None, description="[DEPRECATED] Prod DB password"
     )
 
     # =========================================================================
@@ -271,8 +319,11 @@ class Settings(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _normalize_values(cls, values: dict[str, Any]) -> dict[str, Any]:
-        """Normalize string values (strip whitespace, quotes, environment aliases)."""
-        # Collision guard: check for canonical + deprecated key conflicts
+        """Normalize string values and check for removed/deprecated keys."""
+        # FAIL FAST: Check for removed env vars before anything else
+        _check_removed_env_vars()
+
+        # Collision guard: check for canonical + lowercase alias conflicts
         _COLLISION_PAIRS = [
             ("SUPABASE_URL", "supabase_url"),
             ("SUPABASE_SERVICE_ROLE_KEY", "supabase_service_role_key"),
@@ -298,10 +349,32 @@ class Settings(BaseSettings):
                 "canonical UPPERCASE key."
             )
 
+        # Critical DB vars that need aggressive sanitization
+        DB_CRITICAL_KEYS = {
+            "SUPABASE_DB_URL",
+            "supabase_db_url",
+            "SUPABASE_URL",
+            "supabase_url",
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "supabase_service_role_key",
+            "DATABASE_URL",
+        }
+
         for key, value in list(values.items()):
             if isinstance(value, str):
                 # Strip whitespace and quotes
                 cleaned = value.strip().strip('"').strip("'").strip()
+
+                # For critical DB vars, also remove internal newlines/carriage returns
+                if key in DB_CRITICAL_KEYS:
+                    original = cleaned
+                    cleaned = cleaned.replace("\n", "").replace("\r", "").replace("\t", "")
+                    if cleaned != original:
+                        logger.warning(
+                            f"Sanitized {key}: removed internal whitespace/newlines "
+                            f"(original length={len(original)}, cleaned={len(cleaned)})"
+                        )
+
                 values[key] = cleaned
 
         # Normalize ENVIRONMENT: accept 'production'→'prod', 'development'→'dev'
@@ -345,8 +418,8 @@ class Settings(BaseSettings):
 
     @property
     def supabase_db_url(self) -> str:
-        """Get the effective database URL based on mode."""
-        return self.get_db_url()
+        """Get the database URL (canonical, no fallbacks)."""
+        return self.SUPABASE_DB_URL
 
     @property
     def supabase_mode(self) -> Literal["dev", "prod"]:
@@ -416,71 +489,32 @@ class Settings(BaseSettings):
         return default_pattern if self.ENVIRONMENT in ("prod", "staging") else None
 
     # =========================================================================
-    # CREDENTIAL RESOLUTION
+    # CREDENTIAL RESOLUTION (Simplified - no fallbacks)
     # =========================================================================
 
     def get_supabase_credentials(self, mode: str | None = None) -> tuple[str, str]:
         """
-        Get Supabase URL and service role key for the specified mode.
+        Get Supabase URL and service role key.
 
         Args:
-            mode: 'dev' or 'prod'. Defaults to self.supabase_mode.
+            mode: Ignored (kept for backward compatibility). Uses canonical vars.
 
         Returns:
             Tuple of (url, service_role_key)
         """
-        effective_mode = mode or self.supabase_mode
-
-        if effective_mode == "prod":
-            # Try _PROD suffixed first for backward compatibility
-            url = self.SUPABASE_URL_PROD or self.SUPABASE_URL
-            key = self.SUPABASE_SERVICE_ROLE_KEY_PROD or self.SUPABASE_SERVICE_ROLE_KEY
-        else:
-            url = self.SUPABASE_URL
-            key = self.SUPABASE_SERVICE_ROLE_KEY
-
-        if not url or not key:
-            raise RuntimeError(
-                f"Missing Supabase credentials for mode '{effective_mode}'. "
-                f"Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."
-            )
-        return url, key
+        return self.SUPABASE_URL, self.SUPABASE_SERVICE_ROLE_KEY
 
     def get_db_url(self, mode: str | None = None) -> str:
         """
-        Get the database URL for the specified mode.
-
-        Fallback order:
-        - prod: SUPABASE_DB_URL_DIRECT_PROD → SUPABASE_DB_URL_PROD → SUPABASE_DB_URL
-        - dev:  SUPABASE_DB_URL → SUPABASE_DB_URL_DEV
+        Get the database URL.
 
         Args:
-            mode: 'dev' or 'prod'. Defaults to self.supabase_mode.
+            mode: Ignored (kept for backward compatibility). Uses canonical SUPABASE_DB_URL.
 
         Returns:
             PostgreSQL connection string
         """
-        effective_mode = mode or self.supabase_mode
-
-        if effective_mode == "prod":
-            # Try direct URL first (best for prod)
-            if self.SUPABASE_DB_URL_DIRECT_PROD:
-                return self.SUPABASE_DB_URL_DIRECT_PROD
-            if self.SUPABASE_DB_URL_PROD:
-                return self.SUPABASE_DB_URL_PROD
-
-        # Fall back to primary DB URL
-        if self.SUPABASE_DB_URL:
-            return self.SUPABASE_DB_URL
-
-        # DEV-specific fallback: check SUPABASE_DB_URL_DEV
-        if effective_mode == "dev" and self.SUPABASE_DB_URL_DEV:
-            logger.info("Using SUPABASE_DB_URL_DEV as fallback for SUPABASE_DB_URL")
-            return self.SUPABASE_DB_URL_DEV
-
-        raise RuntimeError(
-            f"Missing database URL for mode '{effective_mode}'. " f"Set SUPABASE_DB_URL."
-        )
+        return self.SUPABASE_DB_URL
 
 
 # =========================================================================
@@ -563,12 +597,7 @@ def print_effective_config(redact_secrets: bool = True) -> dict[str, Any]:
 
     secret_fields = {
         "SUPABASE_SERVICE_ROLE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY_PROD",
         "SUPABASE_DB_URL",
-        "SUPABASE_DB_URL_PROD",
-        "SUPABASE_DB_URL_DIRECT_PROD",
-        "SUPABASE_DB_PASSWORD",
-        "SUPABASE_DB_PASSWORD_PROD",
         "DRAGONFLY_API_KEY",
         "OPENAI_API_KEY",
         "SENDGRID_API_KEY",
@@ -745,7 +774,7 @@ def log_startup_diagnostics(service_name: str) -> None:
         return
 
     # Collect safe diagnostics
-    db_url_configured = bool(cfg.SUPABASE_DB_URL or cfg.SUPABASE_DB_URL_DEV)
+    db_url_configured = bool(cfg.SUPABASE_DB_URL)
     service_role_key_valid = (
         bool(cfg.SUPABASE_SERVICE_ROLE_KEY) and len(cfg.SUPABASE_SERVICE_ROLE_KEY) >= 100
     )

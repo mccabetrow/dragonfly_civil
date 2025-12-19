@@ -130,29 +130,15 @@ def evaluate_env_requirements(
 
 
 def _db_credential_result(target_env: SupabaseEnv, env_values: Mapping[str, str]) -> CheckResult:
-    suffix = "_PROD" if target_env == "prod" else ""
-    direct_url_name = f"SUPABASE_DB_URL_DIRECT{suffix}"
-    url_name = f"SUPABASE_DB_URL{suffix}"
-    password_name = f"SUPABASE_DB_PASSWORD{suffix}"
+    """Check for canonical SUPABASE_DB_URL."""
+    url_name = "SUPABASE_DB_URL"
+    raw_value = env_values.get(url_name)
+    value = raw_value.strip() if isinstance(raw_value, str) else None
 
-    for name, label in (
-        (direct_url_name, "Supabase direct database URL"),
-        (url_name, "Supabase database URL"),
-    ):
-        raw_value = env_values.get(name)
-        value = raw_value.strip() if isinstance(raw_value, str) else None
-        if value:
-            return CheckResult(name, "OK", label)
+    if value:
+        return CheckResult(url_name, "OK", "Supabase database URL")
 
-    requirement = EnvRequirement(
-        password_name,
-        "Supabase database password",
-        "string",
-    )
-    result = _check_requirement(password_name, requirement, env_values, target_env)
-    if result.status == "WARN":  # database credentials must never downgrade
-        return CheckResult(result.name, "FAIL", result.detail)
-    return result
+    return CheckResult(url_name, "FAIL", f"Missing SUPABASE_DB_URL (SUPABASE_MODE={target_env})")
 
 
 def _supabase_probe(env: SupabaseEnv) -> CheckResult:

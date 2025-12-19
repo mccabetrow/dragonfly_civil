@@ -513,6 +513,346 @@ class Timer:
 
 
 # =============================================================================
+# Trace Execution Decorator
+# =============================================================================
+
+
+def trace_execution(
+    operation: Optional[str] = None,
+    include_args: bool = False,
+    log_result: bool = False,
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """
+    Decorator that provides structured START/END tracing with correlation IDs.
+
+    Automatically logs:
+    - START: function entry with trace_id, operation name, optional args
+    - END: function exit with duration_ms, status (success/error)
+    - EXCEPTION: full traceback with trace_id for correlation
+
+    The decorator generates a trace_id if none exists in context, ensuring
+    all logs within the decorated function can be correlated.
+
+    Usage:
+        @trace_execution("ingest_batch")
+        async def process_batch(batch_id: str) -> int:
+            ...
+
+        @trace_execution(include_args=True)
+        def calculate_score(judgment_id: int, factors: list) -> float:
+            ...
+
+    Args:
+        operation: Name for the operation (defaults to function name)
+        include_args: If True, log function arguments in START message
+        log_result: If True, log return value in END message
+
+    Returns:
+        Decorated function with START/END tracing
+    """
+
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        op_name = operation or func.__name__
+        func_logger = logging.getLogger(func.__module__)
+
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> T:
+            # Generate or reuse trace_id
+            trace_id = get_run_id()
+
+            # Build START log extras
+            start_extra: Dict[str, Any] = {
+                "trace_id": trace_id,
+                "operation": op_name,
+                "event": "START",
+            }
+            if include_args:
+                # Redact sensitive args before logging
+                safe_kwargs = redact_sensitive(kwargs)
+                start_extra["func_args"] = str(args)[:200]
+                start_extra["func_kwargs"] = str(safe_kwargs)[:500]
+
+            func_logger.info(f"[{op_name}] START", extra=start_extra)
+
+            start = time.perf_counter()
+            try:
+                result = await func(*args, **kwargs)
+                duration_ms = (time.perf_counter() - start) * 1000
+
+                end_extra: Dict[str, Any] = {
+                    "trace_id": trace_id,
+                    "operation": op_name,
+                    "event": "END",
+                    "status": "success",
+                    "duration_ms": round(duration_ms, 2),
+                }
+                if log_result:
+                    end_extra["result"] = str(result)[:200]
+
+                func_logger.info(f"[{op_name}] END", extra=end_extra)
+                return result
+
+            except Exception as e:
+                duration_ms = (time.perf_counter() - start) * 1000
+                func_logger.error(
+                    f"[{op_name}] EXCEPTION: {type(e).__name__}: {e}",
+                    extra={
+                        "trace_id": trace_id,
+                        "operation": op_name,
+                        "event": "EXCEPTION",
+                        "status": "error",
+                        "duration_ms": round(duration_ms, 2),
+                        "error_type": type(e).__name__,
+                        "error_message": str(e)[:500],
+                        "traceback": traceback.format_exc(),
+                    },
+                )
+                raise
+
+        @wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> T:
+            trace_id = get_run_id()
+
+            start_extra: Dict[str, Any] = {
+                "trace_id": trace_id,
+                "operation": op_name,
+                "event": "START",
+            }
+            if include_args:
+                safe_kwargs = redact_sensitive(kwargs)
+                start_extra["func_args"] = str(args)[:200]
+                start_extra["func_kwargs"] = str(safe_kwargs)[:500]
+
+            func_logger.info(f"[{op_name}] START", extra=start_extra)
+
+            start = time.perf_counter()
+            try:
+                result = func(*args, **kwargs)
+                duration_ms = (time.perf_counter() - start) * 1000
+
+                end_extra: Dict[str, Any] = {
+                    "trace_id": trace_id,
+                    "operation": op_name,
+                    "event": "END",
+                    "status": "success",
+                    "duration_ms": round(duration_ms, 2),
+                }
+                if log_result:
+                    end_extra["result"] = str(result)[:200]
+
+                func_logger.info(f"[{op_name}] END", extra=end_extra)
+                return result
+
+            except Exception as e:
+                duration_ms = (time.perf_counter() - start) * 1000
+                func_logger.error(
+                    f"[{op_name}] EXCEPTION: {type(e).__name__}: {e}",
+                    extra={
+                        "trace_id": trace_id,
+                        "operation": op_name,
+                        "event": "EXCEPTION",
+                        "status": "error",
+                        "duration_ms": round(duration_ms, 2),
+                        "error_type": type(e).__name__,
+                        "error_message": str(e)[:500],
+                        "traceback": traceback.format_exc(),
+                    },
+                )
+                raise
+
+        import asyncio
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper  # type: ignore
+        return sync_wrapper
+
+    return decorator
+
+
+# =============================================================================
+# Metrics Helper Class
+# =============================================================================
+
+
+class Metrics:
+    """
+    Structured metrics logging for job processing and pipeline observability.
+
+    Emits standardized "METRIC" log events that can be parsed by log
+    aggregation systems (Datadog, CloudWatch, Grafana Loki) for dashboards.
+
+    Usage:
+        metrics = Metrics("enrichment_worker")
+
+        metrics.job_claimed(job_id=123, job_kind="tloxp")
+        metrics.job_success(job_id=123, job_kind="tloxp", duration_ms=1234.5)
+        metrics.job_failure(job_id=123, job_kind="tloxp", error="timeout")
+
+        metrics.record_latency("enrichment", 1234.5)
+        metrics.increment("rows_processed", 100)
+
+    Log format:
+        {"event": "METRIC", "metric": "job_claimed", "job_id": 123, ...}
+    """
+
+    def __init__(self, namespace: str = "dragonfly"):
+        """
+        Initialize metrics with a namespace.
+
+        Args:
+            namespace: Prefix for metric identification (e.g., "enrichment_worker")
+        """
+        self.namespace = namespace
+        self._logger = logging.getLogger(f"metrics.{namespace}")
+
+    def _emit(self, metric: str, **fields: Any) -> None:
+        """Emit a structured metric log entry."""
+        self._logger.info(
+            f"[METRIC] {self.namespace}.{metric}",
+            extra={
+                "event": "METRIC",
+                "namespace": self.namespace,
+                "metric": metric,
+                "trace_id": get_run_id(),
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                **fields,
+            },
+        )
+
+    # -------------------------------------------------------------------------
+    # Job Lifecycle Metrics
+    # -------------------------------------------------------------------------
+
+    def job_claimed(self, job_id: int, job_kind: str, **extra: Any) -> None:
+        """Record a job claim event."""
+        self._emit("job_claimed", job_id=job_id, job_kind=job_kind, **extra)
+
+    def job_success(
+        self,
+        job_id: int,
+        job_kind: str,
+        duration_ms: float,
+        **extra: Any,
+    ) -> None:
+        """Record a successful job completion."""
+        self._emit(
+            "job_success",
+            job_id=job_id,
+            job_kind=job_kind,
+            duration_ms=round(duration_ms, 2),
+            **extra,
+        )
+
+    def job_failure(
+        self,
+        job_id: int,
+        job_kind: str,
+        error: str,
+        duration_ms: Optional[float] = None,
+        attempt: int = 1,
+        **extra: Any,
+    ) -> None:
+        """Record a job failure."""
+        self._emit(
+            "job_failure",
+            job_id=job_id,
+            job_kind=job_kind,
+            error=error[:500],
+            duration_ms=round(duration_ms, 2) if duration_ms else None,
+            attempt=attempt,
+            **extra,
+        )
+
+    def job_retry(
+        self,
+        job_id: int,
+        job_kind: str,
+        attempt: int,
+        max_attempts: int,
+        **extra: Any,
+    ) -> None:
+        """Record a job retry event."""
+        self._emit(
+            "job_retry",
+            job_id=job_id,
+            job_kind=job_kind,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            **extra,
+        )
+
+    # -------------------------------------------------------------------------
+    # Latency & Counter Metrics
+    # -------------------------------------------------------------------------
+
+    def record_latency(self, operation: str, duration_ms: float, **extra: Any) -> None:
+        """Record operation latency for tracking percentiles."""
+        self._emit(
+            "latency",
+            operation=operation,
+            duration_ms=round(duration_ms, 2),
+            **extra,
+        )
+
+    def increment(self, counter: str, value: int = 1, **extra: Any) -> None:
+        """Increment a counter metric."""
+        self._emit("counter", counter=counter, value=value, **extra)
+
+    # -------------------------------------------------------------------------
+    # Batch / Pipeline Metrics
+    # -------------------------------------------------------------------------
+
+    def batch_started(self, batch_id: str, total_rows: int, **extra: Any) -> None:
+        """Record batch processing start."""
+        self._emit(
+            "batch_started",
+            batch_id=batch_id,
+            total_rows=total_rows,
+            **extra,
+        )
+
+    def batch_completed(
+        self,
+        batch_id: str,
+        total_rows: int,
+        valid_rows: int,
+        error_rows: int,
+        duration_ms: float,
+        **extra: Any,
+    ) -> None:
+        """Record batch processing completion."""
+        success_rate = (valid_rows / total_rows * 100) if total_rows > 0 else 0.0
+        self._emit(
+            "batch_completed",
+            batch_id=batch_id,
+            total_rows=total_rows,
+            valid_rows=valid_rows,
+            error_rows=error_rows,
+            success_rate=round(success_rate, 2),
+            duration_ms=round(duration_ms, 2),
+            **extra,
+        )
+
+    def enrichment_completed(
+        self,
+        judgment_id: int,
+        enrichment_type: str,
+        duration_ms: float,
+        success: bool,
+        **extra: Any,
+    ) -> None:
+        """Record enrichment completion for a single judgment."""
+        self._emit(
+            "enrichment_completed",
+            judgment_id=judgment_id,
+            enrichment_type=enrichment_type,
+            duration_ms=round(duration_ms, 2),
+            success=success,
+            **extra,
+        )
+
+
+# =============================================================================
 # Worker Logging Helpers
 # =============================================================================
 

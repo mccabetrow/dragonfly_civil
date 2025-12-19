@@ -17,6 +17,8 @@ __pycache__/
 
 # Secrets - never commit these
 .env
+.env.dev
+.env.prod
 .env.local
 */.env
 */.env.local

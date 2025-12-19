@@ -64,39 +64,28 @@ def get_supabase_env() -> SupabaseEnv:
 
 
 def get_supabase_credentials(env: _EnvInput = None) -> tuple[str, str]:
-    supabase_env = _coerce_supabase_env(env)
+    """
+    Get Supabase URL and service role key.
+
+    Uses canonical SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.
+    The env parameter is ignored (kept for backward compatibility).
+    """
     settings = get_settings()
+    url = (settings.SUPABASE_URL or "").strip()
+    key = (settings.SUPABASE_SERVICE_ROLE_KEY or "").strip()
 
-    if supabase_env == "prod":
-        url = (settings.SUPABASE_URL_PROD or "").strip()
-        key = (settings.SUPABASE_SERVICE_ROLE_KEY_PROD or "").strip()
-        missing = [
-            name
-            for name, value in {
-                "SUPABASE_URL_PROD": url,
-                "SUPABASE_SERVICE_ROLE_KEY_PROD": key,
-            }.items()
-            if not value
-        ]
-        if missing:
-            raise RuntimeError(
-                "Missing Supabase credential(s) for 'prod' environment: " + ", ".join(missing)
-            )
-        return url, key
+    missing = []
+    if not url:
+        missing.append("SUPABASE_URL")
+    if not key:
+        missing.append("SUPABASE_SERVICE_ROLE_KEY")
 
-    url = (settings.supabase_url or "").strip()
-    key = (settings.supabase_service_role_key or "").strip()
-    missing = [
-        name
-        for name, value in {
-            "SUPABASE_URL": url,
-            "SUPABASE_SERVICE_ROLE_KEY": key,
-        }.items()
-        if not value
-    ]
     if missing:
+        mode = get_supabase_env()
         raise RuntimeError(
-            "Missing Supabase credential(s) for 'dev' environment: " + ", ".join(missing)
+            f"Missing required Supabase credential(s): {', '.join(missing)}\n"
+            f"Current SUPABASE_MODE: {mode}\n"
+            f"Set these in your environment or .env file."
         )
     return url, key
 
@@ -135,18 +124,6 @@ def create_supabase_client(env: _EnvInput = None) -> Client:
     return client
 
 
-def _project_ref_from_url(url: str | None) -> str:
-    if not url:
-        return ""
-    url = url.strip()
-    if not url:
-        return ""
-    prefix = "https://"
-    if url.startswith(prefix):
-        url = url[len(prefix) :]
-    return url.split(".")[0]
-
-
 def _strip(value: str | None) -> str | None:
     if not value:
         return None
@@ -154,111 +131,40 @@ def _strip(value: str | None) -> str | None:
     return stripped or None
 
 
-def _setting_value(settings: Settings, name: str) -> str | None:
-    value = getattr(settings, name, None)
-    return _strip(value) if isinstance(value, str) else None
-
-
-def _resolve_project_ref(settings: Settings, suffix: str) -> str | None:
-    explicit_ref = _strip(os.getenv(f"SUPABASE_PROJECT_REF{suffix}"))
-    if explicit_ref:
-        return explicit_ref
-    url_attr = "SUPABASE_URL_PROD" if suffix == "_PROD" else "SUPABASE_URL"
-    candidate_url = _strip(os.getenv(url_attr))
-    if not candidate_url:
-        settings_url = _setting_value(settings, url_attr)
-        candidate_url = settings_url
-    if candidate_url:
-        return _project_ref_from_url(candidate_url)
-    return None
-
-
 def get_supabase_db_url(env: _EnvInput = None) -> str:
     """
-    Resolve the Supabase database URL.
+    Get the Supabase database URL.
 
-    Priority order (CANONICAL FIRST):
-    1. SUPABASE_DB_URL - THE CANONICAL SOURCE. Use immediately if present.
-    2. SUPABASE_DB_URL_PROD / SUPABASE_DB_URL_DEV (legacy fallback by mode)
-    3. SUPABASE_DB_URL_DIRECT_PROD (prod only, for direct non-pooler connections)
-    4. Construct from SUPABASE_DB_PASSWORD + SUPABASE_PROJECT_REF (legacy)
+    Uses the canonical SUPABASE_DB_URL environment variable.
+    The env parameter is ignored (kept for backward compatibility).
 
-    Security: Error messages use [REDACTED] for any variable values.
+    Returns:
+        PostgreSQL connection string
+
+    Raises:
+        RuntimeError: If SUPABASE_DB_URL is not set
     """
-    supabase_env = _coerce_supabase_env(env)
     settings = get_settings()
 
-    # ==========================================================================
-    # PRIORITY 1: CANONICAL SUPABASE_DB_URL - USE IMMEDIATELY IF PRESENT
-    # This is the Railway-standard variable. No mode checking needed.
-    # ==========================================================================
-    canonical = _strip(os.getenv("SUPABASE_DB_URL"))
-    if not canonical:
-        canonical = _setting_value(settings, "SUPABASE_DB_URL")
-    if canonical:
-        logger.debug("Using canonical SUPABASE_DB_URL")
-        return canonical
+    # Use canonical SUPABASE_DB_URL
+    db_url = _strip(os.getenv("SUPABASE_DB_URL"))
+    if not db_url:
+        db_url = _strip(settings.SUPABASE_DB_URL)
 
-    # ==========================================================================
-    # LEGACY FALLBACKS (for backwards compatibility)
-    # ==========================================================================
-    suffix = "_PROD" if supabase_env == "prod" else "_DEV"
+    if db_url:
+        return db_url
 
-    # Priority 2: Environment-suffixed URL (legacy)
-    explicit_name = f"SUPABASE_DB_URL{suffix}"
-    explicit = _strip(os.getenv(explicit_name))
-    if not explicit:
-        explicit = _setting_value(settings, explicit_name)
-    if explicit:
-        logger.debug("Using legacy %s", explicit_name)
-        return explicit
-
-    # Priority 3: Direct connection URL (prod only, for migrations/direct queries)
-    if supabase_env == "prod":
-        direct_env = _strip(os.getenv("SUPABASE_DB_URL_DIRECT_PROD"))
-        if not direct_env:
-            direct_env = _setting_value(settings, "SUPABASE_DB_URL_DIRECT_PROD")
-        if direct_env:
-            logger.debug("Using SUPABASE_DB_URL_DIRECT_PROD")
-            return direct_env
-
-    # Priority 4: Construct from components (legacy)
-    password_name = f"SUPABASE_DB_PASSWORD{suffix}"
-    password = _strip(os.getenv(password_name))
-    project_ref = _resolve_project_ref(settings, suffix)
-
-    if password and project_ref:
-        region_host = _strip(os.getenv("SUPABASE_DB_HOST"))
-        if supabase_env == "prod":
-            region_host = _strip(os.getenv("SUPABASE_DB_HOST_PROD")) or region_host
-        if not region_host:
-            region_host = "aws-1-us-east-2.pooler.supabase.com"
-
-        logger.debug("Constructing DB URL from components")
-        return (
-            "postgresql://postgres:{password}@"
-            "{host}:5432/postgres"
-            "?user=postgres.{project_ref}&sslmode=require"
-        ).format(password=password, project_ref=project_ref, host=region_host)
-
-    # ==========================================================================
-    # FAILURE: No valid configuration found
-    # Security: Never include raw values in error messages
-    # ==========================================================================
-    checked_vars = [
-        "SUPABASE_DB_URL",
-        f"SUPABASE_DB_URL{suffix}",
-        password_name,
-        f"SUPABASE_PROJECT_REF{suffix}",
-    ]
-    present = [v for v in checked_vars if _strip(os.getenv(v))]
-    missing = [v for v in checked_vars if not _strip(os.getenv(v))]
-
+    # Fail fast with clear error message
+    mode = get_supabase_env()
     raise RuntimeError(
-        f"Missing Supabase database configuration for '{supabase_env}'. "
-        f"Set SUPABASE_DB_URL (preferred). "
-        f"Checked: {', '.join(checked_vars)}. "
-        f"Present: {len(present)} [REDACTED]. Missing: {', '.join(missing)}."
+        f"Missing required environment variable: SUPABASE_DB_URL\n\n"
+        f"Required for database connectivity:\n"
+        f"  SUPABASE_URL              {'✓ set' if settings.SUPABASE_URL else '✗ MISSING'}\n"
+        f"  SUPABASE_SERVICE_ROLE_KEY {'✓ set' if settings.SUPABASE_SERVICE_ROLE_KEY else '✗ MISSING'}\n"
+        f"  SUPABASE_DB_URL           ✗ MISSING\n\n"
+        f"Current SUPABASE_MODE: {mode}\n\n"
+        f"Set SUPABASE_DB_URL in your environment or .env file:\n"
+        f"  SUPABASE_DB_URL=postgresql://user:pass@host:5432/postgres?sslmode=require"
     )
 
 

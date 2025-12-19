@@ -16,6 +16,10 @@ Requires:
 Strategy:
   - If view doesn't exist → pytest.skip (migration not yet applied)
   - If DB unavailable → pytest.skip (no connection)
+
+DUAL-CONNECTION PATTERN (Zero Trust):
+  - admin_db: Used for test setup (INSERT seed data) and verification
+  - app_db: Used for testing application-level queries (view/RPC access)
 """
 
 from __future__ import annotations
@@ -26,18 +30,11 @@ from uuid import uuid4
 
 import psycopg
 import pytest
-
-from src.supabase_client import get_supabase_db_url, get_supabase_env
+from psycopg.rows import dict_row
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
-
-
-def _get_connection_url() -> str:
-    """Return the database connection URL for the current environment."""
-    env = get_supabase_env()
-    return get_supabase_db_url(env)
 
 
 def _view_exists(cur: psycopg.Cursor, schema: str, view_name: str) -> bool:
@@ -213,32 +210,16 @@ class TestIntakeRadarMetricsModel:
 class TestIntakeRadarViewExists:
     """Integration tests for analytics.v_intake_radar view existence."""
 
-    def test_view_exists(self) -> None:
+    def test_view_exists(self, admin_db: psycopg.Connection) -> None:
         """Test that analytics.v_intake_radar view exists."""
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
+        with admin_db.cursor() as cur:
+            if not _view_exists(cur, "analytics", "v_intake_radar"):
+                pytest.skip("View analytics.v_intake_radar not found - migration not applied")
+            # View exists - test passes
+            assert True
 
-        try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _view_exists(cur, "analytics", "v_intake_radar"):
-                        pytest.skip(
-                            "View analytics.v_intake_radar not found - migration not applied"
-                        )
-                    # View exists - test passes
-                    assert True
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
-
-    def test_view_has_expected_columns(self) -> None:
+    def test_view_has_expected_columns(self, admin_db: psycopg.Connection) -> None:
         """Test that view has all expected columns from v2 spec."""
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
-
         expected_columns = {
             "judgments_ingested_24h",
             "judgments_ingested_7d",
@@ -249,101 +230,55 @@ class TestIntakeRadarViewExists:
             "avg_processing_time_seconds",
         }
 
-        try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _view_exists(cur, "analytics", "v_intake_radar"):
-                        pytest.skip("View not found - migration not applied")
+        with admin_db.cursor() as cur:
+            if not _view_exists(cur, "analytics", "v_intake_radar"):
+                pytest.skip("View not found - migration not applied")
 
-                    actual_columns = _get_view_columns(cur, "analytics", "v_intake_radar")
+            actual_columns = _get_view_columns(cur, "analytics", "v_intake_radar")
 
-                    # Check all expected columns exist
-                    missing = expected_columns - actual_columns
-                    assert not missing, f"Missing columns: {missing}"
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
+            # Check all expected columns exist
+            missing = expected_columns - actual_columns
+            assert not missing, f"Missing columns: {missing}"
 
-    def test_rpc_function_exists(self) -> None:
+    def test_rpc_function_exists(self, admin_db: psycopg.Connection) -> None:
         """Test that intake_radar_metrics_v2 RPC function exists."""
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
-
-        try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _function_exists(cur, "public", "intake_radar_metrics_v2"):
-                        pytest.skip("Function intake_radar_metrics_v2 not found")
-                    assert True
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
+        with admin_db.cursor() as cur:
+            if not _function_exists(cur, "public", "intake_radar_metrics_v2"):
+                pytest.skip("Function intake_radar_metrics_v2 not found")
+            assert True
 
 
 class TestIntakeRadarGrants:
     """Integration tests for view and RPC grants."""
 
-    def test_view_grants_authenticated(self) -> None:
+    def test_view_grants_authenticated(self, admin_db: psycopg.Connection) -> None:
         """Test that authenticated role has SELECT on view."""
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
+        with admin_db.cursor() as cur:
+            if not _view_exists(cur, "analytics", "v_intake_radar"):
+                pytest.skip("View not found")
 
-        try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _view_exists(cur, "analytics", "v_intake_radar"):
-                        pytest.skip("View not found")
+            has_select = _check_role_has_select(cur, "analytics", "v_intake_radar", "authenticated")
+            assert has_select, "authenticated role should have SELECT on analytics.v_intake_radar"
 
-                    has_select = _check_role_has_select(
-                        cur, "analytics", "v_intake_radar", "authenticated"
-                    )
-                    assert (
-                        has_select
-                    ), "authenticated role should have SELECT on analytics.v_intake_radar"
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
-
-    def test_view_grants_service_role(self) -> None:
+    def test_view_grants_service_role(self, admin_db: psycopg.Connection) -> None:
         """Test that service_role has SELECT on view."""
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
+        with admin_db.cursor() as cur:
+            if not _view_exists(cur, "analytics", "v_intake_radar"):
+                pytest.skip("View not found")
 
-        try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _view_exists(cur, "analytics", "v_intake_radar"):
-                        pytest.skip("View not found")
+            has_select = _check_role_has_select(cur, "analytics", "v_intake_radar", "service_role")
+            assert has_select, "service_role should have SELECT on analytics.v_intake_radar"
 
-                    has_select = _check_role_has_select(
-                        cur, "analytics", "v_intake_radar", "service_role"
-                    )
-                    assert has_select, "service_role should have SELECT on analytics.v_intake_radar"
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
-
-    def test_rpc_grants_authenticated(self) -> None:
+    def test_rpc_grants_authenticated(self, admin_db: psycopg.Connection) -> None:
         """Test that authenticated role has EXECUTE on RPC function."""
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
+        with admin_db.cursor() as cur:
+            if not _function_exists(cur, "public", "intake_radar_metrics_v2"):
+                pytest.skip("Function not found")
 
-        try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _function_exists(cur, "public", "intake_radar_metrics_v2"):
-                        pytest.skip("Function not found")
-
-                    has_exec = _check_role_has_execute(
-                        cur, "public", "intake_radar_metrics_v2", "authenticated"
-                    )
-                    assert has_exec, "authenticated should have EXECUTE on intake_radar_metrics_v2"
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
+            has_exec = _check_role_has_execute(
+                cur, "public", "intake_radar_metrics_v2", "authenticated"
+            )
+            assert has_exec, "authenticated should have EXECUTE on intake_radar_metrics_v2"
 
 
 # =============================================================================
@@ -354,86 +289,59 @@ class TestIntakeRadarGrants:
 class TestIntakeRadarViewQuery:
     """Integration tests for querying the view."""
 
-    def test_view_returns_exactly_one_row(self) -> None:
+    def test_view_returns_exactly_one_row(self, admin_db: psycopg.Connection) -> None:
         """Test that view returns exactly one row (aggregated)."""
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
+        with admin_db.cursor() as cur:
+            if not _view_exists(cur, "analytics", "v_intake_radar"):
+                pytest.skip("View not found")
 
-        try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _view_exists(cur, "analytics", "v_intake_radar"):
-                        pytest.skip("View not found")
+            cur.execute("SELECT * FROM analytics.v_intake_radar")
+            rows = cur.fetchall()
 
-                    cur.execute("SELECT * FROM analytics.v_intake_radar")
-                    rows = cur.fetchall()
+            assert len(rows) == 1, f"Expected exactly 1 row, got {len(rows)}"
 
-                    assert len(rows) == 1, f"Expected exactly 1 row, got {len(rows)}"
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
-
-    def test_view_returns_no_nulls(self) -> None:
+    def test_view_returns_no_nulls(self, admin_db: psycopg.Connection) -> None:
         """Test that all columns have COALESCE'd values (no NULLs)."""
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
+        with admin_db.cursor() as cur:
+            if not _view_exists(cur, "analytics", "v_intake_radar"):
+                pytest.skip("View not found")
 
-        try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _view_exists(cur, "analytics", "v_intake_radar"):
-                        pytest.skip("View not found")
+            cur.execute(
+                """
+                SELECT
+                    judgments_ingested_24h IS NULL AS n1,
+                    judgments_ingested_7d IS NULL AS n2,
+                    new_aum_24h IS NULL AS n3,
+                    validity_rate_24h IS NULL AS n4,
+                    queue_depth_pending IS NULL AS n5,
+                    critical_failures_24h IS NULL AS n6,
+                    avg_processing_time_seconds IS NULL AS n7
+                FROM analytics.v_intake_radar
+            """
+            )
+            row = cur.fetchone()
 
-                    cur.execute(
-                        """
-                        SELECT
-                            judgments_ingested_24h IS NULL AS n1,
-                            judgments_ingested_7d IS NULL AS n2,
-                            new_aum_24h IS NULL AS n3,
-                            validity_rate_24h IS NULL AS n4,
-                            queue_depth_pending IS NULL AS n5,
-                            critical_failures_24h IS NULL AS n6,
-                            avg_processing_time_seconds IS NULL AS n7
-                        FROM analytics.v_intake_radar
-                    """
-                    )
-                    row = cur.fetchone()
+            assert row is not None, "View returned no rows"
+            nulls = [i for i, is_null in enumerate(row) if is_null]
+            assert not nulls, f"Columns at positions {nulls} have NULL values"
 
-                    assert row is not None, "View returned no rows"
-                    nulls = [i for i, is_null in enumerate(row) if is_null]
-                    assert not nulls, f"Columns at positions {nulls} have NULL values"
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
-
-    def test_rpc_returns_same_as_view(self) -> None:
+    def test_rpc_returns_same_as_view(self, admin_db: psycopg.Connection) -> None:
         """Test that RPC function returns same data as direct view query."""
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
+        with admin_db.cursor() as cur:
+            if not _view_exists(cur, "analytics", "v_intake_radar"):
+                pytest.skip("View not found")
+            if not _function_exists(cur, "public", "intake_radar_metrics_v2"):
+                pytest.skip("Function not found")
 
-        try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _view_exists(cur, "analytics", "v_intake_radar"):
-                        pytest.skip("View not found")
-                    if not _function_exists(cur, "public", "intake_radar_metrics_v2"):
-                        pytest.skip("Function not found")
+            # Query view directly
+            cur.execute("SELECT * FROM analytics.v_intake_radar")
+            view_row = cur.fetchone()
 
-                    # Query view directly
-                    cur.execute("SELECT * FROM analytics.v_intake_radar")
-                    view_row = cur.fetchone()
+            # Query via RPC
+            cur.execute("SELECT * FROM public.intake_radar_metrics_v2()")
+            rpc_row = cur.fetchone()
 
-                    # Query via RPC
-                    cur.execute("SELECT * FROM public.intake_radar_metrics_v2()")
-                    rpc_row = cur.fetchone()
-
-                    assert view_row == rpc_row, "RPC should return same data as view"
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
+            assert view_row == rpc_row, "RPC should return same data as view"
 
 
 # =============================================================================
@@ -445,139 +353,126 @@ class TestIntakeRadarWithSeededData:
     """
     Integration tests that seed test data and verify metrics.
 
-    These tests insert temporary rows, query the view, then clean up.
-    Uses a transaction that rolls back to avoid polluting the database.
+    These tests use admin_db fixture for INSERT operations (seeding),
+    then query the view to verify metrics. Uses savepoints to rollback
+    and avoid polluting the database.
+
+    Zero Trust Pattern:
+      - admin_db: Superuser connection for INSERT/UPDATE/DELETE
+      - Savepoints ensure cleanup even on test failure
     """
 
-    def test_judgments_24h_count_matches_seeded_data(self) -> None:
+    def test_judgments_24h_count_matches_seeded_data(self, admin_db: psycopg.Connection) -> None:
         """
         Seed judgments in last 24h and verify count matches.
 
         Strategy:
-          1. Start transaction (will rollback)
+          1. Start savepoint (will rollback)
           2. Insert N judgments with created_at = now() (within 24h)
           3. Insert M judgments with created_at = 2 days ago (outside 24h)
           4. Query view and assert judgments_ingested_24h >= N
-          5. Rollback transaction
+          5. Rollback savepoint
         """
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
+        cur = admin_db.cursor()
+
+        if not _view_exists(cur, "analytics", "v_intake_radar"):
+            pytest.skip("View analytics.v_intake_radar not found")
+
+        # Get baseline count
+        cur.execute("SELECT judgments_ingested_24h FROM analytics.v_intake_radar")
+        baseline_row = cur.fetchone()
+        baseline_count = baseline_row[0] if baseline_row else 0
+
+        # Start savepoint for rollback
+        cur.execute("SAVEPOINT test_seed")
 
         try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _view_exists(cur, "analytics", "v_intake_radar"):
-                        pytest.skip("View not found")
+            # Insert 5 judgments within 24h
+            test_case_prefix = f"TEST-INTAKE-{uuid4().hex[:8]}"
+            for i in range(5):
+                cur.execute(
+                    """
+                    INSERT INTO public.judgments (
+                        case_number, judgment_amount, status, created_at
+                    ) VALUES (
+                        %s, %s, 'active', NOW()
+                    )
+                    """,
+                    (f"{test_case_prefix}-{i}", 1000.00 + i),
+                )
 
-                    # Get baseline count
-                    cur.execute("SELECT judgments_ingested_24h FROM analytics.v_intake_radar")
-                    baseline_row = cur.fetchone()
-                    baseline_count = baseline_row[0] if baseline_row else 0
+            # Insert 3 judgments outside 24h (2 days ago)
+            for i in range(3):
+                cur.execute(
+                    """
+                    INSERT INTO public.judgments (
+                        case_number, judgment_amount, status, created_at
+                    ) VALUES (
+                        %s, %s, 'active', NOW() - INTERVAL '2 days'
+                    )
+                    """,
+                    (f"{test_case_prefix}-OLD-{i}", 2000.00 + i),
+                )
 
-                    # Start savepoint for rollback
-                    cur.execute("SAVEPOINT test_seed")
+            # Query view
+            cur.execute("SELECT judgments_ingested_24h FROM analytics.v_intake_radar")
+            result_row = cur.fetchone()
+            new_count = result_row[0] if result_row else 0
 
-                    try:
-                        # Insert 5 judgments within 24h
-                        test_case_prefix = f"TEST-INTAKE-{uuid4().hex[:8]}"
-                        for i in range(5):
-                            cur.execute(
-                                """
-                                INSERT INTO public.judgments (
-                                    case_number, judgment_amount, status, created_at
-                                ) VALUES (
-                                    %s, %s, 'active', NOW()
-                                )
-                                """,
-                                (f"{test_case_prefix}-{i}", 1000.00 + i),
-                            )
+            # Assert at least 5 more than baseline
+            assert (
+                new_count >= baseline_count + 5
+            ), f"Expected at least {baseline_count + 5} judgments_24h, got {new_count}"
 
-                        # Insert 3 judgments outside 24h (2 days ago)
-                        for i in range(3):
-                            cur.execute(
-                                """
-                                INSERT INTO public.judgments (
-                                    case_number, judgment_amount, status, created_at
-                                ) VALUES (
-                                    %s, %s, 'active', NOW() - INTERVAL '2 days'
-                                )
-                                """,
-                                (f"{test_case_prefix}-OLD-{i}", 2000.00 + i),
-                            )
+        finally:
+            # Rollback to avoid polluting database
+            cur.execute("ROLLBACK TO SAVEPOINT test_seed")
 
-                        # Query view
-                        cur.execute("SELECT judgments_ingested_24h FROM analytics.v_intake_radar")
-                        result_row = cur.fetchone()
-                        new_count = result_row[0] if result_row else 0
-
-                        # Assert at least 5 more than baseline
-                        assert (
-                            new_count >= baseline_count + 5
-                        ), f"Expected at least {baseline_count + 5} judgments_24h, got {new_count}"
-
-                    finally:
-                        # Rollback to avoid polluting database
-                        cur.execute("ROLLBACK TO SAVEPOINT test_seed")
-
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
-
-    def test_new_aum_24h_sums_correctly(self) -> None:
+    def test_new_aum_24h_sums_correctly(self, admin_db: psycopg.Connection) -> None:
         """
         Seed judgments with known amounts and verify new_aum_24h sum.
         """
-        try:
-            conn_url = _get_connection_url()
-        except Exception:
-            pytest.skip("Database connection URL not available")
+        cur = admin_db.cursor()
+
+        if not _view_exists(cur, "analytics", "v_intake_radar"):
+            pytest.skip("View analytics.v_intake_radar not found")
+
+        # Get baseline AUM
+        cur.execute("SELECT new_aum_24h FROM analytics.v_intake_radar")
+        baseline_row = cur.fetchone()
+        baseline_aum = float(baseline_row[0]) if baseline_row else 0.0
+
+        cur.execute("SAVEPOINT test_aum")
 
         try:
-            with psycopg.connect(conn_url) as conn:
-                with conn.cursor() as cur:
-                    if not _view_exists(cur, "analytics", "v_intake_radar"):
-                        pytest.skip("View not found")
+            # Insert judgments with known amounts
+            test_amounts = [10000.00, 25000.50, 5000.25]
+            test_case_prefix = f"TEST-AUM-{uuid4().hex[:8]}"
 
-                    # Get baseline AUM
-                    cur.execute("SELECT new_aum_24h FROM analytics.v_intake_radar")
-                    baseline_row = cur.fetchone()
-                    baseline_aum = float(baseline_row[0]) if baseline_row else 0.0
+            for i, amount in enumerate(test_amounts):
+                cur.execute(
+                    """
+                    INSERT INTO public.judgments (
+                        case_number, judgment_amount, status, created_at
+                    ) VALUES (
+                        %s, %s, 'active', NOW()
+                    )
+                    """,
+                    (f"{test_case_prefix}-{i}", amount),
+                )
 
-                    cur.execute("SAVEPOINT test_aum")
+            expected_sum = sum(test_amounts)
 
-                    try:
-                        # Insert judgments with known amounts
-                        test_amounts = [10000.00, 25000.50, 5000.25]
-                        test_case_prefix = f"TEST-AUM-{uuid4().hex[:8]}"
+            # Query view
+            cur.execute("SELECT new_aum_24h FROM analytics.v_intake_radar")
+            result_row = cur.fetchone()
+            new_aum = float(result_row[0]) if result_row else 0.0
 
-                        for i, amount in enumerate(test_amounts):
-                            cur.execute(
-                                """
-                                INSERT INTO public.judgments (
-                                    case_number, judgment_amount, status, created_at
-                                ) VALUES (
-                                    %s, %s, 'active', NOW()
-                                )
-                                """,
-                                (f"{test_case_prefix}-{i}", amount),
-                            )
+            # Assert AUM increased by at least our seeded amount
+            delta = new_aum - baseline_aum
+            assert (
+                delta >= expected_sum - 0.01
+            ), f"Expected AUM increase of at least {expected_sum}, got {delta}"
 
-                        expected_sum = sum(test_amounts)
-
-                        # Query view
-                        cur.execute("SELECT new_aum_24h FROM analytics.v_intake_radar")
-                        result_row = cur.fetchone()
-                        new_aum = float(result_row[0]) if result_row else 0.0
-
-                        # Assert AUM increased by at least our seeded amount
-                        delta = new_aum - baseline_aum
-                        assert (
-                            delta >= expected_sum - 0.01
-                        ), f"Expected AUM increase of at least {expected_sum}, got {delta}"
-
-                    finally:
-                        cur.execute("ROLLBACK TO SAVEPOINT test_aum")
-
-        except psycopg.OperationalError as e:
-            pytest.skip(f"Database connection failed: {e}")
+        finally:
+            cur.execute("ROLLBACK TO SAVEPOINT test_aum")

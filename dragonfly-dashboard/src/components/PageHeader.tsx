@@ -1,4 +1,5 @@
 import React from 'react';
+import { FreshnessBadge } from './ui/FreshnessBadge';
 
 export type PageHeaderVariant = 'default' | 'gradient';
 
@@ -9,6 +10,8 @@ export interface PageHeaderProps {
   variant?: PageHeaderVariant;
   actions?: React.ReactNode;
   children?: React.ReactNode;
+  /** ISO timestamp to display as "Snapshot as of: HH:MM:SS UTC" */
+  snapshotTime?: string | Date | null;
 }
 
 const VARIANT_CLASSES: Record<PageHeaderVariant, string> = {
@@ -25,6 +28,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
   variant = 'gradient',
   actions,
   children,
+  snapshotTime,
 }) => {
   return (
     <section
@@ -33,6 +37,17 @@ const PageHeader: React.FC<PageHeaderProps> = ({
         VARIANT_CLASSES[variant],
       ].join(' ')}
     >
+      {/* Snapshot freshness badge - top right */}
+      {snapshotTime && (
+        <div className="absolute right-4 top-4 sm:right-6 sm:top-6">
+          <FreshnessBadge
+            timestamp={snapshotTime}
+            variant="full"
+            staleThresholdSec={300}
+          />
+        </div>
+      )}
+
       <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-3">
           {eyebrow ? (

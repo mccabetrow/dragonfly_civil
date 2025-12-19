@@ -31,3 +31,15 @@ export { ToastProvider, type Toast, useToast } from './Toast';
 // Data Table
 export { DataTable } from './DataTable';
 export type { DataTableProps, Column } from './DataTable';
+
+// Actionable Alert (enterprise error states)
+export { ActionableAlert } from './ActionableAlert';
+export type { ActionableAlertProps } from './ActionableAlert';
+
+// Freshness Badge (trust cues)
+export { FreshnessBadge } from './FreshnessBadge';
+export type { FreshnessBadgeProps } from './FreshnessBadge';
+
+// Export Button (data portability)
+export { ExportButton } from './ExportButton';
+export type { ExportButtonProps } from './ExportButton';

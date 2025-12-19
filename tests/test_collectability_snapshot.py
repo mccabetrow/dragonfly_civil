@@ -1,23 +1,26 @@
-import os
+"""
+Test suite for judgments.v_collectability_snapshot view.
+
+Zero Trust Dual-Connection Pattern:
+  - admin_db: Superuser connection (from conftest.py) for DDL, direct INSERTs to tables
+             without SECURITY DEFINER wrappers
+  - Savepoints: Used for rollback to avoid polluting database
+
+Note: Uses public.insert_case RPC (SECURITY DEFINER) for case insertion,
+      but direct INSERT to judgments.enrichment_runs requires admin access.
+"""
+
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import psycopg
+import pytest
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 
-def _resolve_db_url() -> str:
-    explicit = os.environ.get("SUPABASE_DB_URL")
-    if explicit:
-        return explicit
-    project_ref = os.environ["SUPABASE_PROJECT_REF"]
-    password = os.environ["SUPABASE_DB_PASSWORD"]
-    return f"postgresql://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
-
-
-def _ensure_collectability_view(db_url: str) -> None:
+def _ensure_collectability_view(cur: psycopg.Cursor) -> None:
     """Ensure the snapshot view exists for environments that have not run the migration."""
 
     up_sql = """
@@ -65,14 +68,22 @@ from judgments.cases c
 grant select on judgments.v_collectability_snapshot to service_role;
 """.strip()
 
-    with psycopg.connect(db_url, autocommit=True) as ensure_conn:
-        with ensure_conn.cursor() as cur:
-            cur.execute(up_sql)  # type: ignore[arg-type]
+    cur.execute(up_sql)  # type: ignore[arg-type]
 
 
-def test_collectability_snapshot_view_returns_latest_enrichment() -> None:
-    db_url = _resolve_db_url()
-    _ensure_collectability_view(db_url)
+def test_collectability_snapshot_view_returns_latest_enrichment(
+    admin_db_autocommit: psycopg.Connection,
+    admin_db: psycopg.Connection,
+) -> None:
+    """
+    Test that v_collectability_snapshot returns correct tier and latest enrichment.
+
+    Uses admin_db_autocommit for DDL (view creation) and admin_db for data seeding.
+    """
+    # Ensure view exists (DDL requires autocommit)
+    with admin_db_autocommit.cursor() as ddl_cur:
+        _ensure_collectability_view(ddl_cur)
+
     # Exercise all tier branches: amount-driven A/B, age-driven B, and default C.
     case_specs = [
         {
@@ -113,71 +124,72 @@ def test_collectability_snapshot_view_returns_latest_enrichment() -> None:
         },
     ]
 
-    with psycopg.connect(db_url, autocommit=False) as conn:
-        inserted = {}
-        base_now = datetime.now(timezone.utc).replace(microsecond=0)
+    inserted = {}
+    base_now = datetime.now(timezone.utc).replace(microsecond=0)
 
-        with conn.cursor() as cur:
-            cur.execute("select current_date")
-            current_date_row = cur.fetchone()
-            assert current_date_row is not None
-            (current_date,) = current_date_row
+    cur = admin_db.cursor()
+    cur.execute("SAVEPOINT test_collectability")
 
-            for spec_index, spec in enumerate(case_specs):
-                case_number = f"COL-{uuid.uuid4().hex[:8].upper()}"
-                docket_number = f"DCK-{uuid.uuid4().hex[:8].upper()}"
-                judgment_date = current_date - timedelta(days=spec["age_days"])
+    try:
+        cur.execute("select current_date")
+        current_date_row = cur.fetchone()
+        assert current_date_row is not None
+        (current_date,) = current_date_row
 
-                insert_payload = {
-                    "case_number": case_number,
-                    "docket_number": docket_number,
-                    "source": "pytest",
-                    "title": "Collectability Snapshot",
-                    "court": "Kings County Civil Court",
-                    "filing_date": current_date.isoformat(),
-                    "judgment_date": judgment_date.isoformat(),
-                    "amount_awarded": str(spec["amount"]),
-                }
-                cur.execute("select public.insert_case(%s::jsonb)", (Json(insert_payload),))
-                case_row = cur.fetchone()
-                assert case_row is not None
-                (case_id,) = case_row
+        for spec_index, spec in enumerate(case_specs):
+            case_number = f"COL-{uuid.uuid4().hex[:8].upper()}"
+            docket_number = f"DCK-{uuid.uuid4().hex[:8].upper()}"
+            judgment_date = current_date - timedelta(days=spec["age_days"])
 
-                latest_status = None
-                latest_created_at = None
-                for run in spec["runs"]:
-                    created_at = base_now - timedelta(
-                        minutes=run["minutes_ago"], seconds=spec_index
-                    )
-                    cur.execute(
-                        """
-                        insert into judgments.enrichment_runs (case_id, status, summary, raw, created_at)
-                        values (%s, %s, %s, %s, %s)
-                        """,
-                        (
-                            case_id,
-                            run["status"],
-                            f"test-{run['status']}",
-                            Json({"status": run["status"]}),
-                            created_at,
-                        ),
-                    )
-                    if latest_created_at is None or created_at > latest_created_at:
-                        latest_created_at = created_at
-                        latest_status = run["status"]
+            insert_payload = {
+                "case_number": case_number,
+                "docket_number": docket_number,
+                "source": "pytest",
+                "title": "Collectability Snapshot",
+                "court": "Kings County Civil Court",
+                "filing_date": current_date.isoformat(),
+                "judgment_date": judgment_date.isoformat(),
+                "amount_awarded": str(spec["amount"]),
+            }
+            cur.execute("select public.insert_case(%s::jsonb)", (Json(insert_payload),))
+            case_row = cur.fetchone()
+            assert case_row is not None
+            (case_id,) = case_row
 
-                inserted[case_id] = {
-                    "case_number": case_number,
-                    "judgment_date": judgment_date,
-                    "amount": spec["amount"],
-                    "age_days": spec["age_days"],
-                    "expected_tier": spec["expected_tier"],
-                    "last_status": latest_status,
-                    "last_created_at": latest_created_at,
-                }
+            latest_status = None
+            latest_created_at = None
+            for run in spec["runs"]:
+                created_at = base_now - timedelta(minutes=run["minutes_ago"], seconds=spec_index)
+                cur.execute(
+                    """
+                    insert into judgments.enrichment_runs (case_id, status, summary, raw, created_at)
+                    values (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        case_id,
+                        run["status"],
+                        f"test-{run['status']}",
+                        Json({"status": run["status"]}),
+                        created_at,
+                    ),
+                )
+                if latest_created_at is None or created_at > latest_created_at:
+                    latest_created_at = created_at
+                    latest_status = run["status"]
 
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
+            inserted[case_id] = {
+                "case_number": case_number,
+                "judgment_date": judgment_date,
+                "amount": spec["amount"],
+                "age_days": spec["age_days"],
+                "expected_tier": spec["expected_tier"],
+                "last_status": latest_status,
+                "last_created_at": latest_created_at,
+            }
+
+        # Query the view
+        with admin_db.cursor(row_factory=dict_row) as view_cur:
+            view_cur.execute(
                 """
                 select
                     case_id,
@@ -193,19 +205,21 @@ def test_collectability_snapshot_view_returns_latest_enrichment() -> None:
                 """,
                 (list(inserted.keys()),),
             )
-            rows = cur.fetchall()
+            rows = view_cur.fetchall()
 
-        conn.rollback()
+        # Assertions
+        assert len(rows) == len(inserted)
+        outcomes = {row["case_id"]: row for row in rows}
 
-    assert len(rows) == len(inserted)
-    outcomes = {row["case_id"]: row for row in rows}
+        for case_id, expected in inserted.items():
+            row = outcomes[case_id]
+            assert row["case_number"] == expected["case_number"]
+            assert row["judgment_amount"] == expected["amount"]
+            assert row["judgment_date"] == expected["judgment_date"]
+            assert row["age_days"] == expected["age_days"]
+            assert row["collectability_tier"] == expected["expected_tier"]
+            assert row["last_enrichment_status"] == expected["last_status"]
+            assert row["last_enriched_at"] == expected["last_created_at"]
 
-    for case_id, expected in inserted.items():
-        row = outcomes[case_id]
-        assert row["case_number"] == expected["case_number"]
-        assert row["judgment_amount"] == expected["amount"]
-        assert row["judgment_date"] == expected["judgment_date"]
-        assert row["age_days"] == expected["age_days"]
-        assert row["collectability_tier"] == expected["expected_tier"]
-        assert row["last_enrichment_status"] == expected["last_status"]
-        assert row["last_enriched_at"] == expected["last_created_at"]
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT test_collectability")

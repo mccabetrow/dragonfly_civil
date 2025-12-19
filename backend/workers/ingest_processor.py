@@ -18,7 +18,7 @@ Usage:
 
 Environment:
     SUPABASE_MODE: dev | prod (determines which Supabase project to use)
-    SUPABASE_DB_URL_DEV / SUPABASE_DB_URL_PROD: Postgres connection strings
+    SUPABASE_DB_URL: Postgres connection string (canonical)
 """
 
 from __future__ import annotations
@@ -50,6 +50,7 @@ from backend.services.ingest_hardening import (
     compute_file_hash,
     update_batch_file_hash,
 )
+from backend.workers.rpc_client import RPCClient
 from src.core_config import log_startup_diagnostics
 from src.supabase_client import create_supabase_client, get_supabase_db_url, get_supabase_env
 
@@ -353,55 +354,22 @@ def process_simplicity_frame(conn: psycopg.Connection, df: pd.DataFrame, batch_i
             # Generate collectability score for new inserts
             collectability_score = generate_collectability_score()
 
-            # Insert into public.judgments
+            # Insert into public.judgments using secure RPC
             try:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO public.judgments (
-                            case_number,
-                            plaintiff_name,
-                            defendant_name,
-                            judgment_amount,
-                            entry_date,
-                            county,
-                            collectability_score,
-                            source_file,
-                            status,
-                            created_at
-                        )
-                        VALUES (
-                            %(case_number)s,
-                            %(plaintiff_name)s,
-                            %(defendant_name)s,
-                            %(judgment_amount)s,
-                            %(filing_date)s,
-                            %(county)s,
-                            %(collectability_score)s,
-                            %(source_file)s,
-                            'pending',
-                            now()
-                        )
-                        ON CONFLICT (case_number) DO UPDATE SET
-                            plaintiff_name = EXCLUDED.plaintiff_name,
-                            defendant_name = EXCLUDED.defendant_name,
-                            judgment_amount = EXCLUDED.judgment_amount,
-                            entry_date = EXCLUDED.entry_date,
-                            county = EXCLUDED.county,
-                            collectability_score = EXCLUDED.collectability_score,
-                            updated_at = now()
-                        RETURNING id, (xmax = 0) AS is_insert
-                        """,
-                        {
-                            **mapped,
-                            "collectability_score": collectability_score,
-                            "source_file": f"batch:{batch_id}",
-                        },
-                    )
-                    result = cur.fetchone()
-                    judgment_id = str(result[0]) if result else None
-                    is_insert = result[1] if result else True
-                conn.commit()
+                rpc = RPCClient(conn)
+                upsert_result = rpc.upsert_judgment(
+                    case_number=mapped["case_number"],
+                    plaintiff_name=mapped["plaintiff_name"],
+                    defendant_name=mapped["defendant_name"],
+                    judgment_amount=mapped["judgment_amount"],
+                    filing_date=mapped.get("filing_date"),
+                    county=mapped.get("county"),
+                    collectability_score=collectability_score,
+                    source_file=f"batch:{batch_id}",
+                    status="pending",
+                )
+                judgment_id = str(upsert_result.judgment_id) if upsert_result.judgment_id else None
+                is_insert = upsert_result.is_insert
                 success_count += 1
 
                 # Log row stored successfully
@@ -1220,62 +1188,36 @@ def _quarantine_foil_row(
 
 def claim_pending_job(conn: psycopg.Connection) -> dict[str, Any] | None:
     """
-    Claim a pending ingest_csv job using FOR UPDATE SKIP LOCKED.
+    Claim a pending ingest_csv job using RPC.
 
+    Uses ops.claim_pending_job SECURITY DEFINER function instead of raw SQL.
     Returns the job row dict, or None if no jobs available.
     """
-    with conn.cursor(row_factory=dict_row) as cur:
-        # Use text-based query since job_type might be enum or text
-        cur.execute(
-            """
-            UPDATE ops.job_queue
-            SET status = 'processing',
-                locked_at = now(),
-                attempts = attempts + 1
-            WHERE id = (
-                SELECT id FROM ops.job_queue
-                WHERE job_type::text = %s
-                  AND status::text = 'pending'
-                  AND (locked_at IS NULL OR locked_at < now() - interval '%s minutes')
-                ORDER BY created_at ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING *
-            """,
-            (JOB_TYPE, LOCK_TIMEOUT_MINUTES),
-        )
-        row = cur.fetchone()
-        conn.commit()
-        return dict(row) if row else None
+    rpc = RPCClient(conn)
+    claimed = rpc.claim_pending_job(
+        job_types=[JOB_TYPE],
+        lock_timeout_minutes=LOCK_TIMEOUT_MINUTES,
+    )
+    if claimed:
+        return {
+            "id": str(claimed.job_id),
+            "job_type": claimed.job_type,
+            "payload": claimed.payload,
+            "attempts": claimed.attempts,
+        }
+    return None
 
 
 def mark_job_completed(conn: psycopg.Connection, job_id: str) -> None:
-    """Mark a job as completed."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE ops.job_queue
-            SET status = 'completed', locked_at = NULL
-            WHERE id = %s
-            """,
-            (job_id,),
-        )
-        conn.commit()
+    """Mark a job as completed using RPC."""
+    rpc = RPCClient(conn)
+    rpc.update_job_status(job_id=job_id, status="completed")
 
 
 def mark_job_failed(conn: psycopg.Connection, job_id: str, error: str) -> None:
-    """Mark a job as failed with error message."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE ops.job_queue
-            SET status = 'failed', locked_at = NULL, last_error = %s
-            WHERE id = %s
-            """,
-            (error[:2000], job_id),  # Truncate error to avoid column overflow
-        )
-        conn.commit()
+    """Mark a job as failed with error message using RPC."""
+    rpc = RPCClient(conn)
+    rpc.update_job_status(job_id=job_id, status="failed", error=error[:2000])
 
 
 def update_batch_status(
@@ -1285,20 +1227,16 @@ def update_batch_status(
     row_count_valid: int = 0,
     error_summary: str | None = None,
 ) -> None:
-    """Update the ingest_batches status."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE ops.ingest_batches
-            SET status = %s,
-                row_count_valid = %s,
-                processed_at = now(),
-                error_summary = %s
-            WHERE id = %s
-            """,
-            (status, row_count_valid, error_summary, batch_id),
-        )
-        conn.commit()
+    """Update the ingest_batches status using RPC."""
+    rpc = RPCClient(conn)
+    # Use finalize_ingest_batch RPC - it handles status updates
+    rpc.finalize_ingest_batch(
+        batch_id=batch_id,
+        status=status,
+        rows_processed=row_count_valid,
+        rows_failed=0,
+        file_hash=None,
+    )
 
 
 @dataclass
@@ -1582,68 +1520,20 @@ def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
 # =============================================================================
 
 
-def run_worker_loop() -> None:
+def _job_processor(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     """
-    Main worker loop - polls for pending jobs and processes them.
+    Process a single ingest job.
+
+    This is the callback passed to WorkerBootstrap.run(). The bootstrap handles
+    job claiming; this function only processes the job.
     """
-    from backend.workers.heartbeat import HeartbeatContext
+    logger.info(f"Processing job: {job['id']}")
+    process_job(conn, job)
 
-    # Log startup diagnostics
-    log_startup_diagnostics("IngestProcessor")
 
-    env = get_supabase_env()
-    dsn = get_supabase_db_url(env)
-
-    logger.info(f"Starting Ingest Processor Worker (env={env})")
-    logger.info(f"   Poll interval: {POLL_INTERVAL_SECONDS}s")
-    logger.info(f"   Job type: {JOB_TYPE}")
-
-    conn = psycopg.connect(dsn)
-
-    # Start heartbeat thread
-    with HeartbeatContext("ingest_processor", lambda: dsn) as heartbeat:
-        logger.info(f"   Worker ID: {heartbeat.worker_id}")
-
-        try:
-            while True:
-                try:
-                    job = claim_pending_job(conn)
-
-                    if job:
-                        logger.info(f"Claimed job: {job['id']}")
-                        process_job(conn, job)
-                    else:
-                        # No jobs available, sleep before polling again
-                        import time
-
-                        time.sleep(POLL_INTERVAL_SECONDS)
-
-                except psycopg.OperationalError as e:
-                    logger.error(f"Database connection error: {e}")
-                    heartbeat.set_error(str(e))
-                    # Reconnect
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                    import time
-
-                    time.sleep(5)
-                    conn = psycopg.connect(dsn)
-
-                except KeyboardInterrupt:
-                    logger.info("Worker interrupted by user")
-                    break
-
-                except Exception as e:
-                    logger.exception(f"Unexpected error in worker loop: {e}")
-                    import time
-
-                    time.sleep(POLL_INTERVAL_SECONDS)
-
-        finally:
-            conn.close()
-            logger.info("Worker shutdown complete")
+def _job_claimer(conn: psycopg.Connection) -> dict[str, Any] | None:
+    """Claim a pending ingest job."""
+    return claim_pending_job(conn)
 
 
 # =============================================================================
@@ -1652,9 +1542,11 @@ def run_worker_loop() -> None:
 
 
 if __name__ == "__main__":
-    # Preflight validation - MUST be first!
-    from backend.preflight import validate_worker_env
+    from backend.workers.bootstrap import WorkerBootstrap
 
-    validate_worker_env("ingest_processor")
-
-    run_worker_loop()
+    bootstrap = WorkerBootstrap(
+        worker_type="ingest_processor",
+        job_types=[JOB_TYPE],
+        poll_interval=POLL_INTERVAL_SECONDS,
+    )
+    bootstrap.run(_job_processor, _job_claimer)

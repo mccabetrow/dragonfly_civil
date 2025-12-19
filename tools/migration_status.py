@@ -71,29 +71,26 @@ def get_env() -> Literal["dev", "prod"]:
 
 def get_credentials(env: Literal["dev", "prod"]) -> tuple[str, str]:
     """
-    Get Supabase URL and service role key for the given environment.
+    Get Supabase URL and service role key.
 
-    Supports both direct env vars and settings-based loading.
+    Uses canonical SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.
+    The env parameter controls SUPABASE_MODE for credential resolution.
     """
-    if env == "prod":
-        url = os.getenv("SUPABASE_URL_PROD", "").strip()
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY_PROD", "").strip()
-    else:
-        url = os.getenv("SUPABASE_URL", "").strip()
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    # Try loading from supabase_client (canonical approach)
+    try:
+        from src.supabase_client import get_supabase_credentials
 
-    if not url or not key:
-        # Try loading from settings
-        try:
-            from src.supabase_client import get_supabase_credentials
+        return get_supabase_credentials(env)
+    except Exception:
+        pass
 
-            url, key = get_supabase_credentials(env)
-        except Exception:
-            pass
+    # Fallback to direct env vars
+    url = os.getenv("SUPABASE_URL", "").strip()
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
     if not url:
         print(
-            f"❌ SUPABASE_URL{'_PROD' if env == 'prod' else ''} not set",
+            f"❌ SUPABASE_URL not set (SUPABASE_MODE={env})",
             file=sys.stderr,
         )
         sys.exit(1)

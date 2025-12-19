@@ -340,11 +340,29 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
-        """Simple health check at root level for Railway."""
+        """
+        Liveness probe at root level.
+
+        Returns 200 if the process is running. Never checks external deps.
+        Suitable for Railway/Kubernetes liveness checks.
+        """
         return {
             "service": "Dragonfly Engine",
             "status": "ok",
+            "version": __version__,
         }
+
+    @app.get("/readyz", tags=["health"])
+    async def readyz() -> JSONResponse:
+        """
+        Readiness probe at root level.
+
+        Returns 200 only if DB is reachable and SELECT 1 succeeds within 2s.
+        Returns 503 with JSON error details if not ready.
+        """
+        from .routers.health import readiness_db_check
+
+        return await readiness_db_check()
 
     @app.get("/api", tags=["root"])
     async def api_root() -> dict[str, str]:
@@ -353,6 +371,7 @@ def create_app() -> FastAPI:
             "message": "Dragonfly Engine API",
             "version": __version__,
             "health": "/api/health",
+            "readiness": "/readyz",
         }
 
     @app.get("/api/version", tags=["health"])

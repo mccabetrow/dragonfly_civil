@@ -3,6 +3,10 @@ Dragonfly Engine - Health Check Router
 
 Provides health check endpoints for monitoring and load balancers.
 All external checks have configurable timeouts to prevent hanging probes.
+
+Key endpoints:
+- GET /health (or /api/health) - Liveness probe: returns 200 if process is up
+- GET /readyz - Readiness probe: returns 200 only if DB is reachable
 """
 
 import asyncio
@@ -18,11 +22,12 @@ from pydantic import BaseModel
 from .. import __version__
 from ..api import ApiResponse, api_response, degraded_response
 from ..config import get_settings
-from ..db import fetch_val, get_pool, get_supabase_client
+from ..db import check_db_ready, fetch_val, get_pool, get_pool_health, get_supabase_client
 
 # Default timeouts for health checks (seconds)
 HEALTH_DB_TIMEOUT = 5.0
 HEALTH_SUPABASE_TIMEOUT = 8.0
+READINESS_DB_TIMEOUT = 2.0  # Stricter timeout for readiness probe
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +72,32 @@ class DBHealthResponse(BaseModel):
     pool_free: int
 
 
+class LivenessResponse(BaseModel):
+    """Liveness probe response - indicates process is alive."""
+
+    status: str
+    timestamp: str
+    version: str
+
+
+class ReadinessDBResponse(BaseModel):
+    """Readiness probe response - indicates service is ready to accept traffic."""
+
+    ready: bool
+    status: str
+    timestamp: str
+    database: str
+    latency_ms: float | None = None
+    error: str | None = None
+    pool_initialized: bool
+    pool_init_attempts: int
+
+
+# ==========================================================================
+# LIVENESS PROBE - /health (returns 200 if process is up)
+# ==========================================================================
+
+
 @router.get(
     "",
     response_model=ApiResponse[HealthData],
@@ -98,6 +129,106 @@ async def health_check() -> ApiResponse[HealthData]:
         environment=settings.environment,
     )
     return api_response(data=data)
+
+
+# ==========================================================================
+# KUBERNETES-STYLE PROBES
+# ==========================================================================
+
+
+@router.get(
+    "/live",
+    response_model=LivenessResponse,
+    summary="Liveness probe",
+    description="Returns 200 if the process is alive. Never checks external dependencies.",
+)
+async def liveness_check() -> LivenessResponse:
+    """
+    Kubernetes-style liveness probe.
+
+    Returns 200 OK if the process is alive and can respond to requests.
+    This endpoint NEVER checks the database or any external dependencies.
+
+    Use this for container liveness checks - if this fails, restart the container.
+    """
+    return LivenessResponse(
+        status="ok",
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        version=__version__,
+    )
+
+
+@router.get(
+    "/readyz",
+    response_model=ReadinessDBResponse,
+    responses={
+        200: {"description": "Service is ready to accept traffic"},
+        503: {"description": "Service is not ready - DB unreachable or unhealthy"},
+    },
+    summary="Readiness probe (DB-focused)",
+    description="Returns 200 only if DB is reachable and SELECT 1 succeeds within 2s.",
+)
+async def readiness_db_check() -> JSONResponse:
+    """
+    Kubernetes-style readiness probe focused on database connectivity.
+
+    Returns 200 OK only if:
+    - Database pool was successfully initialized
+    - SELECT 1 query succeeds within 2 seconds
+
+    Returns 503 Service Unavailable if:
+    - Pool initialization failed
+    - Database is unreachable
+    - Query times out (>2s)
+
+    Use this for container readiness checks - if this fails, remove from load balancer.
+    """
+    pool_health = get_pool_health()
+    timestamp = datetime.utcnow().isoformat() + "Z"
+
+    # Check database readiness with strict timeout
+    is_ready, db_status = await check_db_ready(timeout=READINESS_DB_TIMEOUT)
+
+    # Extract latency if present in status
+    latency_ms: float | None = None
+    if "ms)" in db_status:
+        try:
+            latency_str = db_status.split("(")[1].rstrip("ms)")
+            latency_ms = float(latency_str)
+        except (IndexError, ValueError):
+            pass
+
+    response_data = ReadinessDBResponse(
+        ready=is_ready,
+        status="ready" if is_ready else "not_ready",
+        timestamp=timestamp,
+        database=db_status,
+        latency_ms=latency_ms,
+        error=pool_health.last_error if not is_ready else None,
+        pool_initialized=pool_health.initialized,
+        pool_init_attempts=pool_health.init_attempts,
+    )
+
+    if is_ready:
+        return JSONResponse(
+            status_code=200,
+            content=response_data.model_dump(),
+        )
+    else:
+        logger.warning(
+            f"Readiness check failed: db={db_status}, "
+            f"initialized={pool_health.initialized}, "
+            f"error={pool_health.last_error}"
+        )
+        return JSONResponse(
+            status_code=503,
+            content=response_data.model_dump(),
+        )
+
+
+# ==========================================================================
+# DETAILED HEALTH CHECKS
+# ==========================================================================
 
 
 @router.get(

@@ -375,12 +375,8 @@ def _validate_environment(result: PreflightResult) -> None:
 
 
 def _validate_supabase_db_url(result: PreflightResult) -> None:
-    """Validate SUPABASE_DB_URL if present."""
+    """Validate canonical SUPABASE_DB_URL."""
     db_url = _get_env("SUPABASE_DB_URL")
-
-    # Also check legacy suffixed variants
-    if not db_url:
-        db_url = _get_env("SUPABASE_DB_URL_PROD") or _get_env("SUPABASE_DB_URL_DEV")
 
     # Track in effective config (redact password)
     if db_url:
@@ -392,12 +388,12 @@ def _validate_supabase_db_url(result: PreflightResult) -> None:
         else:
             result.effective_config["SUPABASE_DB_URL"] = f"SET ({db_url[:30]}...)"
     else:
-        result.effective_config["SUPABASE_DB_URL"] = "NOT SET (optional for REST-only)"
+        result.effective_config["SUPABASE_DB_URL"] = "NOT SET"
 
     if not db_url:
-        result.warnings.append(
-            "SUPABASE_DB_URL is not set\n"
-            "   Workers that need direct DB access may fail.\n"
+        result.errors.append(
+            "SUPABASE_DB_URL is required\n"
+            "   Set the canonical database URL for your environment.\n"
             "   Format: postgresql://postgres.<ref>:<password>@<host>:5432/postgres"
         )
         return
