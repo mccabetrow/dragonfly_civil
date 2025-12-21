@@ -14,7 +14,7 @@
     PHASES:
     1. Pre-Deployment: Preflight gate, scale workers to 0
     2. Database: Migrate, verify contract truth
-    3. Deploy & Smoke: Deploy code, run smoke tests, scale up
+    3. Deploy and Smoke: Deploy code, run smoke tests, scale up
 
 .EXAMPLE
     .\release_commander.ps1
@@ -42,9 +42,9 @@ Set-Location $ProjectRoot
 function Write-Banner {
     param([string]$Message, [string]$Color = "Cyan")
     Write-Host ""
-    Write-Host ("╔" + ("═" * 68) + "╗") -ForegroundColor $Color
-    Write-Host ("║" + $Message.PadLeft(35 + [math]::Floor($Message.Length / 2)).PadRight(68) + "║") -ForegroundColor $Color
-    Write-Host ("╚" + ("═" * 68) + "╝") -ForegroundColor $Color
+    Write-Host ("+" + ("-" * 68) + "+") -ForegroundColor $Color
+    Write-Host ("|" + $Message.PadLeft(35 + [math]::Floor($Message.Length / 2)).PadRight(68) + "|") -ForegroundColor $Color
+    Write-Host ("+" + ("-" * 68) + "+") -ForegroundColor $Color
     Write-Host ""
 }
 
@@ -52,42 +52,42 @@ function Write-Phase {
     param([string]$Phase, [string]$Title)
     Write-Host ""
     Write-Host ("=" * 70) -ForegroundColor Magenta
-    Write-Host "  PHASE $Phase: $Title" -ForegroundColor Magenta
+    Write-Host "  PHASE $Phase - $Title" -ForegroundColor Magenta
     Write-Host ("=" * 70) -ForegroundColor Magenta
     Write-Host ""
 }
 
 function Write-Step {
     param([string]$Step)
-    Write-Host "  → $Step" -ForegroundColor Yellow
+    Write-Host "  -> $Step" -ForegroundColor Yellow
 }
 
 function Write-Pass {
     param([string]$Message)
-    Write-Host "  ✅ $Message" -ForegroundColor Green
+    Write-Host "  [PASS] $Message" -ForegroundColor Green
 }
 
 function Write-Fail {
     param([string]$Message)
-    Write-Host "  ❌ $Message" -ForegroundColor Red
+    Write-Host "  [FAIL] $Message" -ForegroundColor Red
 }
 
 function Write-Warn {
     param([string]$Message)
-    Write-Host "  ⚠️  $Message" -ForegroundColor Yellow
+    Write-Host "  [WARN] $Message" -ForegroundColor Yellow
 }
 
 function Write-Info {
     param([string]$Message)
-    Write-Host "  ℹ️  $Message" -ForegroundColor Cyan
+    Write-Host "  [INFO] $Message" -ForegroundColor Cyan
 }
 
 function Invoke-Abort {
     param([string]$Reason)
     Write-Host ""
-    Write-Host ("╔" + ("═" * 68) + "╗") -ForegroundColor Red
-    Write-Host ("║" + "RELEASE ABORTED".PadLeft(42).PadRight(68) + "║") -ForegroundColor Red
-    Write-Host ("╚" + ("═" * 68) + "╝") -ForegroundColor Red
+    Write-Host ("+" + ("-" * 68) + "+") -ForegroundColor Red
+    Write-Host ("|" + "RELEASE ABORTED".PadLeft(42).PadRight(68) + "|") -ForegroundColor Red
+    Write-Host ("+" + ("-" * 68) + "+") -ForegroundColor Red
     Write-Host ""
     Write-Fail $Reason
     Write-Host ""
@@ -100,9 +100,9 @@ function Invoke-Abort {
 function Wait-ForConfirmation {
     param([string]$Prompt, [string]$ExpectedInput = "READY")
     Write-Host ""
-    Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "  │ HUMAN ACTION REQUIRED                                       │" -ForegroundColor Yellow
-    Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Yellow
+    Write-Host "  +-------------------------------------------------------------+" -ForegroundColor Yellow
+    Write-Host "  | HUMAN ACTION REQUIRED                                       |" -ForegroundColor Yellow
+    Write-Host "  +-------------------------------------------------------------+" -ForegroundColor Yellow
     Write-Host "  $Prompt" -ForegroundColor White
     Write-Host ""
     $response = Read-Host "  Type '$ExpectedInput' when complete (or 'ABORT' to cancel)"
@@ -127,7 +127,7 @@ Write-Banner "DRAGONFLY RELEASE COMMANDER" "Cyan"
 Write-Host "  This script will guide you through the Golden Release procedure." -ForegroundColor White
 Write-Host "  Follow each step carefully. Type 'ABORT' at any prompt to cancel." -ForegroundColor White
 Write-Host ""
-Write-Host "  Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor DarkGray
+Write-Host "  Started: $($startTime.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor DarkGray
 Write-Host ""
 
 # =============================================================================
@@ -181,11 +181,11 @@ else {
 # Step 1.3: Human action - scale workers
 Write-Pass "Pre-deployment checks complete"
 Write-Host ""
-Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Green
-Write-Host "  │ ✅ PHASE 1 COMPLETE                                         │" -ForegroundColor Green
-Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Green
+Write-Host "  +-------------------------------------------------------------+" -ForegroundColor Green
+Write-Host "  | PHASE 1 COMPLETE                                            |" -ForegroundColor Green
+Write-Host "  +-------------------------------------------------------------+" -ForegroundColor Green
 
-Wait-ForConfirmation "Scale PROD workers to 0 in Railway now.`n  (Railway Dashboard → Workers → Scale to 0)"
+Wait-ForConfirmation "Scale PROD workers to 0 in Railway now.`n  (Railway Dashboard -> Workers -> Scale to 0)"
 
 # =============================================================================
 # PHASE 2: DATABASE MIGRATION
@@ -213,9 +213,9 @@ $contractResult | ForEach-Object { Write-Host "    $_" }
 
 if ($contractExitCode -ne 0) {
     Write-Host ""
-    Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Red
-    Write-Host "  │ ❌ ROLLBACK REQUIRED: DB CONTRACT MISMATCH                  │" -ForegroundColor Red
-    Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Red
+    Write-Host "  +-------------------------------------------------------------+" -ForegroundColor Red
+    Write-Host "  | ROLLBACK REQUIRED: DB CONTRACT MISMATCH                     |" -ForegroundColor Red
+    Write-Host "  +-------------------------------------------------------------+" -ForegroundColor Red
     Write-Host ""
     Write-Host "  The database schema does not match the expected contract." -ForegroundColor Yellow
     Write-Host "  This means the migration may have failed or drifted." -ForegroundColor Yellow
@@ -231,14 +231,14 @@ if ($contractExitCode -ne 0) {
 
 Write-Pass "Database contract verified"
 Write-Host ""
-Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Green
-Write-Host "  │ ✅ PHASE 2 COMPLETE                                         │" -ForegroundColor Green
-Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Green
+Write-Host "  +-------------------------------------------------------------+" -ForegroundColor Green
+Write-Host "  | PHASE 2 COMPLETE                                            |" -ForegroundColor Green
+Write-Host "  +-------------------------------------------------------------+" -ForegroundColor Green
 
 # =============================================================================
 # PHASE 3: DEPLOY & SMOKE
 # =============================================================================
-Write-Phase "3" "DEPLOY CODE & SMOKE TEST"
+Write-Phase "3" "DEPLOY CODE AND SMOKE TEST"
 
 # Step 3.1: Human action - deploy code
 Write-Step "Code deployment required"
@@ -300,12 +300,12 @@ $endTime = Get-Date
 $duration = ($endTime - $startTime).TotalMinutes
 
 Write-Host ""
-Write-Host ("╔" + ("═" * 68) + "╗") -ForegroundColor Green
-Write-Host ("║" + "🎉 RELEASE SUCCESSFUL".PadLeft(45).PadRight(68) + "║") -ForegroundColor Green
-Write-Host ("╚" + ("═" * 68) + "╝") -ForegroundColor Green
+Write-Host ("+" + ("-" * 68) + "+") -ForegroundColor Green
+Write-Host ("|" + "RELEASE SUCCESSFUL".PadLeft(44).PadRight(68) + "|") -ForegroundColor Green
+Write-Host ("+" + ("-" * 68) + "+") -ForegroundColor Green
 Write-Host ""
 Write-Host "  Release completed in $([math]::Round($duration, 1)) minutes" -ForegroundColor White
-Write-Host "  Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor DarkGray
+Write-Host "  Timestamp: $($endTime.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  POST-RELEASE ACTIONS:" -ForegroundColor Cyan
 Write-Host "    1. Scale workers to desired count (2-4 for production)" -ForegroundColor White
