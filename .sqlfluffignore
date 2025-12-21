@@ -1,0 +1,3 @@
+# Dashboard SQL queries are interactive/copy-paste - not production code
+# Skip sqlfluff linting for these
+dashboards/

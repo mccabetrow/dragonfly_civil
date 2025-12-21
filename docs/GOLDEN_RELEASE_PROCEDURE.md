@@ -220,8 +220,10 @@ git push origin main
 **For Dev Environment:**
 
 ```powershell
-# CAUTION: This resets ALL data
-supabase db reset --linked
+# CAUTION: This resets ALL data - always use explicit --db-url (Windows pooler issue)
+.\scripts\db_push.ps1 -SupabaseEnv dev
+# Or for full reset (destructive):
+# supabase db reset --db-url $env:SUPABASE_DB_URL_DEV
 ```
 
 **For Production (Specific Rollback):**

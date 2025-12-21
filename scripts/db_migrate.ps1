@@ -4,12 +4,12 @@
 
 .DESCRIPTION
     Applies pending migrations to the remote Supabase database using an explicit
-    --db-url connection string. NEVER uses --linked or supabase db push.
+    --db-url connection string. Never uses link-based connectivity or db push.
     Handles "already exists" errors by automatically marking those migrations
     as applied (self-healing).
 
     IMPORTANT: This script always uses explicit --db-url to avoid pooler DNS
-    issues on Windows. Never add --linked flags to this script.
+    issues on Windows. Never use link-based Supabase commands.
 
 .PARAMETER SupabaseEnv
     Target environment: 'dev' or 'prod'. Defaults to 'dev'.
@@ -197,9 +197,10 @@ else {
 }
 
 # Step 3: Get the appropriate DB URL based on -SupabaseEnv
-# CRITICAL: Always use explicit --db-url, never --linked (avoids pooler DNS issues)
+# CRITICAL: Always use explicit --db-url, never link-based commands (avoids pooler DNS issues)
 $dbUrlVarName = if ($SupabaseEnv -eq 'prod') { 'SUPABASE_DB_URL_PROD' } else { 'SUPABASE_DB_URL_DEV' }
-$DbUrl = [Environment]::GetEnvironmentVariable($dbUrlVarName)
+# Use $env: (process-level) since load_env.ps1 sets there, not [Environment]::GetEnvironmentVariable (system-level)
+$DbUrl = (Get-Item "env:$dbUrlVarName" -ErrorAction SilentlyContinue).Value
 
 if ([string]::IsNullOrWhiteSpace($DbUrl)) {
     Write-Host ""
