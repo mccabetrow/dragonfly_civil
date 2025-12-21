@@ -72,7 +72,6 @@ __all__ = [
     "REQUIRED_ENV_VARS",
     "REQUIRED_FOR_DB",
     "RECOMMENDED_PROD_VARS",
-    "settings",
     # Preflight utilities
     "validate_worker_env",
     "run_preflight_checks",
@@ -80,5 +79,7 @@ __all__ = [
     "print_diagnostic_env",
 ]
 
-# Export settings instance for convenience
-settings = get_settings()
+
+# NOTE: Do NOT instantiate settings at module level!
+# Use get_settings() for lazy loading to avoid import-time crashes.
+# Modules that need settings should call get_settings() inside functions.

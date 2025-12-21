@@ -51,6 +51,13 @@ from psycopg.rows import dict_row
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from backend.preflight import get_git_sha, run_preflight_checks
+from backend.workers.backoff import (
+    BACKOFF_JITTER,
+    BACKOFF_MULTIPLIER,
+    INITIAL_BACKOFF_SECONDS,
+    MAX_BACKOFF_SECONDS,
+    BackoffState,
+)
 from backend.workers.db_connect import (
     EXIT_CODE_DB_UNAVAILABLE,
     RetryConfig,
@@ -67,16 +74,6 @@ from src.supabase_client import get_supabase_db_url
 
 logger = logging.getLogger(__name__)
 
-# ==============================================================================
-# CONSTANTS
-# ==============================================================================
-
-# Backoff configuration for transient failures
-INITIAL_BACKOFF_SECONDS = 1.0
-MAX_BACKOFF_SECONDS = 60.0
-BACKOFF_MULTIPLIER = 2.0
-BACKOFF_JITTER = 0.1  # 10% jitter to prevent thundering herd
-
 # Heartbeat status values (matches ops.worker_heartbeats.status enum)
 STATUS_STARTING = "starting"
 STATUS_RUNNING = "running"
@@ -86,49 +83,6 @@ STATUS_ERROR = "error"
 
 # Preflight DB connectivity timeout
 DB_CONNECT_TIMEOUT_SECONDS = 10
-
-
-# ==============================================================================
-# EXPONENTIAL BACKOFF
-# ==============================================================================
-
-
-@dataclass
-class BackoffState:
-    """Tracks exponential backoff state for crash loop protection."""
-
-    current_delay: float = INITIAL_BACKOFF_SECONDS
-    consecutive_failures: int = 0
-    last_failure_time: Optional[float] = None
-    total_failures: int = 0
-
-    def record_failure(self) -> float:
-        """Record a failure and return the backoff delay to use."""
-        self.consecutive_failures += 1
-        self.total_failures += 1
-        self.last_failure_time = time.monotonic()
-
-        # Calculate delay with exponential backoff
-        delay = min(
-            self.current_delay * (BACKOFF_MULTIPLIER ** (self.consecutive_failures - 1)),
-            MAX_BACKOFF_SECONDS,
-        )
-
-        # Add jitter to prevent thundering herd
-        jitter = delay * BACKOFF_JITTER * (2 * (hash(time.time()) % 100) / 100 - 1)
-        delay = max(INITIAL_BACKOFF_SECONDS, delay + jitter)
-
-        self.current_delay = delay
-        return delay
-
-    def record_success(self) -> None:
-        """Record a success - reset consecutive failures."""
-        self.consecutive_failures = 0
-        self.current_delay = INITIAL_BACKOFF_SECONDS
-
-    def is_in_crash_loop(self, threshold: int = 10) -> bool:
-        """Check if we're in a crash loop (too many consecutive failures)."""
-        return self.consecutive_failures >= threshold
 
 
 # ==============================================================================
@@ -436,6 +390,9 @@ class WorkerConfig:
     heartbeat_interval: float = 30.0
     lock_timeout_minutes: int = 30
     max_consecutive_failures: int = 10  # Before considering crash loop
+    max_job_attempts: int = 5  # Max attempts before DLQ
+    base_backoff_seconds: float = 30.0  # Base for exponential backoff
+    max_backoff_seconds: float = 3600.0  # Cap backoff at 1 hour
 
 
 class WorkerBootstrap:
@@ -456,12 +413,14 @@ class WorkerBootstrap:
         job_types: list[str],
         poll_interval: float = 5.0,
         heartbeat_interval: float = 30.0,
+        lock_timeout_minutes: int = 30,
     ) -> None:
         self.config = WorkerConfig(
             worker_type=worker_type,
             job_types=job_types,
             poll_interval=poll_interval,
             heartbeat_interval=heartbeat_interval,
+            lock_timeout_minutes=lock_timeout_minutes,
         )
         self._shutdown = GracefulShutdown()
         self._backoff = BackoffState()
@@ -625,8 +584,10 @@ class WorkerBootstrap:
                     job = self._default_claim_job(conn)
 
                 if job:
-                    logger.info(f"Processing job: {job.get('id')}")
-                    job_processor(conn, job)
+                    job_id = job.get("id")
+                    logger.info(f"Processing job: {job_id}")
+                    # Process with DLQ protection - if we crash, mark job failed
+                    self._process_job_with_dlq(conn, job, job_processor)
                 else:
                     # No jobs - wait before next poll (check for shutdown)
                     if self._shutdown.wait(self.config.poll_interval):
@@ -739,11 +700,19 @@ class WorkerBootstrap:
     def _default_claim_job(self, conn: psycopg.Connection) -> Optional[dict[str, Any]]:
         """Default job claim using ops.claim_pending_job RPC."""
         rpc = RPCClient(conn)
+
+        # Get worker_id from heartbeat if available
+        worker_id = None
+        if self._heartbeat:
+            worker_id = self._heartbeat.worker_id
+
         claimed = rpc.claim_pending_job(
             job_types=list(self.config.job_types),
             lock_timeout_minutes=self.config.lock_timeout_minutes,
+            worker_id=worker_id,
         )
         if claimed:
+            logger.info(f"Job claimed via RPC: {claimed.job_id} (worker: {worker_id})")
             # Convert ClaimedJob to dict for compatibility with existing job_processor signature
             return {
                 "id": claimed.job_id,
@@ -752,6 +721,180 @@ class WorkerBootstrap:
                 "attempts": claimed.attempts,
             }
         return None
+
+    def _process_job_with_dlq(
+        self,
+        conn: psycopg.Connection,
+        job: dict[str, Any],
+        job_processor: Callable[[psycopg.Connection, dict[str, Any]], None],
+    ) -> None:
+        """
+        Process a job with Dead Letter Queue (DLQ) protection.
+
+        Reliability Invariants:
+        - If job_processor succeeds: job marked 'completed' via RPC
+        - If job_processor raises AND attempts < max: reset to 'pending' with backoff
+        - If job_processor raises AND attempts >= max: move to DLQ ('failed')
+        - Transaction is always rolled back on error to maintain atomicity
+        - Jobs never get "stuck" in processing state (zombie prevention)
+
+        Backoff Formula: min(2^attempts * base_seconds, max_seconds)
+        Example with base=30s, max=3600s:
+            Attempt 1: 60s, Attempt 2: 120s, Attempt 3: 240s, ...
+
+        Args:
+            conn: Active database connection
+            job: Job dict with 'id', 'job_type', 'payload', 'attempts'
+            job_processor: User-provided job processing function
+        """
+        job_id = str(job.get("id", "unknown"))
+        job_type = job.get("job_type", "unknown")
+        attempts = job.get("attempts", 1)
+
+        try:
+            # Execute the job processor
+            job_processor(conn, job)
+
+            # SUCCESS: Mark job as completed via RPC
+            self._mark_job_completed(conn, job_id)
+            logger.info(f"Job {job_id} ({job_type}) completed successfully")
+
+        except Exception as e:
+            # Job failed - determine retry vs DLQ
+            error_msg = f"{type(e).__name__}: {str(e)[:500]}"
+            logger.error(f"Job {job_id} ({job_type}) failed (attempt {attempts}): {error_msg}")
+
+            # Rollback any partial transaction from the failed job
+            try:
+                conn.rollback()
+                logger.debug(f"Rolled back transaction for failed job {job_id}")
+            except Exception as rollback_err:
+                logger.warning(f"Rollback failed for job {job_id}: {rollback_err}")
+
+            # Decide: Retry with backoff OR move to DLQ
+            if attempts >= self.config.max_job_attempts:
+                # DLQ: Exceeded max attempts
+                self._mark_job_dlq(conn, job_id, error_msg, attempts)
+            else:
+                # Retry: Reset to pending with exponential backoff
+                backoff_seconds = self._calculate_backoff(attempts)
+                self._mark_job_retry(conn, job_id, error_msg, backoff_seconds, attempts)
+
+            # Re-raise so the main loop continues
+            raise
+
+    def _calculate_backoff(self, attempts: int) -> int:
+        """
+        Calculate exponential backoff delay.
+
+        Formula: min(2^attempts * base_seconds, max_seconds)
+
+        Args:
+            attempts: Current attempt number
+
+        Returns:
+            Backoff delay in seconds
+        """
+        backoff = min(
+            (2**attempts) * self.config.base_backoff_seconds,
+            self.config.max_backoff_seconds,
+        )
+        return int(backoff)
+
+    def _mark_job_completed(self, conn: psycopg.Connection, job_id: str) -> None:
+        """Mark a job as successfully completed via RPC."""
+        try:
+            rpc = RPCClient(conn)
+            rpc.update_job_status(
+                job_id=job_id,
+                status="completed",
+                error_message=None,
+            )
+        except Exception as e:
+            logger.error(f"Failed to mark job {job_id} as completed: {e}")
+            # Job will be reaped by stuck job reaper if this fails
+
+    def _mark_job_retry(
+        self,
+        conn: psycopg.Connection,
+        job_id: str,
+        error_msg: str,
+        backoff_seconds: int,
+        attempts: int,
+    ) -> None:
+        """
+        Reset a failed job to pending with exponential backoff.
+
+        Args:
+            conn: Database connection
+            job_id: Job ID to retry
+            error_msg: Error message from the failure
+            backoff_seconds: Seconds to wait before retry
+            attempts: Current attempt count
+        """
+        try:
+            rpc = RPCClient(conn)
+            rpc.update_job_status(
+                job_id=job_id,
+                status="pending",
+                error_message=f"Retry scheduled (attempt {attempts}/{self.config.max_job_attempts}): {error_msg[:500]}",
+                backoff_seconds=backoff_seconds,
+            )
+            logger.info(
+                f"Job {job_id} scheduled for retry in {backoff_seconds}s "
+                f"(attempt {attempts}/{self.config.max_job_attempts})"
+            )
+        except Exception as e:
+            logger.error(f"Failed to schedule retry for job {job_id}: {e}")
+            # Job will be reaped by stuck job reaper if this fails
+
+    def _mark_job_dlq(
+        self,
+        conn: psycopg.Connection,
+        job_id: str,
+        error_msg: str,
+        attempts: int,
+    ) -> None:
+        """
+        Move a job to the Dead Letter Queue (failed status).
+
+        This is called when a job exceeds max_job_attempts.
+
+        Args:
+            conn: Database connection
+            job_id: Job ID to move to DLQ
+            error_msg: Error message from the final failure
+            attempts: Final attempt count
+        """
+        try:
+            rpc = RPCClient(conn)
+            rpc.update_job_status(
+                job_id=job_id,
+                status="failed",
+                error_message=f"[DLQ] Max attempts ({attempts}) exceeded: {error_msg[:500]}",
+            )
+            logger.warning(f"Job {job_id} moved to DLQ after {attempts} attempts")
+        except Exception as dlq_err:
+            # If we can't mark the job failed, log critically
+            # The job will remain in 'processing' and be picked up by
+            # the stale job reaper after lock_timeout expires
+            logger.critical(
+                f"DLQ FAILURE: Could not mark job {job_id} as failed: {dlq_err}. "
+                f"Job may be stuck in 'processing' until lock timeout."
+            )
+
+    def _mark_job_failed_dlq(
+        self,
+        conn: psycopg.Connection,
+        job_id: str,
+        error_msg: str,
+    ) -> None:
+        """
+        Legacy method: Mark a job as failed in the Dead Letter Queue.
+
+        Deprecated: Use _mark_job_dlq for new code.
+        """
+        self._mark_job_dlq(conn, job_id, error_msg, self.config.max_job_attempts)
 
 
 # ==============================================================================

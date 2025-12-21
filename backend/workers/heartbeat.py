@@ -39,13 +39,13 @@ from uuid import uuid4
 import psycopg
 import psycopg.errors
 
+from backend.workers.backoff import BackoffState
 from backend.workers.rpc_client import RPCClient
 
 logger = logging.getLogger(__name__)
 
 # Heartbeat configuration
 HEARTBEAT_INTERVAL_SECONDS = 30.0
-HEARTBEAT_RETRY_DELAY = 5.0
 HEARTBEAT_WARNING_INTERVAL = 60.0  # Throttle warnings to once per minute
 
 
@@ -99,6 +99,9 @@ class WorkerHeartbeat:
         self._thread: Optional[threading.Thread] = None
         self._status = "running"
         self._disabled = False  # Circuit breaker: True if heartbeat table missing
+
+        # Backoff state for transient failure handling
+        self._backoff = BackoffState()
 
         # Throttled warning state to avoid log spam when DB is down
         self._last_warning_time: float = 0.0
@@ -156,15 +159,17 @@ class WorkerHeartbeat:
             logger.warning(f"Failed to send error heartbeat: {e}")
 
     def _heartbeat_loop(self) -> None:
-        """Background thread loop that sends heartbeats."""
+        """Background thread loop that sends heartbeats with exponential backoff."""
         # Send initial heartbeat immediately
         try:
             self._send_heartbeat()
+            self._backoff.record_success()
         except psycopg.errors.UndefinedTable:
             self._disable_heartbeats("ops.worker_heartbeats")
             return
         except Exception as e:
             logger.error(f"Failed to send initial heartbeat: {e}")
+            self._backoff.record_failure()
 
         while not self._stop_event.is_set():
             # Circuit breaker: stop loop if disabled
@@ -177,17 +182,32 @@ class WorkerHeartbeat:
 
             try:
                 self._send_heartbeat()
+                self._backoff.record_success()
             except psycopg.errors.UndefinedTable:
                 self._disable_heartbeats("ops.worker_heartbeats")
                 break
             except psycopg.OperationalError as e:
-                # Network blips - throttled warning to avoid log spam
+                # Network blips - use exponential backoff
+                delay = self._backoff.record_failure()
                 self._log_throttled_warning(
-                    f"Heartbeat DB connection error: {type(e).__name__}: {e}"
+                    f"Heartbeat DB connection error: {type(e).__name__}: {e} (backoff: {delay:.1f}s)"
                 )
-                time.sleep(HEARTBEAT_RETRY_DELAY)
+                # Wait for backoff delay or stop signal
+                if self._stop_event.wait(timeout=delay):
+                    break
+            except psycopg.errors.InFailedSqlTransaction as e:
+                # Transaction in failed state - log and wait
+                delay = self._backoff.record_failure()
+                self._log_throttled_warning(
+                    f"Heartbeat InFailedSqlTransaction: {e} (backoff: {delay:.1f}s)"
+                )
+                if self._stop_event.wait(timeout=delay):
+                    break
             except Exception as e:
-                self._log_throttled_warning(f"Heartbeat error: {type(e).__name__}: {e}")
+                delay = self._backoff.record_failure()
+                self._log_throttled_warning(
+                    f"Heartbeat error: {type(e).__name__}: {e} (backoff: {delay:.1f}s)"
+                )
 
     def _log_throttled_warning(self, message: str) -> None:
         """Log a warning with throttling to avoid spam when DB is down."""

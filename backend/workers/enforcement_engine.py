@@ -68,36 +68,6 @@ JOB_TYPES = ("enforcement_strategy", "enforcement_drafting", "enforcement_genera
 # =============================================================================
 
 
-def claim_pending_job(conn: psycopg.Connection) -> dict[str, Any] | None:
-    """
-    Claim a pending enforcement job using secure RPC.
-
-    Returns the job row dict, or None if no jobs available.
-    """
-    rpc = RPCClient(conn)
-    claimed = rpc.claim_pending_job(list(JOB_TYPES), LOCK_TIMEOUT_MINUTES)
-    if claimed:
-        return {
-            "id": claimed.job_id,
-            "job_type": claimed.job_type,
-            "payload": claimed.payload,
-            "attempts": claimed.attempts,
-        }
-    return None
-
-
-def mark_job_completed(conn: psycopg.Connection, job_id: str | UUID) -> None:
-    """Mark a job as completed using secure RPC."""
-    rpc = RPCClient(conn)
-    rpc.update_job_status(job_id, "completed")
-
-
-def mark_job_failed(conn: psycopg.Connection, job_id: str | UUID, error: str) -> None:
-    """Mark a job as failed with error message using secure RPC."""
-    rpc = RPCClient(conn)
-    rpc.update_job_status(job_id, "failed", error[:2000])
-
-
 def log_job_event(
     conn: psycopg.Connection,
     job_id: str | UUID | None,
@@ -242,7 +212,9 @@ async def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     Process a single enforcement job.
 
     Dispatches to the appropriate pipeline based on job_type.
-    Updates job status on completion or failure.
+
+    On success: return normally (bootstrap marks completed)
+    On failure: raise exception (bootstrap handles retry/DLQ)
     """
     job_id = job["id"]
     job_type = str(job.get("job_type", "")).strip()
@@ -258,60 +230,48 @@ async def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     judgment_id = payload.get("judgment_id")
 
     if not judgment_id:
-        error_msg = f"Job {job_id} missing required judgment_id in payload"
-        logger.error(error_msg)
-        log_job_event(conn, job_id, "ERROR", error_msg, payload)
-        mark_job_failed(conn, job_id, error_msg)
-        return
+        raise ValueError(f"Job {job_id} missing required judgment_id in payload")
 
     logger.info(f"Processing job {job_id} type={job_type} judgment_id={judgment_id}")
     log_job_event(conn, job_id, "INFO", f"Started processing {job_type}", payload)
 
-    try:
-        if job_type == "enforcement_strategy":
-            # Use Smart Strategy (deterministic) by default
-            # Set payload.use_ai_pipeline=true to use the full AI Orchestrator
-            use_ai = payload.get("use_ai_pipeline", False)
-            if use_ai:
-                result = await run_strategy_pipeline(judgment_id)
-            else:
-                # SmartStrategy is sync - no await needed
-                result = run_smart_strategy(conn, judgment_id)
-        elif job_type == "enforcement_drafting":
-            plan_id = payload.get("plan_id")
-            result = await run_drafting_pipeline(judgment_id, plan_id)
-        elif job_type == "enforcement_generate_packet":
-            # Generate enforcement packet - runs full drafting pipeline
-            strategy = payload.get("strategy", "wage_garnishment")
-            case_number = payload.get("case_number", "UNKNOWN")
-            result = await run_drafting_pipeline(judgment_id)
-            # Log packet generation to ops.intake_logs
-            if result["success"]:
-                log_job_event(
-                    conn,
-                    job_id,
-                    "INFO",
-                    f"Packet Generated for Case {case_number}",
-                    {"strategy": strategy, "packet_id": result.get("packet_id")},
-                )
+    if job_type == "enforcement_strategy":
+        # Use Smart Strategy (deterministic) by default
+        # Set payload.use_ai_pipeline=true to use the full AI Orchestrator
+        use_ai = payload.get("use_ai_pipeline", False)
+        if use_ai:
+            result = await run_strategy_pipeline(judgment_id)
         else:
-            raise ValueError(f"Unknown job_type: {job_type}")
-
+            # SmartStrategy is sync - no await needed
+            result = run_smart_strategy(conn, judgment_id)
+    elif job_type == "enforcement_drafting":
+        plan_id = payload.get("plan_id")
+        result = await run_drafting_pipeline(judgment_id, plan_id)
+    elif job_type == "enforcement_generate_packet":
+        # Generate enforcement packet - runs full drafting pipeline
+        strategy = payload.get("strategy", "wage_garnishment")
+        case_number = payload.get("case_number", "UNKNOWN")
+        result = await run_drafting_pipeline(judgment_id)
+        # Log packet generation to ops.intake_logs
         if result["success"]:
-            logger.info(f"Job {job_id} completed successfully: {result}")
-            log_job_event(conn, job_id, "INFO", f"Completed {job_type}", result)
-            mark_job_completed(conn, job_id)
-        else:
-            error_msg = result.get("error_message") or "Pipeline returned success=False"
-            logger.error(f"Job {job_id} pipeline failed: {error_msg}")
-            log_job_event(conn, job_id, "ERROR", f"Pipeline failed: {error_msg}", result)
-            mark_job_failed(conn, job_id, error_msg)
+            log_job_event(
+                conn,
+                job_id,
+                "INFO",
+                f"Packet Generated for Case {case_number}",
+                {"strategy": strategy, "packet_id": result.get("packet_id")},
+            )
+    else:
+        raise ValueError(f"Unknown job_type: {job_type}")
 
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.exception(f"Job {job_id} raised exception: {error_msg}")
-        log_job_event(conn, job_id, "ERROR", f"Exception: {error_msg}", payload)
-        mark_job_failed(conn, job_id, error_msg)
+    if result["success"]:
+        logger.info(f"Job {job_id} completed successfully: {result}")
+        log_job_event(conn, job_id, "INFO", f"Completed {job_type}", result)
+        # Return normally - bootstrap will mark completed
+    else:
+        error_msg = result.get("error_message") or "Pipeline returned success=False"
+        log_job_event(conn, job_id, "ERROR", f"Pipeline failed: {error_msg}", result)
+        raise RuntimeError(error_msg)
 
 
 # =============================================================================
@@ -319,19 +279,52 @@ async def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
 # =============================================================================
 
 
-def run_once(conn: psycopg.Connection) -> bool:
+def run_once(conn: psycopg.Connection, worker_id: str | None = None) -> bool:
     """
     Claim and process a single job (if available).
+
+    Args:
+        conn: Database connection
+        worker_id: Optional worker ID for traceability
 
     Returns:
         True if a job was processed, False if no jobs available
     """
-    job = claim_pending_job(conn)
-    if not job:
+    import socket
+
+    if worker_id is None:
+        import os
+
+        worker_id = f"enforcement_once_{socket.gethostname()}_{os.getpid()}"
+
+    rpc = RPCClient(conn)
+    claimed = rpc.claim_pending_job(
+        job_types=list(JOB_TYPES),
+        lock_timeout_minutes=LOCK_TIMEOUT_MINUTES,
+        worker_id=worker_id,
+    )
+    if not claimed:
         return False
 
+    job = {
+        "id": claimed.job_id,
+        "job_type": claimed.job_type,
+        "payload": claimed.payload,
+        "attempts": claimed.attempts,
+    }
+
     # Run async pipeline in sync context
-    asyncio.run(process_job(conn, job))
+    try:
+        asyncio.run(process_job(conn, job))
+        rpc.update_job_status(job_id=str(job["id"]), status="completed")
+    except Exception as e:
+        error_msg = str(e)[:500]
+        logger.exception(f"Job {job['id']} failed: {e}")
+        rpc.update_job_status(
+            job_id=str(job["id"]),
+            status="failed",
+            error=error_msg,
+        )
     return True
 
 
@@ -345,11 +338,6 @@ def _job_processor(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     asyncio.run(process_job(conn, job))
 
 
-def _job_claimer(conn: psycopg.Connection) -> dict[str, Any] | None:
-    """Claim a pending enforcement job."""
-    return claim_pending_job(conn)
-
-
 def main() -> None:
     """Entry point for the enforcement engine worker."""
     from backend.workers.bootstrap import WorkerBootstrap
@@ -358,8 +346,10 @@ def main() -> None:
         worker_type="enforcement_engine",
         job_types=list(JOB_TYPES),
         poll_interval=POLL_INTERVAL_SECONDS,
+        lock_timeout_minutes=LOCK_TIMEOUT_MINUTES,
     )
-    bootstrap.run(_job_processor, _job_claimer)
+    # Use default job_claimer which correctly passes worker_id to RPC
+    bootstrap.run(_job_processor)
 
 
 if __name__ == "__main__":

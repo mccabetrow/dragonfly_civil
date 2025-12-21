@@ -5,8 +5,10 @@ import httpx
 import pytest
 
 from src.config.api_surface import SCHEMA_PROFILE
+from tests.helpers import httpx_resilient
 
-pytestmark = pytest.mark.legacy  # Requires insert_case RPC
+# Mark as integration (PostgREST) + legacy (optional schema)
+pytestmark = [pytest.mark.integration, pytest.mark.legacy]
 
 BASE = f'https://{os.environ["SUPABASE_PROJECT_REF"]}.supabase.co'
 KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
@@ -36,7 +38,9 @@ def test_insert_case_and_read_tier() -> None:
     }
 
     with httpx.Client(timeout=30) as client:
-        response = client.post(
+        response = httpx_resilient(
+            client,
+            "post",
             _rest("/rpc/insert_case"),
             headers={
                 **H,
@@ -46,7 +50,6 @@ def test_insert_case_and_read_tier() -> None:
             },
             json={"payload": case},
         )
-        response.raise_for_status()
         body = response.json()
         if isinstance(body, list) and body:
             body = body[0]
@@ -63,13 +66,17 @@ def test_insert_case_and_read_tier() -> None:
             "Accept-Profile": "public",
             "Accept": "application/json",
         }
-        client.get(
+        httpx_resilient(
+            client,
+            "get",
             _rest("/v_cases"),
             params={"case_id": f"eq.{case_id}", "select": "case_id"},
             headers=public_headers,
-        ).raise_for_status()
+        )
 
-        audit_response = client.get(
+        audit_response = httpx_resilient(
+            client,
+            "get",
             _rest("/v_ingestion_runs"),
             params={
                 "ref_id": f"eq.{case_id}",
@@ -79,7 +86,6 @@ def test_insert_case_and_read_tier() -> None:
             },
             headers={**H, "Accept": "application/json"},
         )
-        audit_response.raise_for_status()
         audit_rows = audit_response.json()
 
     assert isinstance(audit_rows, list)

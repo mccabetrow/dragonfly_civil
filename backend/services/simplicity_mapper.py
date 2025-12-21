@@ -474,7 +474,9 @@ def create_batch(
         conn.commit()
         if result is None:
             raise RuntimeError("Failed to create batch - no ID returned")
-        return str(result[0])
+        # Support both tuple (default cursor) and dict (dict_row factory)
+        batch_id = result["id"] if isinstance(result, dict) else result[0]
+        return str(batch_id)
 
 
 def check_duplicate_batch(conn: "psycopg.Connection", source_reference: str) -> Optional[str]:
@@ -494,7 +496,11 @@ def check_duplicate_batch(conn: "psycopg.Connection", source_reference: str) -> 
             (source_reference,),
         )
         result = cur.fetchone()
-        return str(result[0]) if result else None
+        if result is None:
+            return None
+        # Support both tuple (default cursor) and dict (dict_row factory)
+        batch_id = result["id"] if isinstance(result, dict) else result[0]
+        return str(batch_id)
 
 
 def stage_raw_rows(
@@ -690,16 +696,27 @@ def upsert_to_judgments(
         rows = cur.fetchall()
 
         for row in rows:
-            (
-                case_number,
-                plaintiff_name,
-                defendant_name,
-                judgment_amount,
-                entry_date,
-                judgment_date,
-                county,
-                court,
-            ) = row
+            # Support both dict_row (from worker) and tuple row factories
+            if isinstance(row, dict):
+                case_number = row["case_number"]
+                plaintiff_name = row["plaintiff_name"]
+                defendant_name = row["defendant_name"]
+                judgment_amount = row["judgment_amount"]
+                entry_date = row["entry_date"]
+                judgment_date = row["judgment_date"]
+                county = row["county"]
+                court = row["court"]
+            else:
+                (
+                    case_number,
+                    plaintiff_name,
+                    defendant_name,
+                    judgment_amount,
+                    entry_date,
+                    judgment_date,
+                    county,
+                    court,
+                ) = row
 
             # Generate collectability score for new records
             collectability_score = random.randint(0, 100)
@@ -738,7 +755,9 @@ def upsert_to_judgments(
                     ),
                 )
                 result = cur.fetchone()
-                if result and result[0]:  # xmax = 0 means INSERT (not UPDATE)
+                # Support both tuple and dict row factories
+                inserted_flag = result["inserted"] if isinstance(result, dict) else result[0]
+                if result and inserted_flag:  # xmax = 0 means INSERT (not UPDATE)
                     inserted += 1
                 else:
                     duplicates += 1

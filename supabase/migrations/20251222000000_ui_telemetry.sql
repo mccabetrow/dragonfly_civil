@@ -18,8 +18,10 @@
 --   - Index on created_at for time-range queries
 --   - Index on event_name for filtering by event type
 --
--- Grant INSERT to authenticated (logged-in users) and service_role (backend).
--- No SELECT grant by default; use privileged access for analytics.
+-- Security model:
+--   - authenticated users call ops.log_ui_action() RPC (SECURITY DEFINER)
+--   - NO direct INSERT grant to authenticated (follows least-privilege model)
+--   - service_role has full access for backend analytics
 -- ════════════════════════════════════════════════════════════════════════════
 BEGIN;
 -- Ensure ops schema exists
@@ -51,10 +53,49 @@ CREATE INDEX IF NOT EXISTS idx_ui_actions_created_at ON ops.ui_actions (created_
 CREATE INDEX IF NOT EXISTS idx_ui_actions_event_name ON ops.ui_actions (event_name);
 CREATE INDEX IF NOT EXISTS idx_ui_actions_session_id ON ops.ui_actions (session_id)
 WHERE session_id IS NOT NULL;
--- Grant INSERT to authenticated users and service_role
--- No SELECT grant - analytics access through privileged roles only
-GRANT INSERT ON ops.ui_actions TO authenticated;
-GRANT INSERT ON ops.ui_actions TO service_role;
--- service_role can also SELECT for backend analytics
-GRANT SELECT ON ops.ui_actions TO service_role;
+-- =============================================================================
+-- SECURITY: Revoke direct table access from public roles
+-- =============================================================================
+REVOKE
+INSERT,
+    UPDATE,
+    DELETE ON ops.ui_actions
+FROM authenticated,
+    anon;
+-- Grant full access to privileged roles only
+GRANT ALL ON ops.ui_actions TO postgres;
+GRANT ALL ON ops.ui_actions TO service_role;
+-- =============================================================================
+-- SECURITY DEFINER RPC: log_ui_action
+-- =============================================================================
+-- Authenticated users insert telemetry through this function, not directly
+CREATE OR REPLACE FUNCTION ops.log_ui_action(
+        p_event_name text,
+        p_context jsonb DEFAULT '{}'::jsonb,
+        p_session_id text DEFAULT NULL
+    ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ops,
+    public AS $$
+DECLARE v_user_id uuid;
+v_action_id uuid;
+BEGIN -- Get current user ID from auth context (NULL if not authenticated)
+v_user_id := auth.uid();
+-- Validate event_name
+IF p_event_name IS NULL
+OR p_event_name = '' THEN RAISE EXCEPTION 'event_name is required';
+END IF;
+-- Validate context is an object
+IF jsonb_typeof(p_context) != 'object' THEN RAISE EXCEPTION 'context must be a JSON object';
+END IF;
+-- Insert the telemetry event
+INSERT INTO ops.ui_actions (user_id, session_id, event_name, context)
+VALUES (v_user_id, p_session_id, p_event_name, p_context)
+RETURNING id INTO v_action_id;
+RETURN v_action_id;
+END;
+$$;
+COMMENT ON FUNCTION ops.log_ui_action IS 'Log a UI telemetry event (SECURITY DEFINER - safe for authenticated)';
+-- Grant EXECUTE to authenticated users (the RPC validates and inserts safely)
+GRANT EXECUTE ON FUNCTION ops.log_ui_action(text, jsonb, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION ops.log_ui_action(text, jsonb, text) TO service_role;
 COMMIT;

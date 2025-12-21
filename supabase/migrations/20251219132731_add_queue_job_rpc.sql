@@ -71,7 +71,7 @@ p_priority;
 RETURN v_job_id;
 END;
 $$;
-COMMENT ON FUNCTION ops.queue_job IS 'Securely enqueue a job into ops.job_queue. Validates input and handles insert atomically. ' 'All job producers must use this RPC instead of raw INSERT for least-privilege security.';
+COMMENT ON FUNCTION ops.queue_job IS 'Securely enqueue a job into ops.job_queue. Validates input and handles insert atomically. All job producers must use this RPC instead of raw INSERT for least-privilege security.';
 -- ---------------------------------------------------------------------------
 -- 4. Grants - Allow dragonfly_app and service_role to execute
 -- ---------------------------------------------------------------------------

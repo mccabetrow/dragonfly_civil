@@ -35,6 +35,9 @@ from typing import Any, Callable, Generator
 import psycopg
 import pytest
 
+# Re-export helpers for convenient imports
+from tests.helpers import execute_resilient, httpx_resilient, is_postgrest_available
+
 # =============================================================================
 # GLOBAL TEST CONFIGURATION
 # =============================================================================
@@ -46,7 +49,21 @@ def pytest_configure(config: pytest.Config) -> None:
 
     Sets SUPABASE_MODE=dev by default to ensure tests never accidentally
     hit production. This runs BEFORE any test collection.
+
+    Registers custom markers:
+      - integration: Tests that require external services (PostgREST, Pooler, Realtime)
+      - legacy: Tests for deprecated or optional DB features
     """
+    # Register custom markers to avoid pytest warnings
+    config.addinivalue_line(
+        "markers",
+        "integration: marks tests as requiring external services (PostgREST, Supabase)",
+    )
+    config.addinivalue_line(
+        "markers",
+        "legacy: marks tests for deprecated or optional DB features",
+    )
+
     if "SUPABASE_MODE" not in os.environ:
         os.environ["SUPABASE_MODE"] = "dev"
 

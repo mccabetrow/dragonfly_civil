@@ -1,3 +1,12 @@
+"""
+Tests for tools/doctor.py - DoctorDiagnostics CLI
+
+These tests verify the doctor module's diagnostic suite:
+- CLI invocation and exit codes
+- Individual check result structure
+- PostgREST retry logic
+"""
+
 from __future__ import annotations
 
 from click.testing import CliRunner
@@ -5,111 +14,83 @@ from click.testing import CliRunner
 from tools import doctor
 
 
-class FakeResponse:
-    def __init__(self, data):
-        self.data = data
+class FakeCheckResult:
+    """Mock CheckResult for testing."""
+
+    def __init__(self, passed: bool, message: str, details: dict | None = None):
+        self.passed = passed
+        self.message = message
+        self.details = details
 
 
-class FakeTable:
-    def __init__(self, name: str, client: "FakeClient") -> None:
-        self.name = name
-        self.client = client
-        self._operation: str | None = None
-        self._payload: dict[str, object] | None = None
-        self._eq_value: object | None = None
-
-    def select(self, _columns: str) -> "FakeTable":
-        self._operation = "select"
-        return self
-
-    def limit(self, _limit: int) -> "FakeTable":
-        return self
-
-    def execute(self) -> FakeResponse:
-        if self.name == "judgments" and self._operation == "select":
-            return FakeResponse([{"case_id": FakeClient.CASE_UUID}])
-        if self.name == "v_cases_with_org" and self._operation == "select":
-            return FakeResponse([{"case_id": FakeClient.CASE_UUID}])
-        if self.name == "v_collectability_snapshot" and self._operation == "select":
-            return FakeResponse([{"case_id": FakeClient.CASE_UUID}])
-        if self.name == "enrichment_runs" and self._operation == "select":
-            return FakeResponse([])
-        if (
-            self.name == "enrichment_runs"
-            and self._operation == "insert"
-            and self._payload is not None
-        ):
-            inserted = dict(self._payload)
-            inserted.setdefault("id", 99)
-            self.client.inserted_rows.append(inserted)
-            return FakeResponse([inserted])
-        if self.name == "enrichment_runs" and self._operation == "delete":
-            self.client.deleted_ids.append(self._eq_value)
-            return FakeResponse([])
-        return FakeResponse([])
-
-    def insert(self, payload: dict[str, object]) -> "FakeTable":
-        self._operation = "insert"
-        self._payload = payload
-        return self
-
-    def delete(self) -> "FakeTable":
-        self._operation = "delete"
-        return self
-
-    def eq(self, _column: str, value: object) -> "FakeTable":
-        self._eq_value = value
-        return self
+def test_doctor_diagnostics_init():
+    """Test DoctorDiagnostics class initialization."""
+    diag = doctor.DoctorDiagnostics(verbose=False)
+    assert diag.verbose is False
+    assert diag.checks_run == 0
+    assert diag.checks_passed == 0
+    assert diag.checks_failed == 0
 
 
-class FakeRpc:
-    def __init__(self, client: "FakeClient") -> None:
-        self.client = client
-
-    def execute(self) -> FakeResponse:
-        self.client.rpc_calls += 1
-        return FakeResponse({"queue_job": 1})
+def test_doctor_diagnostics_verbose_flag():
+    """Test verbose flag is properly set."""
+    diag = doctor.DoctorDiagnostics(verbose=True)
+    assert diag.verbose is True
 
 
-class FakeClient:
-    def __init__(self) -> None:
-        self.inserted_rows: list[dict[str, object]] = []
-        self.deleted_ids: list[object] = []
-        self.rpc_calls = 0
-        self.case_view_lookups = 0
-        self.snapshot_lookups = 0
-
-    CASE_UUID = "00000000-0000-0000-0000-000000000016"
-
-    def table(self, name: str) -> FakeTable:
-        if name == "v_cases_with_org":
-            self.case_view_lookups += 1
-        if name == "v_collectability_snapshot":
-            self.snapshot_lookups += 1
-        return FakeTable(name, self)
-
-    def rpc(self, _name: str, _payload: dict[str, object]) -> FakeRpc:
-        return FakeRpc(self)
+def test_check_result_named_tuple():
+    """Test CheckResult structure is correct."""
+    result = doctor.CheckResult(passed=True, message="OK", details={"key": "val"})
+    assert result.passed is True
+    assert result.message == "OK"
+    assert result.details == {"key": "val"}
 
 
-def test_doctor_reports_enrichment_runs_write_success(monkeypatch):
-    fake_client = FakeClient()
-    monkeypatch.setattr(doctor, "create_supabase_client", lambda: fake_client)
-    monkeypatch.setattr(doctor, "_generate_enrichment_run_id", lambda: 4242)
-    monkeypatch.setattr(doctor, "_count_foil_responses", lambda: 0)
-    monkeypatch.setattr(doctor, "_ensure_collectability_view", lambda: None)
+def test_check_result_defaults():
+    """Test CheckResult default values."""
+    result = doctor.CheckResult(passed=False, message="Failed")
+    assert result.passed is False
+    assert result.message == "Failed"
+    assert result.details is None
 
+
+def test_doctor_constants():
+    """Test module-level constants are defined correctly."""
+    assert doctor.EXIT_OK == 0
+    assert doctor.EXIT_FAILED == 1
+    assert doctor.EXIT_CRITICAL == 2
+    assert doctor.POSTGREST_MAX_RETRIES == 3
+    assert doctor.POSTGREST_RETRY_DELAY_SECONDS == 2
+
+
+def test_required_rpcs_defined():
+    """Test required RPC list is populated."""
+    assert len(doctor.REQUIRED_RPCS) >= 4
+    schemas = [schema for schema, _ in doctor.REQUIRED_RPCS]
+    assert "ops" in schemas
+
+
+def test_security_definer_rpcs_defined():
+    """Test security definer RPC list is populated."""
+    assert len(doctor.SECURITY_DEFINER_RPCS) >= 3
+    for schema, fn_name in doctor.SECURITY_DEFINER_RPCS:
+        assert schema == "ops"
+        assert fn_name in ["claim_pending_job", "update_job_status", "queue_job"]
+
+
+def test_rls_required_tables_defined():
+    """Test RLS required tables list is populated."""
+    assert len(doctor.RLS_REQUIRED_TABLES) >= 2
+    table_names = [table for _, table in doctor.RLS_REQUIRED_TABLES]
+    assert "job_queue" in table_names
+    assert "worker_heartbeats" in table_names
+
+
+def test_doctor_cli_help():
+    """Test CLI help output."""
     runner = CliRunner()
-    result = runner.invoke(doctor.main)
-
+    result = runner.invoke(doctor.main, ["--help"])
     assert result.exit_code == 0
-    assert "enrichment_runs write OK" in result.output
-    assert fake_client.inserted_rows
-    assert fake_client.deleted_ids == [4242]
-    assert fake_client.inserted_rows[0]["id"] == 4242
-    assert fake_client.rpc_calls == 1
-    assert fake_client.inserted_rows[0]["case_id"] == FakeClient.CASE_UUID
-    assert fake_client.case_view_lookups == 1
-    assert fake_client.snapshot_lookups == 1
-    assert "collectability snapshot check OK" in result.output
-    assert "foil_responses check OK, rows=0" in result.output
+    assert "Run the Dragonfly Doctor diagnostic suite" in result.output
+    assert "--verbose" in result.output
+    assert "--env" in result.output

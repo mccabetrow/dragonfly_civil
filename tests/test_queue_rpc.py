@@ -20,11 +20,16 @@ from typing import Any
 
 import pytest
 
-# Skip all tests if database is not available
-pytestmark = pytest.mark.skipif(
-    not os.getenv("SUPABASE_DB_URL_DEV") and not os.getenv("DATABASE_URL"),
-    reason="Database connection not configured",
-)
+from tests.helpers import execute_resilient
+
+# Mark as integration tests (require PostgREST) + skip if no DB
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not os.getenv("SUPABASE_DB_URL_DEV") and not os.getenv("DATABASE_URL"),
+        reason="Database connection not configured",
+    ),
+]
 
 
 def get_supabase_client():
@@ -40,6 +45,16 @@ def get_supabase_client():
     return create_client(url, key)
 
 
+def resilient_rpc(client, name: str, params: dict):
+    """Execute RPC with retry logic for transient errors."""
+    return execute_resilient(lambda: client.rpc(name, params).execute())
+
+
+def resilient_query(query_builder):
+    """Execute query with retry logic for transient errors."""
+    return execute_resilient(lambda: query_builder.execute())
+
+
 class TestQueueJobRPC:
     """Tests for the ops.queue_job RPC function."""
 
@@ -47,26 +62,26 @@ class TestQueueJobRPC:
         """Test basic job enqueueing with minimal parameters."""
         client = get_supabase_client()
 
-        # Call the RPC
-        response = client.rpc(
+        # Call the RPC with retry logic
+        response = resilient_rpc(
+            client,
             "queue_job",
             {
                 "p_type": "enrich_idicore",
                 "p_payload": {"judgment_id": str(uuid.uuid4()), "test": True},
             },
-        ).execute()
+        )
 
         # Verify response
         assert response.data is not None, "RPC should return job ID"
         job_id = response.data
 
         # Verify job exists in queue with correct status
-        verify = (
+        verify = resilient_query(
             client.from_("job_queue")
             .select("id, job_type, status, priority")
             .eq("id", job_id)
             .single()
-            .execute()
         )
 
         assert verify.data is not None, "Job should exist in queue"
@@ -74,31 +89,34 @@ class TestQueueJobRPC:
         assert verify.data["priority"] == 0, "Job should have default priority 0"
 
         # Cleanup
-        client.from_("job_queue").delete().eq("id", job_id).execute()
+        resilient_query(client.from_("job_queue").delete().eq("id", job_id))
 
     def test_queue_job_with_priority(self):
         """Test job enqueueing with priority parameter."""
         client = get_supabase_client()
 
-        response = client.rpc(
+        response = resilient_rpc(
+            client,
             "queue_job",
             {
                 "p_type": "enrich_tlo",
                 "p_payload": {"judgment_id": str(uuid.uuid4())},
                 "p_priority": 10,
             },
-        ).execute()
+        )
 
         job_id = response.data
         assert job_id is not None
 
         # Verify priority was set
-        verify = client.from_("job_queue").select("priority").eq("id", job_id).single().execute()
+        verify = resilient_query(
+            client.from_("job_queue").select("priority").eq("id", job_id).single()
+        )
 
         assert verify.data["priority"] == 10, "Job should have priority 10"
 
         # Cleanup
-        client.from_("job_queue").delete().eq("id", job_id).execute()
+        resilient_query(client.from_("job_queue").delete().eq("id", job_id))
 
     def test_queue_job_with_run_at(self):
         """Test job enqueueing with delayed execution."""
@@ -108,40 +126,44 @@ class TestQueueJobRPC:
         future_time = datetime.now(timezone.utc) + timedelta(hours=1)
         run_at_str = future_time.isoformat()
 
-        response = client.rpc(
+        response = resilient_rpc(
+            client,
             "queue_job",
             {
                 "p_type": "generate_pdf",
                 "p_payload": {"judgment_id": str(uuid.uuid4())},
                 "p_run_at": run_at_str,
             },
-        ).execute()
+        )
 
         job_id = response.data
         assert job_id is not None
 
         # Verify run_at was set
-        verify = client.from_("job_queue").select("run_at").eq("id", job_id).single().execute()
+        verify = resilient_query(
+            client.from_("job_queue").select("run_at").eq("id", job_id).single()
+        )
 
         # run_at should be in the future (approximately 1 hour from now)
         stored_run_at = datetime.fromisoformat(verify.data["run_at"].replace("Z", "+00:00"))
         assert stored_run_at > datetime.now(timezone.utc), "run_at should be in the future"
 
         # Cleanup
-        client.from_("job_queue").delete().eq("id", job_id).execute()
+        resilient_query(client.from_("job_queue").delete().eq("id", job_id))
 
     def test_queue_job_rejects_empty_type(self):
         """Test that empty job type is rejected."""
         client = get_supabase_client()
 
         with pytest.raises(Exception) as exc_info:
-            client.rpc(
+            resilient_rpc(
+                client,
                 "queue_job",
                 {
                     "p_type": "",
                     "p_payload": {},
                 },
-            ).execute()
+            )
 
         # Should raise an error about job type being required
         assert (
@@ -153,48 +175,53 @@ class TestQueueJobRPC:
         client = get_supabase_client()
 
         with pytest.raises(Exception):
-            client.rpc(
+            resilient_rpc(
+                client,
                 "queue_job",
                 {
                     "p_type": None,
                     "p_payload": {},
                 },
-            ).execute()
+            )
 
     def test_queue_job_handles_null_payload(self):
         """Test that null payload defaults to empty object."""
         client = get_supabase_client()
 
-        response = client.rpc(
+        response = resilient_rpc(
+            client,
             "queue_job",
             {
                 "p_type": "enrich_idicore",
                 "p_payload": None,
             },
-        ).execute()
+        )
 
         job_id = response.data
         assert job_id is not None
 
         # Verify payload is empty object
-        verify = client.from_("job_queue").select("payload").eq("id", job_id).single().execute()
+        verify = resilient_query(
+            client.from_("job_queue").select("payload").eq("id", job_id).single()
+        )
 
         assert verify.data["payload"] == {} or verify.data["payload"] is None
 
         # Cleanup
-        client.from_("job_queue").delete().eq("id", job_id).execute()
+        resilient_query(client.from_("job_queue").delete().eq("id", job_id))
 
     def test_queue_job_returns_uuid(self):
         """Test that RPC returns a valid UUID."""
         client = get_supabase_client()
 
-        response = client.rpc(
+        response = resilient_rpc(
+            client,
             "queue_job",
             {
                 "p_type": "enrich_idicore",
                 "p_payload": {"test": True},
             },
-        ).execute()
+        )
 
         job_id = response.data
         assert job_id is not None
@@ -204,7 +231,7 @@ class TestQueueJobRPC:
         assert str(parsed) == job_id
 
         # Cleanup
-        client.from_("job_queue").delete().eq("id", job_id).execute()
+        resilient_query(client.from_("job_queue").delete().eq("id", job_id))
 
 
 class TestQueueJobRPCClient:

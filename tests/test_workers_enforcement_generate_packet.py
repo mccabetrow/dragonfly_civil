@@ -263,26 +263,23 @@ class TestWorkerProcessing:
             new_callable=AsyncMock,
             return_value=mock_result,
         ) as mock_pipeline:
-            with patch("backend.workers.enforcement_engine.mark_job_completed") as mock_complete:
-                with patch("backend.workers.enforcement_engine.log_job_event") as mock_log:
-                    from backend.workers.enforcement_engine import process_job
+            with patch("backend.workers.enforcement_engine.log_job_event") as mock_log:
+                from backend.workers.enforcement_engine import process_job
 
-                    await process_job(mock_conn, job)
+                # process_job returns normally on success (bootstrap marks completed)
+                await process_job(mock_conn, job)
 
-                    # Verify pipeline was called with judgment_id
-                    mock_pipeline.assert_called_once_with("test-judgment-id")
+                # Verify pipeline was called with judgment_id
+                mock_pipeline.assert_called_once_with("test-judgment-id")
 
-                    # Verify job was marked completed
-                    mock_complete.assert_called_once()
-
-                    # Verify log event for packet generation
-                    # Should log "Packet Generated for Case {case_number}"
-                    log_calls = mock_log.call_args_list
-                    assert any("Packet Generated for Case" in str(call) for call in log_calls)
+                # Verify log event for packet generation
+                # Should log "Packet Generated for Case {case_number}"
+                log_calls = mock_log.call_args_list
+                assert any("Packet Generated for Case" in str(call) for call in log_calls)
 
     @pytest.mark.asyncio
     async def test_process_job_handles_failure(self):
-        """Verify process_job marks job as failed on pipeline error."""
+        """Verify process_job raises exception on pipeline error (bootstrap handles DLQ)."""
         job = {
             "id": "test-job-id",
             "job_type": "enforcement_generate_packet",
@@ -304,11 +301,12 @@ class TestWorkerProcessing:
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
-            with patch("backend.workers.enforcement_engine.mark_job_failed") as mock_fail:
-                with patch("backend.workers.enforcement_engine.log_job_event"):
-                    from backend.workers.enforcement_engine import process_job
+            with patch("backend.workers.enforcement_engine.log_job_event"):
+                from backend.workers.enforcement_engine import process_job
 
+                # process_job should raise RuntimeError on failure
+                # (bootstrap's _process_job_with_dlq handles retry/DLQ)
+                with pytest.raises(RuntimeError) as excinfo:
                     await process_job(mock_conn, job)
 
-                    # Verify job was marked failed
-                    mock_fail.assert_called_once()
+                assert "Pipeline failed" in str(excinfo.value)

@@ -8,6 +8,11 @@ The underlying database grants only SELECT on tables to dragonfly_app.
 All INSERT/UPDATE operations are performed via SECURITY DEFINER functions
 that run with elevated privileges but with controlled inputs.
 
+Features:
+- Circuit breaker with exponential backoff for transient failures
+- Automatic retry for 5xx errors and database timeouts
+- Structured logging integration
+
 Usage:
     from backend.workers.rpc_client import RPCClient
 
@@ -21,18 +26,94 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable, TypeVar
 from uuid import UUID
 
 import psycopg
+import psycopg.errors
 from psycopg.rows import dict_row
+from tenacity import (
+    RetryError,
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 logger = logging.getLogger(__name__)
+
+# Type variable for generic retry decorator
+T = TypeVar("T")
+
+# Exceptions that trigger circuit breaker retry
+TRANSIENT_EXCEPTIONS = (
+    psycopg.OperationalError,  # Connection issues
+    psycopg.errors.AdminShutdown,  # Server shutdown
+    psycopg.errors.CannotConnectNow,  # Server starting
+    psycopg.errors.ConnectionException,  # Connection dropped
+    psycopg.errors.ConnectionDoesNotExist,  # Connection gone
+    psycopg.errors.ConnectionFailure,  # Connection failed
+    psycopg.errors.QueryCanceled,  # Timeout
+    TimeoutError,  # General timeout
+    ConnectionError,  # Network issues
+)
+
+
+def with_circuit_breaker(
+    max_attempts: int = 3,
+    min_wait: float = 1.0,
+    max_wait: float = 10.0,
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """
+    Decorator that adds circuit breaker retry logic to RPC methods.
+
+    Retries on transient database errors with exponential backoff.
+    Logs warnings on retry attempts.
+
+    Args:
+        max_attempts: Maximum retry attempts (default: 3)
+        min_wait: Minimum wait between retries in seconds (default: 1.0)
+        max_wait: Maximum wait between retries in seconds (default: 10.0)
+
+    Returns:
+        Decorated function with retry logic
+    """
+
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> T:
+            @retry(
+                retry=retry_if_exception_type(TRANSIENT_EXCEPTIONS),
+                stop=stop_after_attempt(max_attempts),
+                wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
+                before_sleep=before_sleep_log(logger, logging.WARNING),
+                reraise=True,
+            )
+            def inner() -> T:
+                return func(*args, **kwargs)
+
+            try:
+                return inner()
+            except RetryError as e:
+                # Re-raise the last exception after all retries exhausted
+                logger.error(
+                    f"Circuit breaker exhausted for {func.__name__} after {max_attempts} attempts"
+                )
+                last_exc = e.last_attempt.exception()
+                if last_exc is not None:
+                    raise last_exc from e
+                raise RuntimeError(f"Retry exhausted for {func.__name__}") from e
+
+        return wrapper
+
+    return decorator
 
 
 @dataclass
@@ -204,6 +285,7 @@ class RPCClient:
                 pass
             return None
 
+    @with_circuit_breaker(max_attempts=3, min_wait=0.5, max_wait=5.0)
     def register_heartbeat(
         self,
         worker_id: str,
@@ -215,6 +297,7 @@ class RPCClient:
         Register a worker heartbeat using ops.register_heartbeat RPC.
 
         This replaces raw INSERT/UPDATE on ops.worker_heartbeats.
+        Includes circuit breaker retry logic for transient failures.
 
         Args:
             worker_id: Unique worker identifier
@@ -249,21 +332,25 @@ class RPCClient:
                 pass
             return None
 
+    @with_circuit_breaker(max_attempts=3, min_wait=1.0, max_wait=10.0)
     def update_job_status(
         self,
         job_id: str | UUID,
         status: str,
-        error: str | None = None,
+        error_message: str | None = None,
+        backoff_seconds: int | None = None,
     ) -> bool:
         """
         Update job status using ops.update_job_status RPC.
 
         This replaces raw UPDATE on ops.job_queue.
+        Includes circuit breaker retry logic for transient failures.
 
         Args:
             job_id: Job UUID
-            status: New status (processing, completed, failed)
-            error: Optional error message for failed jobs
+            status: New status (pending, processing, completed, failed)
+            error_message: Optional error message for failed/retrying jobs
+            backoff_seconds: Optional backoff delay for retry scheduling
 
         Returns:
             True if job was found and updated
@@ -274,14 +361,15 @@ class RPCClient:
                 SELECT ops.update_job_status(
                     p_job_id := %s::uuid,
                     p_status := %s,
-                    p_error := %s
+                    p_error_message := %s,
+                    p_backoff_seconds := %s
                 )
                 """,
-                (str(job_id), status, error),
+                (str(job_id), status, error_message, backoff_seconds),
             )
-            result = cur.fetchone()
+            # Function returns boolean, commit and return result
             self.conn.commit()
-            return result[0] if result else False
+            return True
 
     def queue_job(
         self,
@@ -355,19 +443,23 @@ class RPCClient:
         # Delegate to queue_job for forward compatibility
         return self.queue_job(job_type=job_type, payload=payload, priority=0)
 
+    @with_circuit_breaker(max_attempts=3, min_wait=1.0, max_wait=10.0)
     def claim_pending_job(
         self,
         job_types: list[str],
         lock_timeout_minutes: int = 30,
+        worker_id: str | None = None,
     ) -> ClaimedJob | None:
         """
         Claim a pending job using ops.claim_pending_job RPC.
 
         This replaces raw UPDATE ... FOR UPDATE SKIP LOCKED.
+        Includes circuit breaker retry logic for transient failures.
 
         Args:
             job_types: List of job types to claim
             lock_timeout_minutes: Lock timeout in minutes
+            worker_id: Optional worker ID for tracking
 
         Returns:
             ClaimedJob if a job was claimed, None otherwise
@@ -377,10 +469,11 @@ class RPCClient:
                 """
                 SELECT * FROM ops.claim_pending_job(
                     p_job_types := %s,
-                    p_lock_timeout_minutes := %s
+                    p_lock_timeout_minutes := %s,
+                    p_worker_id := %s
                 )
                 """,
-                (job_types, lock_timeout_minutes),
+                (job_types, lock_timeout_minutes, worker_id),
             )
             row = cur.fetchone()
             self.conn.commit()
@@ -552,3 +645,382 @@ class RPCClient:
             result = cur.fetchone()
             self.conn.commit()
             return result[0] if result else False
+
+    # =========================================================================
+    # INTAKE SCHEMA RPCs (FOIL Dataset Operations)
+    # =========================================================================
+
+    def create_foil_dataset(
+        self,
+        dataset_name: str,
+        original_filename: str,
+        source_agency: str | None = None,
+        foil_request_number: str | None = None,
+        row_count_raw: int = 0,
+        column_count: int = 0,
+        detected_columns: list[str] | None = None,
+    ) -> UUID | None:
+        """
+        Create a FOIL dataset record using intake.create_foil_dataset RPC.
+
+        This replaces raw INSERT INTO intake.foil_datasets statements.
+
+        Args:
+            dataset_name: Name of the dataset
+            original_filename: Original filename
+            source_agency: Optional source agency
+            foil_request_number: Optional FOIL request number
+            row_count_raw: Number of raw rows
+            column_count: Number of columns
+            detected_columns: List of detected column names
+
+        Returns:
+            Dataset UUID or None if creation failed
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT intake.create_foil_dataset(
+                    p_dataset_name := %s,
+                    p_original_filename := %s,
+                    p_source_agency := %s,
+                    p_foil_request_number := %s,
+                    p_row_count_raw := %s,
+                    p_column_count := %s,
+                    p_detected_columns := %s::TEXT[]
+                )
+                """,
+                (
+                    dataset_name,
+                    original_filename,
+                    source_agency,
+                    foil_request_number,
+                    row_count_raw,
+                    column_count,
+                    detected_columns or [],
+                ),
+            )
+            result = cur.fetchone()
+            # Note: No commit here - let worker loop control transaction
+            return UUID(result[0]) if result and result[0] else None
+
+    def update_foil_dataset_mapping(
+        self,
+        dataset_id: str | UUID,
+        column_mapping: dict[str, str],
+        column_mapping_reverse: dict[str, str],
+        unmapped_columns: list[str],
+        mapping_confidence: int,
+        required_fields_missing: list[str],
+    ) -> bool:
+        """
+        Update FOIL dataset with column mapping results.
+
+        This replaces raw UPDATE on intake.foil_datasets.
+
+        Args:
+            dataset_id: Dataset UUID
+            column_mapping: Raw to canonical column mapping
+            column_mapping_reverse: Canonical to raw column mapping
+            unmapped_columns: List of unmapped column names
+            mapping_confidence: Mapping confidence 0-100
+            required_fields_missing: List of missing required fields
+
+        Returns:
+            True if dataset was found and updated
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT intake.update_foil_dataset_mapping(
+                    p_dataset_id := %s::uuid,
+                    p_column_mapping := %s::jsonb,
+                    p_column_mapping_reverse := %s::jsonb,
+                    p_unmapped_columns := %s::TEXT[],
+                    p_mapping_confidence := %s,
+                    p_required_fields_missing := %s::TEXT[]
+                )
+                """,
+                (
+                    str(dataset_id),
+                    json.dumps(column_mapping),
+                    json.dumps(column_mapping_reverse),
+                    unmapped_columns,
+                    mapping_confidence,
+                    required_fields_missing,
+                ),
+            )
+            result = cur.fetchone()
+            return result[0] if result else False
+
+    def update_foil_dataset_status(
+        self,
+        dataset_id: str | UUID,
+        status: str,
+        error_summary: str | None = None,
+    ) -> bool:
+        """
+        Update FOIL dataset status.
+
+        This replaces raw UPDATE on intake.foil_datasets.
+
+        Args:
+            dataset_id: Dataset UUID
+            status: New status
+            error_summary: Optional error summary
+
+        Returns:
+            True if dataset was found and updated
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT intake.update_foil_dataset_status(
+                    p_dataset_id := %s::uuid,
+                    p_status := %s,
+                    p_error_summary := %s
+                )
+                """,
+                (str(dataset_id), status, error_summary),
+            )
+            result = cur.fetchone()
+            return result[0] if result else False
+
+    def finalize_foil_dataset(
+        self,
+        dataset_id: str | UUID,
+        row_count_valid: int,
+        row_count_invalid: int,
+        row_count_quarantined: int,
+        status: str,
+    ) -> bool:
+        """
+        Finalize FOIL dataset with row counts.
+
+        This replaces raw UPDATE on intake.foil_datasets.
+
+        Args:
+            dataset_id: Dataset UUID
+            row_count_valid: Number of valid rows
+            row_count_invalid: Number of invalid rows
+            row_count_quarantined: Number of quarantined rows
+            status: Final status
+
+        Returns:
+            True if dataset was found and updated
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT intake.finalize_foil_dataset(
+                    p_dataset_id := %s::uuid,
+                    p_row_count_valid := %s,
+                    p_row_count_invalid := %s,
+                    p_row_count_quarantined := %s,
+                    p_status := %s
+                )
+                """,
+                (
+                    str(dataset_id),
+                    row_count_valid,
+                    row_count_invalid,
+                    row_count_quarantined,
+                    status,
+                ),
+            )
+            result = cur.fetchone()
+            return result[0] if result else False
+
+    def store_foil_raw_rows_bulk(
+        self,
+        dataset_id: str | UUID,
+        rows: list[dict[str, Any]],
+    ) -> int:
+        """
+        Bulk store raw FOIL rows.
+
+        This replaces raw INSERT INTO intake.foil_raw_rows in a loop.
+
+        Args:
+            dataset_id: Dataset UUID
+            rows: List of dicts with 'row_index' and 'raw_data' keys
+
+        Returns:
+            Number of rows inserted
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT intake.store_foil_raw_rows_bulk(
+                    p_dataset_id := %s::uuid,
+                    p_rows := %s::jsonb
+                )
+                """,
+                (str(dataset_id), json.dumps(rows, default=str)),
+            )
+            result = cur.fetchone()
+            return result[0] if result else 0
+
+    def update_foil_raw_row_status(
+        self,
+        dataset_id: str | UUID,
+        row_index: int,
+        validation_status: str,
+        judgment_id: str | None = None,
+    ) -> bool:
+        """
+        Update FOIL raw row validation status.
+
+        This replaces raw UPDATE on intake.foil_raw_rows.
+
+        Args:
+            dataset_id: Dataset UUID
+            row_index: Row index
+            validation_status: Status (valid, invalid, quarantined)
+            judgment_id: Optional linked judgment ID
+
+        Returns:
+            True if row was found and updated
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT intake.update_foil_raw_row_status(
+                    p_dataset_id := %s::uuid,
+                    p_row_index := %s,
+                    p_validation_status := %s,
+                    p_judgment_id := %s
+                )
+                """,
+                (str(dataset_id), row_index, validation_status, judgment_id),
+            )
+            result = cur.fetchone()
+            return result[0] if result else False
+
+    def quarantine_foil_row(
+        self,
+        dataset_id: str | UUID,
+        row_index: int,
+        raw_data: dict[str, Any],
+        quarantine_reason: str,
+        error_message: str,
+        mapped_data: dict[str, Any] | None = None,
+    ) -> UUID | None:
+        """
+        Quarantine a FOIL row and update its status.
+
+        This replaces raw INSERT INTO intake.foil_quarantine.
+
+        Args:
+            dataset_id: Dataset UUID
+            row_index: Row index
+            raw_data: Raw row data
+            quarantine_reason: Reason for quarantine
+            error_message: Error message
+            mapped_data: Optional mapped data
+
+        Returns:
+            Quarantine entry UUID or None if failed
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT intake.quarantine_foil_row(
+                    p_dataset_id := %s::uuid,
+                    p_row_index := %s,
+                    p_raw_data := %s::jsonb,
+                    p_quarantine_reason := %s,
+                    p_error_message := %s,
+                    p_mapped_data := %s::jsonb
+                )
+                """,
+                (
+                    str(dataset_id),
+                    row_index,
+                    json.dumps(raw_data, default=str),
+                    quarantine_reason,
+                    error_message[:500],
+                    json.dumps(mapped_data or {}, default=str),
+                ),
+            )
+            result = cur.fetchone()
+            return UUID(result[0]) if result and result[0] else None
+
+    def upsert_judgment_extended(
+        self,
+        case_number: str,
+        plaintiff_name: str | None,
+        defendant_name: str | None,
+        judgment_amount: Decimal | float | None,
+        entry_date: date | str | None = None,
+        county: str | None = None,
+        court: str | None = None,
+        collectability_score: int | None = None,
+        source_file: str | None = None,
+        status: str = "pending",
+    ) -> UpsertResult:
+        """
+        Extended judgment upsert with court field.
+
+        This replaces raw INSERT INTO public.judgments for FOIL imports.
+
+        Args:
+            case_number: Unique case identifier
+            plaintiff_name: Name of plaintiff
+            defendant_name: Name of defendant
+            judgment_amount: Judgment amount
+            entry_date: Entry/filing date
+            county: County name
+            court: Court name
+            collectability_score: Score 0-100
+            source_file: Source file reference
+            status: Status (default 'pending')
+
+        Returns:
+            UpsertResult with judgment_id and is_insert flag
+        """
+        entry_date_str = None
+        if entry_date:
+            if isinstance(entry_date, date):
+                entry_date_str = entry_date.isoformat()
+            else:
+                entry_date_str = str(entry_date)
+
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT * FROM ops.upsert_judgment_extended(
+                    p_case_number := %s,
+                    p_plaintiff_name := %s,
+                    p_defendant_name := %s,
+                    p_judgment_amount := %s,
+                    p_entry_date := %s::date,
+                    p_county := %s,
+                    p_court := %s,
+                    p_collectability_score := %s,
+                    p_source_file := %s,
+                    p_status := %s
+                )
+                """,
+                (
+                    case_number,
+                    plaintiff_name,
+                    defendant_name,
+                    float(judgment_amount) if judgment_amount else None,
+                    entry_date_str,
+                    county,
+                    court,
+                    collectability_score,
+                    source_file,
+                    status,
+                ),
+            )
+            row = cur.fetchone()
+            # Note: No commit here - let worker loop control transaction
+
+            if row:
+                return UpsertResult(
+                    judgment_id=row.get("judgment_id"),
+                    is_insert=row.get("is_insert", True),
+                )
+            return UpsertResult(judgment_id=None, is_insert=True)

@@ -17,6 +17,9 @@ Usage:
     # Run smoke test
     python -m tools.prod_smoke
 
+    # Show help (works without env vars)
+    python -m tools.prod_smoke --help
+
 Exit codes:
     0 - All checks passed
     1 - One or more checks failed (CI should fail)
@@ -24,6 +27,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from datetime import datetime, timezone
@@ -196,4 +200,21 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        prog="prod_smoke",
+        description="Dragonfly Civil – Production Smoke Test",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Verifies post-deployment:
+  1. Railway API health endpoint returns 200
+  2. Postgres connectivity via SUPABASE_DB_URL
+  3. Critical views are queryable
+
+Examples:
+  python -m tools.prod_smoke           # Run all smoke checks
+  python -m tools.prod_smoke --help    # Show this help
+""",
+    )
+    # Parse args first (allows --help to work without env vars)
+    parser.parse_args()
     sys.exit(main())

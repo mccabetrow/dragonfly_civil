@@ -36,7 +36,8 @@ from . import __version__  # noqa: E402
 from .config import get_settings  # noqa: E402
 from .dsn_sanitizer import DSNSanitizationError, sanitize_dsn  # noqa: E402
 
-settings = get_settings()
+# NOTE: settings is loaded lazily via get_settings() inside functions
+# to avoid triggering Pydantic validation at import time
 
 # ---------------------------------------------------------------------------
 # Pool Health State
@@ -79,6 +80,7 @@ def get_supabase_client() -> Client:
     """
     global _supabase_client
     if _supabase_client is None:
+        settings = get_settings()  # Lazy load
         logger.info("Creating Supabase client")
         # Cast HttpUrl to str for Pydantic v2 compatibility
         _supabase_client = create_client(
@@ -179,6 +181,8 @@ async def init_db_pool(app: Any | None = None) -> None:
 
     if _db_pool is not None:
         return
+
+    settings = get_settings()  # Lazy load
 
     if not settings.supabase_db_url:
         logger.warning("SUPABASE_DB_URL is not set; skipping DB init")

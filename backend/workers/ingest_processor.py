@@ -183,20 +183,19 @@ def _log_invalid_row(
     """Write a record into ops.intake_logs for invalid rows.
 
     This provides 'does not crash but logs' behavior for bad data.
+
+    Uses ops.log_intake_event RPC (SECURITY DEFINER) instead of raw SQL.
     """
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO ops.intake_logs (batch_id, level, message, raw_payload, created_at)
-                VALUES (%s, %s, %s, %s, now())
-                ON CONFLICT DO NOTHING
-                """,
-                (batch_id, "ERROR", error_message[:1000], json.dumps(raw_row, default=str)),
-            )
-            conn.commit()
+        rpc = RPCClient(conn)
+        rpc.log_intake_event(
+            message=error_message[:1000],
+            level="ERROR",
+            batch_id=batch_id,
+            raw_payload=raw_row,
+        )
     except Exception as e:
-        # Table might not exist yet - rollback and continue
+        # RPC might fail if function doesn't exist or DB issue - rollback and continue
         try:
             conn.rollback()
         except Exception:
@@ -529,8 +528,9 @@ def process_foil_frame(conn: psycopg.Connection, df: pd.DataFrame, batch_id: str
             logger.exception(f"FOIL bulk insert failed, falling back to row-by-row: {e}")
             # Fall through to row-by-row insert
 
-    # Row-by-row insert with full audit trail
+    # Row-by-row insert with full audit trail using RPC
     success_count = 0
+    rpc = RPCClient(conn)
     for idx, row in enumerate(valid_rows):
         try:
             # Log row received/validated
@@ -543,57 +543,25 @@ def process_foil_frame(conn: psycopg.Connection, df: pd.DataFrame, batch_id: str
             collectability_score = generate_collectability_score()
             insert_dict = row.to_insert_dict()
 
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO public.judgments (
-                        case_number,
-                        plaintiff_name,
-                        defendant_name,
-                        judgment_amount,
-                        entry_date,
-                        county,
-                        court,
-                        collectability_score,
-                        source_file,
-                        status,
-                        created_at
-                    )
-                    VALUES (
-                        %(case_number)s,
-                        %(plaintiff_name)s,
-                        %(defendant_name)s,
-                        %(judgment_amount)s,
-                        %(entry_date)s,
-                        %(county)s,
-                        %(court)s,
-                        %(collectability_score)s,
-                        %(source_file)s,
-                        'pending',
-                        now()
-                    )
-                    ON CONFLICT (case_number) DO UPDATE SET
-                        plaintiff_name = COALESCE(EXCLUDED.plaintiff_name, public.judgments.plaintiff_name),
-                        defendant_name = COALESCE(EXCLUDED.defendant_name, public.judgments.defendant_name),
-                        judgment_amount = EXCLUDED.judgment_amount,
-                        entry_date = COALESCE(EXCLUDED.entry_date, public.judgments.entry_date),
-                        county = COALESCE(EXCLUDED.county, public.judgments.county),
-                        court = COALESCE(EXCLUDED.court, public.judgments.court),
-                        collectability_score = EXCLUDED.collectability_score,
-                        updated_at = now()
-                    """,
-                    {
-                        **insert_dict,
-                        "collectability_score": collectability_score,
-                        "source_file": source_file,
-                    },
-                )
-            conn.commit()
+            # Use secure RPC instead of raw SQL
+            upsert_result = rpc.upsert_judgment_extended(
+                case_number=insert_dict.get("case_number", ""),
+                plaintiff_name=insert_dict.get("plaintiff_name"),
+                defendant_name=insert_dict.get("defendant_name"),
+                judgment_amount=insert_dict.get("judgment_amount"),
+                entry_date=insert_dict.get("entry_date"),
+                county=insert_dict.get("county"),
+                court=insert_dict.get("court"),
+                collectability_score=collectability_score,
+                source_file=source_file,
+                status="pending",
+            )
             success_count += 1
 
             # Log successful storage
             try:
-                reconciler.log_row_stored(batch_id, idx, None)
+                judgment_id = str(upsert_result.judgment_id) if upsert_result.judgment_id else None
+                reconciler.log_row_stored(batch_id, idx, judgment_id)
             except Exception:
                 pass
 
@@ -781,38 +749,20 @@ def _create_foil_dataset(
     column_count: int,
     detected_columns: list[str],
 ) -> str:
-    """Create a new intake.foil_datasets record."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO intake.foil_datasets (
-                dataset_name,
-                original_filename,
-                source_agency,
-                foil_request_number,
-                row_count_raw,
-                column_count,
-                detected_columns,
-                status,
-                mapping_started_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'mapping', now())
-            RETURNING id
-            """,
-            (
-                dataset_name,
-                original_filename,
-                source_agency,
-                foil_request_number,
-                row_count_raw,
-                column_count,
-                detected_columns,
-            ),
-        )
-        result = cur.fetchone()
-        conn.commit()
-        if result is None:
-            raise RuntimeError("Failed to insert into intake.foil_datasets")
-        return str(result[0])
+    """Create a new intake.foil_datasets record using RPC."""
+    rpc = RPCClient(conn)
+    dataset_id = rpc.create_foil_dataset(
+        dataset_name=dataset_name,
+        original_filename=original_filename,
+        source_agency=source_agency,
+        foil_request_number=foil_request_number,
+        row_count_raw=row_count_raw,
+        column_count=column_count,
+        detected_columns=detected_columns,
+    )
+    if dataset_id is None:
+        raise RuntimeError("Failed to create FOIL dataset via RPC")
+    return str(dataset_id)
 
 
 def _update_foil_dataset_mapping(
@@ -820,29 +770,16 @@ def _update_foil_dataset_mapping(
     dataset_id: str,
     mapping_result: Any,  # ColumnMappingResult
 ) -> None:
-    """Update dataset with column mapping results."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE intake.foil_datasets
-            SET column_mapping = %s,
-                column_mapping_reverse = %s,
-                unmapped_columns = %s,
-                mapping_confidence = %s,
-                required_fields_missing = %s,
-                mapping_completed_at = now()
-            WHERE id = %s
-            """,
-            (
-                json.dumps(mapping_result.raw_to_canonical),
-                json.dumps(mapping_result.canonical_to_raw),
-                mapping_result.unmapped_columns,
-                mapping_result.confidence,
-                mapping_result.required_missing,
-                dataset_id,
-            ),
-        )
-        conn.commit()
+    """Update dataset with column mapping results using RPC."""
+    rpc = RPCClient(conn)
+    rpc.update_foil_dataset_mapping(
+        dataset_id=dataset_id,
+        column_mapping=mapping_result.raw_to_canonical,
+        column_mapping_reverse=mapping_result.canonical_to_raw,
+        unmapped_columns=mapping_result.unmapped_columns,
+        mapping_confidence=mapping_result.confidence,
+        required_fields_missing=mapping_result.required_missing,
+    )
 
 
 def _update_foil_dataset_status(
@@ -851,19 +788,13 @@ def _update_foil_dataset_status(
     status: str,
     error_summary: str | None = None,
 ) -> None:
-    """Update dataset status."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE intake.foil_datasets
-            SET status = %s,
-                error_summary = COALESCE(%s, error_summary),
-                processing_started_at = CASE WHEN %s = 'processing' THEN now() ELSE processing_started_at END
-            WHERE id = %s
-            """,
-            (status, error_summary, status, dataset_id),
-        )
-        conn.commit()
+    """Update dataset status using RPC."""
+    rpc = RPCClient(conn)
+    rpc.update_foil_dataset_status(
+        dataset_id=dataset_id,
+        status=status,
+        error_summary=error_summary,
+    )
 
 
 def _update_foil_dataset_counts(
@@ -874,29 +805,15 @@ def _update_foil_dataset_counts(
     row_count_quarantined: int,
     status: str,
 ) -> None:
-    """Update dataset with final row counts."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE intake.foil_datasets
-            SET row_count_valid = %s,
-                row_count_invalid = %s,
-                row_count_quarantined = %s,
-                row_count_mapped = %s,
-                status = %s,
-                processed_at = now()
-            WHERE id = %s
-            """,
-            (
-                row_count_valid,
-                row_count_invalid,
-                row_count_quarantined,
-                row_count_valid + row_count_invalid,
-                status,
-                dataset_id,
-            ),
-        )
-        conn.commit()
+    """Update dataset with final row counts using RPC."""
+    rpc = RPCClient(conn)
+    rpc.finalize_foil_dataset(
+        dataset_id=dataset_id,
+        row_count_valid=row_count_valid,
+        row_count_invalid=row_count_invalid,
+        row_count_quarantined=row_count_quarantined,
+        status=status,
+    )
 
 
 def _store_foil_raw_rows(
@@ -904,18 +821,25 @@ def _store_foil_raw_rows(
     dataset_id: str,
     df: pd.DataFrame,
 ) -> None:
-    """Store raw CSV rows to intake.foil_raw_rows."""
-    with conn.cursor() as cur:
-        for idx, row in df.iterrows():
-            row_index = int(idx) if isinstance(idx, (int, float)) else 0
-            cur.execute(
-                """
-                INSERT INTO intake.foil_raw_rows (dataset_id, row_index, raw_data)
-                VALUES (%s, %s, %s)
-                """,
-                (dataset_id, row_index, json.dumps(row.to_dict(), default=str)),
-            )
-        conn.commit()
+    """Store raw CSV rows to intake.foil_raw_rows using bulk RPC."""
+    rpc = RPCClient(conn)
+
+    # Build rows array for bulk insert
+    rows = []
+    for idx, row in df.iterrows():
+        row_index = int(idx) if isinstance(idx, (int, float)) else 0
+        rows.append(
+            {
+                "row_index": row_index,
+                "raw_data": row.to_dict(),
+            }
+        )
+
+    # Bulk insert in batches of 500 to avoid payload size limits
+    batch_size = 500
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
+        rpc.store_foil_raw_rows_bulk(dataset_id=dataset_id, rows=batch)
 
 
 def _process_foil_rows(
@@ -960,52 +884,24 @@ def _process_foil_rows(
                 quarantine_count += 1
                 continue
 
-            # Insert into public.judgments
+            # Insert into public.judgments using secure RPC
             collectability_score = generate_collectability_score()
             source_file = f"foil-dataset:{dataset_id}"
 
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO public.judgments (
-                        case_number,
-                        plaintiff_name,
-                        defendant_name,
-                        judgment_amount,
-                        entry_date,
-                        county,
-                        court,
-                        collectability_score,
-                        source_file,
-                        status,
-                        created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', now())
-                    ON CONFLICT (case_number) DO UPDATE SET
-                        plaintiff_name = COALESCE(EXCLUDED.plaintiff_name, public.judgments.plaintiff_name),
-                        defendant_name = COALESCE(EXCLUDED.defendant_name, public.judgments.defendant_name),
-                        judgment_amount = EXCLUDED.judgment_amount,
-                        entry_date = COALESCE(EXCLUDED.entry_date, public.judgments.entry_date),
-                        county = COALESCE(EXCLUDED.county, public.judgments.county),
-                        court = COALESCE(EXCLUDED.court, public.judgments.court),
-                        updated_at = now()
-                    RETURNING id
-                    """,
-                    (
-                        mapped["case_number"],
-                        mapped.get("plaintiff_name"),
-                        mapped.get("defendant_name"),
-                        mapped.get("judgment_amount"),
-                        mapped.get("entry_date"),
-                        mapped.get("county"),
-                        mapped.get("court"),
-                        collectability_score,
-                        source_file,
-                    ),
-                )
-                result = cur.fetchone()
-                judgment_id = str(result[0]) if result else None
-
-            conn.commit()
+            rpc = RPCClient(conn)
+            upsert_result = rpc.upsert_judgment_extended(
+                case_number=mapped["case_number"],
+                plaintiff_name=mapped.get("plaintiff_name"),
+                defendant_name=mapped.get("defendant_name"),
+                judgment_amount=mapped.get("judgment_amount"),
+                entry_date=mapped.get("entry_date"),
+                county=mapped.get("county"),
+                court=mapped.get("court"),
+                collectability_score=collectability_score,
+                source_file=source_file,
+                status="pending",
+            )
+            judgment_id = str(upsert_result.judgment_id) if upsert_result.judgment_id else None
 
             # Update raw row status
             _update_foil_raw_row_status(conn, dataset_id, row_index, "valid", judgment_id)
@@ -1123,18 +1019,14 @@ def _update_foil_raw_row_status(
     status: str,
     judgment_id: str | None = None,
 ) -> None:
-    """Update raw row validation status."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE intake.foil_raw_rows
-            SET validation_status = %s,
-                judgment_id = %s
-            WHERE dataset_id = %s AND row_index = %s
-            """,
-            (status, judgment_id, dataset_id, row_index),
-        )
-        conn.commit()
+    """Update raw row validation status using RPC."""
+    rpc = RPCClient(conn)
+    rpc.update_foil_raw_row_status(
+        dataset_id=dataset_id,
+        row_index=row_index,
+        validation_status=status,
+        judgment_id=judgment_id,
+    )
 
 
 def _quarantine_foil_row(
@@ -1146,66 +1038,21 @@ def _quarantine_foil_row(
     error_message: str,
     mapped_data: dict[str, Any] | None = None,
 ) -> None:
-    """Add a row to the quarantine table."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO intake.foil_quarantine (
-                dataset_id,
-                row_index,
-                raw_data,
-                quarantine_reason,
-                error_message,
-                mapped_data
-            ) VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                dataset_id,
-                row_index,
-                json.dumps(raw_data, default=str),
-                reason,
-                error_message,
-                json.dumps(mapped_data or {}, default=str),
-            ),
-        )
-
-        # Update raw row status
-        cur.execute(
-            """
-            UPDATE intake.foil_raw_rows
-            SET validation_status = 'quarantined'
-            WHERE dataset_id = %s AND row_index = %s
-            """,
-            (dataset_id, row_index),
-        )
-        conn.commit()
+    """Add a row to the quarantine table using RPC."""
+    rpc = RPCClient(conn)
+    rpc.quarantine_foil_row(
+        dataset_id=dataset_id,
+        row_index=row_index,
+        raw_data=raw_data,
+        quarantine_reason=reason,
+        error_message=error_message,
+        mapped_data=mapped_data,
+    )
 
 
 # =============================================================================
 # Job Processing
 # =============================================================================
-
-
-def claim_pending_job(conn: psycopg.Connection) -> dict[str, Any] | None:
-    """
-    Claim a pending ingest_csv job using RPC.
-
-    Uses ops.claim_pending_job SECURITY DEFINER function instead of raw SQL.
-    Returns the job row dict, or None if no jobs available.
-    """
-    rpc = RPCClient(conn)
-    claimed = rpc.claim_pending_job(
-        job_types=[JOB_TYPE],
-        lock_timeout_minutes=LOCK_TIMEOUT_MINUTES,
-    )
-    if claimed:
-        return {
-            "id": str(claimed.job_id),
-            "job_type": claimed.job_type,
-            "payload": claimed.payload,
-            "attempts": claimed.attempts,
-        }
-    return None
 
 
 def mark_job_completed(conn: psycopg.Connection, job_id: str) -> None:
@@ -1349,79 +1196,55 @@ def insert_judgments(conn: psycopg.Connection, df: pd.DataFrame, batch_id: str) 
 
     inserted = 0
     errors = []
+    rpc = RPCClient(conn)
 
-    with conn.cursor() as cur:
-        for idx, row in df.iterrows():
-            try:
-                # Extract values with fallbacks
-                case_number = row.get("case_number", f"INTAKE-{batch_id[:8]}-{idx}")
-                plaintiff_name = row.get("plaintiff_name", "Unknown Plaintiff")
-                defendant_name = row.get("defendant_name", "Unknown Defendant")
+    for idx, row in df.iterrows():
+        try:
+            # Extract values with fallbacks
+            case_number = row.get("case_number", f"INTAKE-{batch_id[:8]}-{idx}")
+            plaintiff_name = row.get("plaintiff_name", "Unknown Plaintiff")
+            defendant_name = row.get("defendant_name", "Unknown Defendant")
 
-                # Handle numeric judgment amount
-                judgment_amount = row.get("judgment_amount")
-                if pd.isna(judgment_amount):
+            # Handle numeric judgment amount
+            judgment_amount = row.get("judgment_amount")
+            if pd.isna(judgment_amount):
+                judgment_amount = 0.0
+            else:
+                try:
+                    judgment_amount = float(str(judgment_amount).replace(",", "").replace("$", ""))
+                except (ValueError, TypeError):
                     judgment_amount = 0.0
-                else:
-                    try:
-                        judgment_amount = float(
-                            str(judgment_amount).replace(",", "").replace("$", "")
-                        )
-                    except (ValueError, TypeError):
-                        judgment_amount = 0.0
 
-                # Handle dates
-                entry_date = row.get("entry_date") or row.get("judgment_date")
-                if pd.notna(entry_date):
-                    try:
-                        entry_date = pd.to_datetime(entry_date).date()
-                    except Exception:
-                        entry_date = None
-                else:
+            # Handle dates
+            entry_date = row.get("entry_date") or row.get("judgment_date")
+            if pd.notna(entry_date):
+                try:
+                    entry_date = pd.to_datetime(entry_date).date()
+                except Exception:
                     entry_date = None
+            else:
+                entry_date = None
 
-                collectability_score = generate_collectability_score()
+            collectability_score = generate_collectability_score()
 
-                cur.execute(
-                    """
-                    INSERT INTO public.judgments (
-                        case_number,
-                        plaintiff_name,
-                        defendant_name,
-                        judgment_amount,
-                        entry_date,
-                        collectability_score,
-                        court,
-                        county,
-                        source_file,
-                        status,
-                        created_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', now()
-                    )
-                    ON CONFLICT (case_number) DO UPDATE SET
-                        collectability_score = EXCLUDED.collectability_score,
-                        updated_at = now()
-                    """,
-                    (
-                        str(case_number),
-                        str(plaintiff_name)[:500],
-                        str(defendant_name)[:500],
-                        judgment_amount,
-                        entry_date,
-                        collectability_score,
-                        row.get("court", None),
-                        row.get("county", None),
-                        f"batch:{batch_id}",
-                    ),
-                )
-                inserted += 1
+            # Use secure RPC instead of raw SQL
+            rpc.upsert_judgment_extended(
+                case_number=str(case_number),
+                plaintiff_name=str(plaintiff_name)[:500],
+                defendant_name=str(defendant_name)[:500],
+                judgment_amount=judgment_amount,
+                entry_date=entry_date,
+                county=row.get("county", None),
+                court=row.get("court", None),
+                collectability_score=collectability_score,
+                source_file=f"batch:{batch_id}",
+                status="pending",
+            )
+            inserted += 1
 
-            except Exception as e:
-                errors.append(f"Row {idx}: {str(e)[:100]}")
-                logger.warning(f"Failed to insert row {idx}: {e}")
-
-        conn.commit()
+        except Exception as e:
+            errors.append(f"Row {idx}: {str(e)[:100]}")
+            logger.warning(f"Failed to insert row {idx}: {e}")
 
     if errors:
         logger.warning(f"{len(errors)} rows failed during insert")
@@ -1432,6 +1255,9 @@ def insert_judgments(conn: psycopg.Connection, df: pd.DataFrame, batch_id: str) 
 def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     """
     Process a single ingest_csv job.
+
+    On success: return normally (bootstrap marks completed)
+    On failure: raise exception (bootstrap handles retry/DLQ)
 
     Expected payload:
     {
@@ -1458,61 +1284,48 @@ def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     )
 
     if not file_path:
-        error = "Missing file_path in job payload"
-        logger.error(f"[{run_id}] {error}")
-        mark_job_failed(conn, job_id, error)
         if batch_id:
-            update_batch_status(conn, batch_id, "failed", error_summary=error)
+            update_batch_status(conn, batch_id, "failed", error_summary="Missing file_path")
+        raise ValueError("Missing file_path in job payload")
+
+    # Load CSV from storage (includes file hash computation)
+    loaded = load_csv_from_storage(file_path)
+    df = loaded.df
+    file_hash = loaded.file_hash
+
+    logger.info(f"[{run_id}] File hash: {file_hash}")
+
+    # Check for duplicate imports (unless force=true)
+    if not force:
+        dup_check = check_duplicate_import(conn, file_hash, force=force)
+        if dup_check.is_duplicate:
+            error = f"Duplicate import detected: {dup_check.message}"
+            logger.warning(f"[{run_id}] {error}")
+            if batch_id:
+                update_batch_status(conn, batch_id, "failed", error_summary=error)
+            raise ValueError(error)
+
+    # Update batch with file hash
+    if batch_id and file_hash:
+        update_batch_file_hash(conn, batch_id, file_hash, force_reimport=force)
+
+    if df.empty:
+        logger.warning(f"[{run_id}] CSV is empty: {file_path}")
+        if batch_id:
+            update_batch_status(conn, batch_id, "completed", row_count_valid=0)
+        # Empty CSV is a success (no rows to process)
         return
 
-    try:
-        # Load CSV from storage (includes file hash computation)
-        loaded = load_csv_from_storage(file_path)
-        df = loaded.df
-        file_hash = loaded.file_hash
+    # Insert judgments
+    inserted = insert_judgments(conn, df, batch_id or job_id)
 
-        logger.info(f"[{run_id}] File hash: {file_hash}")
+    logger.info(f"[{run_id}] Inserted {inserted}/{len(df)} judgments")
 
-        # Check for duplicate imports (unless force=true)
-        if not force:
-            dup_check = check_duplicate_import(conn, file_hash, force=force)
-            if dup_check.is_duplicate:
-                error = f"Duplicate import detected: {dup_check.message}"
-                logger.warning(f"[{run_id}] {error}")
-                mark_job_failed(conn, job_id, error)
-                if batch_id:
-                    update_batch_status(conn, batch_id, "failed", error_summary=error)
-                return
+    if batch_id:
+        update_batch_status(conn, batch_id, "completed", row_count_valid=inserted)
 
-        # Update batch with file hash
-        if batch_id and file_hash:
-            update_batch_file_hash(conn, batch_id, file_hash, force_reimport=force)
-
-        if df.empty:
-            logger.warning(f"[{run_id}] CSV is empty: {file_path}")
-            mark_job_completed(conn, job_id)
-            if batch_id:
-                update_batch_status(conn, batch_id, "completed", row_count_valid=0)
-            return
-
-        # Insert judgments
-        inserted = insert_judgments(conn, df, batch_id or job_id)
-
-        logger.info(f"[{run_id}] Inserted {inserted}/{len(df)} judgments")
-
-        # Mark success
-        mark_job_completed(conn, job_id)
-        if batch_id:
-            update_batch_status(conn, batch_id, "completed", row_count_valid=inserted)
-
-        logger.info(f"[{run_id}] Job {job_id} completed successfully")
-
-    except Exception as e:
-        error_msg = str(e)[:500]
-        logger.exception(f"[{run_id}] Job {job_id} failed: {e}")
-        mark_job_failed(conn, job_id, error_msg)
-        if batch_id:
-            update_batch_status(conn, batch_id, "failed", error_summary=error_msg)
+    logger.info(f"[{run_id}] Job {job_id} completed successfully")
+    # Return normally - bootstrap will mark completed
 
 
 # =============================================================================
@@ -1531,11 +1344,6 @@ def _job_processor(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     process_job(conn, job)
 
 
-def _job_claimer(conn: psycopg.Connection) -> dict[str, Any] | None:
-    """Claim a pending ingest job."""
-    return claim_pending_job(conn)
-
-
 # =============================================================================
 # Entry Point
 # =============================================================================
@@ -1548,5 +1356,7 @@ if __name__ == "__main__":
         worker_type="ingest_processor",
         job_types=[JOB_TYPE],
         poll_interval=POLL_INTERVAL_SECONDS,
+        lock_timeout_minutes=LOCK_TIMEOUT_MINUTES,
     )
-    bootstrap.run(_job_processor, _job_claimer)
+    # Use default job_claimer which correctly passes worker_id to RPC
+    bootstrap.run(_job_processor)

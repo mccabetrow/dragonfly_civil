@@ -660,6 +660,316 @@ def check_db_connectivity(env: str, skip: bool = False) -> CheckResult:
         )
 
 
+def check_current_user(env: str, skip: bool = False) -> CheckResult:
+    """
+    Verify current_user matches expected role for the environment.
+
+    Expected roles:
+    - prod: postgres, dragonfly_app, dragonfly_worker, or authenticated
+    - dev: postgres or the service role is acceptable
+    """
+    if skip:
+        return CheckResult(
+            name="DB Role Check",
+            passed=True,
+            message="Skipped by user request",
+            skipped=True,
+        )
+
+    logger.info("Checking database current_user role...")
+
+    # Expected roles that are acceptable
+    expected_roles = {
+        "postgres",
+        "dragonfly_app",
+        "dragonfly_worker",
+        "dragonfly_readonly",
+        "authenticated",
+        "service_role",
+    }
+
+    try:
+        db_url = get_supabase_db_url(env)
+
+        with psycopg.connect(db_url, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT current_user, session_user, current_database()")
+                row = cur.fetchone()
+                current_user = row[0]
+                session_user = row[1]
+                current_db = row[2]
+
+                if current_user in expected_roles:
+                    return CheckResult(
+                        name="DB Role Check",
+                        passed=True,
+                        message=f"Connected as '{current_user}' (session: {session_user})",
+                        details={
+                            "current_user": current_user,
+                            "session_user": session_user,
+                            "database": current_db,
+                        },
+                    )
+                else:
+                    return CheckResult(
+                        name="DB Role Check",
+                        passed=False,
+                        message=f"Unexpected role '{current_user}'",
+                        remediation=f"Connection using unknown role. Expected one of: {expected_roles}",
+                        details={
+                            "current_user": current_user,
+                            "expected_roles": list(expected_roles),
+                        },
+                    )
+
+    except psycopg.OperationalError as e:
+        return CheckResult(
+            name="DB Role Check",
+            passed=False,
+            message=f"Connection failed: {e}",
+            remediation="Check SUPABASE_DB_URL env var",
+        )
+    except Exception as e:
+        return CheckResult(
+            name="DB Role Check",
+            passed=False,
+            message=f"Error: {e}",
+        )
+
+
+def check_worker_rpc_capability(env: str, skip: bool = False) -> CheckResult:
+    """
+    Verify worker RPC functions are callable (read-only test).
+
+    Tests that critical SECURITY DEFINER RPCs exist and are executable:
+    - ops.claim_pending_job (via dry-run with empty job types)
+    - ops.register_heartbeat (function signature check only)
+
+    This is a safe, read-only check - it doesn't actually claim jobs or write heartbeats.
+    """
+    if skip:
+        return CheckResult(
+            name="Worker RPC Capability",
+            passed=True,
+            message="Skipped by user request",
+            skipped=True,
+        )
+
+    logger.info("Checking worker RPC capability...")
+
+    try:
+        db_url = get_supabase_db_url(env)
+
+        with psycopg.connect(db_url, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                rpc_results = {}
+
+                # Test 1: Check claim_pending_job exists and is callable
+                # Use empty job_types array - will return NULL but proves RPC works
+                try:
+                    cur.execute(
+                        """
+                        SELECT ops.claim_pending_job(
+                            p_job_types := ARRAY[]::TEXT[],
+                            p_lock_timeout_minutes := 1
+                        )
+                        """
+                    )
+                    cur.fetchone()
+                    rpc_results["claim_pending_job"] = "OK"
+                except Exception as e:
+                    error_str = str(e)
+                    if "permission denied" in error_str.lower():
+                        rpc_results["claim_pending_job"] = "PERMISSION_DENIED"
+                    elif "does not exist" in error_str.lower():
+                        rpc_results["claim_pending_job"] = "NOT_FOUND"
+                    else:
+                        rpc_results["claim_pending_job"] = f"ERROR: {error_str[:50]}"
+
+                # Test 2: Check register_heartbeat exists (signature check via pg_proc)
+                try:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM pg_proc p
+                        JOIN pg_namespace n ON p.pronamespace = n.oid
+                        WHERE n.nspname = 'ops'
+                          AND p.proname = 'register_heartbeat'
+                        """
+                    )
+                    count = cur.fetchone()[0]
+                    if count > 0:
+                        rpc_results["register_heartbeat"] = "OK"
+                    else:
+                        rpc_results["register_heartbeat"] = "NOT_FOUND"
+                except Exception as e:
+                    rpc_results["register_heartbeat"] = f"ERROR: {str(e)[:50]}"
+
+                # Test 3: Check queue_job exists
+                try:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM pg_proc p
+                        JOIN pg_namespace n ON p.pronamespace = n.oid
+                        WHERE n.nspname = 'ops'
+                          AND p.proname = 'queue_job'
+                        """
+                    )
+                    count = cur.fetchone()[0]
+                    if count > 0:
+                        rpc_results["queue_job"] = "OK"
+                    else:
+                        rpc_results["queue_job"] = "NOT_FOUND"
+                except Exception as e:
+                    rpc_results["queue_job"] = f"ERROR: {str(e)[:50]}"
+
+                # Evaluate results
+                failed_rpcs = [k for k, v in rpc_results.items() if v != "OK"]
+
+                if failed_rpcs:
+                    return CheckResult(
+                        name="Worker RPC Capability",
+                        passed=False,
+                        message=f"RPC check failed: {', '.join(failed_rpcs)}",
+                        remediation="Apply migrations to create missing RPCs: ./scripts/db_push.ps1",
+                        details=rpc_results,
+                    )
+
+                return CheckResult(
+                    name="Worker RPC Capability",
+                    passed=True,
+                    message="All worker RPCs available and callable",
+                    details=rpc_results,
+                )
+
+    except psycopg.OperationalError as e:
+        return CheckResult(
+            name="Worker RPC Capability",
+            passed=False,
+            message=f"Connection failed: {e}",
+            remediation="Check database connectivity first",
+        )
+    except Exception as e:
+        return CheckResult(
+            name="Worker RPC Capability",
+            passed=False,
+            message=f"Error: {e}",
+        )
+
+
+def check_schema_drift(env: str, skip: bool = False) -> CheckResult:
+    """
+    Check for schema drift by comparing expected views against production.
+
+    Uses synchronous queries to check that critical views exist in the database.
+    """
+    if skip:
+        return CheckResult(
+            name="Schema Drift",
+            passed=True,
+            message="Skipped by user request",
+            skipped=True,
+        )
+
+    logger.info("Checking for schema drift...")
+
+    # Critical views that must exist
+    critical_views = [
+        "public.v_plaintiffs_overview",
+        "public.v_judgment_pipeline",
+        "public.v_enforcement_overview",
+        "public.v_enforcement_recent",
+        "public.v_plaintiff_call_queue",
+    ]
+
+    try:
+        db_url = get_supabase_db_url(env)
+
+        with psycopg.connect(db_url, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                # Get all views in monitored schemas
+                cur.execute(
+                    """
+                    SELECT table_schema || '.' || table_name AS view_name
+                    FROM information_schema.views
+                    WHERE table_schema IN ('public', 'ops', 'enforcement', 'analytics')
+                    """
+                )
+                existing_views = {row[0].lower() for row in cur.fetchall()}
+
+                # Check for missing critical views
+                missing_views = []
+                for view in critical_views:
+                    if view.lower() not in existing_views:
+                        missing_views.append(view)
+
+                if missing_views:
+                    return CheckResult(
+                        name="Schema Drift",
+                        passed=False,
+                        message=f"Missing {len(missing_views)} critical view(s)",
+                        remediation="Run migrations or recovery: ./scripts/db_push.ps1 && python -m tools.schema_repair",
+                        details={
+                            "missing_views": missing_views,
+                            "existing_view_count": len(existing_views),
+                        },
+                    )
+
+                # Also check critical RPC functions exist
+                cur.execute(
+                    """
+                    SELECT n.nspname || '.' || p.proname AS func_name
+                    FROM pg_proc p
+                    JOIN pg_namespace n ON p.pronamespace = n.oid
+                    WHERE n.nspname = 'ops'
+                      AND p.proname IN ('claim_pending_job', 'register_heartbeat', 'queue_job', 'upsert_judgment')
+                    """
+                )
+                existing_funcs = {row[0].lower() for row in cur.fetchall()}
+
+                expected_funcs = [
+                    "ops.claim_pending_job",
+                    "ops.register_heartbeat",
+                    "ops.queue_job",
+                ]
+                missing_funcs = [f for f in expected_funcs if f.lower() not in existing_funcs]
+
+                if missing_funcs:
+                    return CheckResult(
+                        name="Schema Drift",
+                        passed=False,
+                        message=f"Missing {len(missing_funcs)} critical RPC function(s)",
+                        remediation="Apply security migration: ./scripts/db_push.ps1",
+                        details={
+                            "missing_functions": missing_funcs,
+                            "views_ok": True,
+                        },
+                    )
+
+                return CheckResult(
+                    name="Schema Drift",
+                    passed=True,
+                    message=f"No drift detected ({len(critical_views)} views, {len(expected_funcs)} RPCs verified)",
+                    details={
+                        "verified_views": len(critical_views),
+                        "verified_funcs": len(expected_funcs),
+                    },
+                )
+
+    except psycopg.OperationalError as e:
+        return CheckResult(
+            name="Schema Drift",
+            passed=False,
+            message=f"Connection failed: {e}",
+            remediation="Check database connectivity first",
+        )
+    except Exception as e:
+        return CheckResult(
+            name="Schema Drift",
+            passed=False,
+            message=f"Error: {e}",
+        )
+
+
 def check_migrations(env: str, skip: bool = False) -> CheckResult:
     """Check for pending migrations."""
     if skip:
@@ -748,6 +1058,10 @@ def run_dev_gate(skips: set[str]) -> GateReport:
     - Import graph (all modules load)
     - Lint (critical errors only)
     - AI Evaluator (optional)
+    - DB connectivity
+    - Current user role
+    - Worker RPC capability
+    - Schema drift
     """
     env = get_supabase_env()
 
@@ -757,14 +1071,17 @@ def run_dev_gate(skips: set[str]) -> GateReport:
         environment=env,
     )
 
-    # Dev checks
+    # Dev checks - code correctness
     report.add(check_pytest("pytest" in skips))
     report.add(check_import_graph("imports" in skips))
     report.add(check_lint("lint" in skips))
     report.add(check_evaluator("evaluator" in skips))
 
-    # DB connectivity check (for dev environment)
+    # Dev checks - database
     report.add(check_db_connectivity(env, "db" in skips))
+    report.add(check_current_user(env, "role" in skips))
+    report.add(check_worker_rpc_capability(env, "rpc" in skips))
+    report.add(check_schema_drift(env, "drift" in skips))
 
     report.finalize()
     return report
@@ -775,10 +1092,13 @@ def run_prod_gate(skips: set[str]) -> GateReport:
     Prod gate: Strict production blockers.
 
     Checks:
+    - DB connectivity (can open connection)
+    - Current user role (expected role for env)
+    - Worker RPC capability (claim job, heartbeat via RPC)
+    - Migration status (none pending)
+    - Schema drift (critical views/functions exist)
     - API health (200 OK)
     - Worker heartbeats (online)
-    - DB connectivity
-    - Migration status (none pending)
     - AI Evaluator pass rate
     """
     env = "prod"  # Always check prod for prod gate
@@ -789,11 +1109,16 @@ def run_prod_gate(skips: set[str]) -> GateReport:
         environment=env,
     )
 
-    # Production checks
+    # Production checks - database first (fail fast)
+    report.add(check_db_connectivity(env, "db" in skips))
+    report.add(check_current_user(env, "role" in skips))
+    report.add(check_worker_rpc_capability(env, "rpc" in skips))
+    report.add(check_migrations(env, "migrations" in skips))
+    report.add(check_schema_drift(env, "drift" in skips))
+
+    # Production checks - runtime
     report.add(check_api_health(env, "api" in skips))
     report.add(check_worker_heartbeats(env, "workers" in skips))
-    report.add(check_db_connectivity(env, "db" in skips))
-    report.add(check_migrations(env, "migrations" in skips))
     report.add(check_evaluator("evaluator" in skips))
 
     report.finalize()
@@ -815,6 +1140,7 @@ Examples:
   python -m tools.prod_gate --mode prod         # Prod deployment checks
   python -m tools.prod_gate --mode prod --json  # JSON output for CI
   python -m tools.prod_gate --mode dev --skip evaluator pytest
+  python -m tools.prod_gate --mode prod --skip api workers  # DB checks only
 """,
     )
     parser.add_argument(
@@ -832,7 +1158,19 @@ Examples:
         "--skip",
         nargs="+",
         default=[],
-        choices=["pytest", "imports", "lint", "evaluator", "api", "workers", "db", "migrations"],
+        choices=[
+            "pytest",
+            "imports",
+            "lint",
+            "evaluator",  # Dev checks
+            "api",
+            "workers",
+            "db",
+            "migrations",  # Prod checks
+            "role",
+            "rpc",
+            "drift",  # New checks
+        ],
         help="Skip specific checks",
     )
     # Legacy --env flag for backwards compatibility

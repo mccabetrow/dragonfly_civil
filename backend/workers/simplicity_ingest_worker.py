@@ -10,6 +10,13 @@ Uses the 3-step pipeline:
 
 Polls for jobs with job_type = 'simplicity_ingest' and status = 'pending'.
 
+Architecture:
+    Inherits from WorkerBootstrap to get:
+    - Signal handling for graceful shutdown
+    - Exponential backoff on transient failures
+    - Heartbeat status transitions (via RPCClient)
+    - Automatic transaction rollback on errors
+
 Usage:
     python -m backend.workers.simplicity_ingest_worker
 
@@ -23,13 +30,11 @@ import io
 import logging
 import os
 import sys
-import time
 from typing import Any
 from uuid import uuid4
 
 import pandas as pd
 import psycopg
-from psycopg.rows import dict_row
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -40,9 +45,9 @@ from backend.services.simplicity_mapper import (
     is_simplicity_format,
     process_simplicity_batch,
 )
+from backend.workers.bootstrap import WorkerBootstrap
 from backend.workers.db_connect import get_safe_application_name
 from backend.workers.rpc_client import RPCClient
-from src.core_config import log_startup_diagnostics
 from src.supabase_client import create_supabase_client, get_supabase_db_url, get_supabase_env
 
 # Configure logging (INFO->stdout, WARNING+->stderr)
@@ -52,30 +57,6 @@ logger = configure_worker_logging("simplicity_ingest_worker")
 POLL_INTERVAL_SECONDS = 2.0
 LOCK_TIMEOUT_MINUTES = 30
 JOB_TYPE = "simplicity_ingest"
-
-
-# =============================================================================
-# Job Queue Management (via SECURITY DEFINER RPCs)
-# =============================================================================
-
-
-def claim_pending_job(rpc: RPCClient) -> dict[str, Any] | None:
-    """
-    Claim a pending simplicity_ingest job using ops.claim_pending_job RPC.
-
-    Returns the job row dict, or None if no jobs available.
-    """
-    return rpc.claim_pending_job(job_type=JOB_TYPE, lock_timeout_minutes=LOCK_TIMEOUT_MINUTES)
-
-
-def mark_job_completed(rpc: RPCClient, job_id: str) -> None:
-    """Mark a job as completed via ops.update_job_status RPC."""
-    rpc.update_job_status(job_id=job_id, status="completed")
-
-
-def mark_job_failed(rpc: RPCClient, job_id: str, error: str) -> None:
-    """Mark a job as failed with error message via ops.update_job_status RPC."""
-    rpc.update_job_status(job_id=job_id, status="failed", error_message=error[:2000])
 
 
 # =============================================================================
@@ -134,9 +115,15 @@ def load_csv_from_storage(file_path: str) -> pd.DataFrame:
 # =============================================================================
 
 
-def process_job(conn: psycopg.Connection, rpc: RPCClient, job: dict[str, Any]) -> None:
+def process_job(conn: psycopg.Connection, job: dict[str, Any]) -> None:
     """
     Process a single simplicity_ingest job.
+
+    This function is passed to WorkerBootstrap.run() as the job_processor.
+    Signature matches: (conn, job_dict) -> None
+
+    On success: return normally (bootstrap marks completed)
+    On failure: raise exception (bootstrap handles retry/DLQ)
 
     Expected payload:
     {
@@ -154,107 +141,66 @@ def process_job(conn: psycopg.Connection, rpc: RPCClient, job: dict[str, Any]) -
     logger.info(f"[{run_id}] Processing job {job_id}: file_path={file_path}")
 
     if not file_path:
-        error = "Missing file_path in job payload"
-        logger.error(f"[{run_id}] {error}")
-        mark_job_failed(rpc, job_id, error)
+        raise ValueError("Missing file_path in job payload")
+
+    # Load CSV from storage
+    df = load_csv_from_storage(file_path)
+
+    if df.empty:
+        logger.warning(f"[{run_id}] CSV is empty: {file_path}")
+        # Empty CSV is a success (no rows to process)
         return
 
-    try:
-        # Load CSV from storage
-        df = load_csv_from_storage(file_path)
+    # Validate format
+    if not is_simplicity_format(df):
+        raise ValueError(f"CSV does not match Simplicity format. Columns: {list(df.columns)}")
 
-        if df.empty:
-            logger.warning(f"[{run_id}] CSV is empty: {file_path}")
-            mark_job_completed(rpc, job_id)
-            return
+    # Process through 3-step pipeline
+    filename = file_path.split("/")[-1] if "/" in file_path else file_path
+    result: BatchResult = process_simplicity_batch(conn, df, filename, source_reference)
 
-        # Validate format
-        if not is_simplicity_format(df):
-            error = f"CSV does not match Simplicity format. Columns: {list(df.columns)}"
-            logger.error(f"[{run_id}] {error}")
-            mark_job_failed(rpc, job_id, error)
-            return
+    # Log result
+    logger.info(
+        f"[{run_id}] Batch {result.batch_id[:8]} complete: "
+        f"{result.inserted_rows}/{result.total_rows} inserted, "
+        f"{result.invalid_rows} invalid, {result.duplicate_rows} duplicates"
+    )
 
-        # Process through 3-step pipeline
-        filename = file_path.split("/")[-1] if "/" in file_path else file_path
-        result: BatchResult = process_simplicity_batch(conn, df, filename, source_reference)
+    if result.error_summary:
+        raise RuntimeError(result.error_summary)
 
-        # Log result
-        logger.info(
-            f"[{run_id}] Batch {result.batch_id[:8]} complete: "
-            f"{result.inserted_rows}/{result.total_rows} inserted, "
-            f"{result.invalid_rows} invalid, {result.duplicate_rows} duplicates"
-        )
-
-        if result.error_summary:
-            mark_job_failed(rpc, job_id, result.error_summary)
-        else:
-            mark_job_completed(rpc, job_id)
-
-        logger.info(f"[{run_id}] Job {job_id} completed")
-
-    except Exception as e:
-        error_msg = str(e)[:500]
-        logger.exception(f"[{run_id}] Job {job_id} failed: {e}")
-        mark_job_failed(rpc, job_id, error_msg)
+    logger.info(f"[{run_id}] Job {job_id} completed")
 
 
 # =============================================================================
-# Worker Loop
+# Worker Bootstrap Entry Point
 # =============================================================================
 
 
-def run_worker_loop() -> None:
+def run_worker() -> int:
     """
-    Main worker loop - polls for pending simplicity_ingest jobs.
+    Run the Simplicity Ingest Worker using WorkerBootstrap.
+
+    WorkerBootstrap provides:
+    - Signal handling for graceful shutdown
+    - Exponential backoff on transient failures
+    - Heartbeat management (via RPCClient.register_heartbeat)
+    - Automatic transaction rollback on errors
+    - Crash loop protection
+
+    Returns:
+        Exit code (0 for clean shutdown, non-zero for errors)
     """
-    # Emit startup diagnostics for Railway/production traceability
-    log_startup_diagnostics("simplicity_ingest_worker")
+    bootstrap = WorkerBootstrap(
+        worker_type="simplicity_ingest_worker",
+        job_types=[JOB_TYPE],
+        poll_interval=POLL_INTERVAL_SECONDS,
+        heartbeat_interval=30.0,
+        lock_timeout_minutes=LOCK_TIMEOUT_MINUTES,
+    )
 
-    env = get_supabase_env()
-    dsn = get_supabase_db_url(env)
-
-    logger.info(f"🚀 Starting Simplicity Ingest Worker (env={env})")
-    logger.info(f"   Poll interval: {POLL_INTERVAL_SECONDS}s")
-    logger.info(f"   Job type: {JOB_TYPE}")
-
-    app_name = get_safe_application_name("simplicity_ingest")
-    conn = psycopg.connect(dsn, application_name=app_name)
-    rpc = RPCClient(conn)
-
-    try:
-        while True:
-            try:
-                job = claim_pending_job(rpc)
-
-                if job:
-                    logger.info(f"Claimed job: {job['id']}")
-                    process_job(conn, rpc, job)
-                else:
-                    time.sleep(POLL_INTERVAL_SECONDS)
-
-            except psycopg.OperationalError as e:
-                logger.error(f"Database connection error: {e}")
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                time.sleep(5)
-                app_name = get_safe_application_name("simplicity_ingest")
-                conn = psycopg.connect(dsn, application_name=app_name)
-                rpc = RPCClient(conn)
-
-            except KeyboardInterrupt:
-                logger.info("Worker interrupted by user")
-                break
-
-            except Exception as e:
-                logger.exception(f"Unexpected error in worker loop: {e}")
-                time.sleep(POLL_INTERVAL_SECONDS)
-
-    finally:
-        conn.close()
-        logger.info("Worker shutdown complete")
+    # Use default job_claimer which correctly passes worker_id to RPC
+    return bootstrap.run(job_processor=process_job)
 
 
 # =============================================================================
@@ -316,11 +262,7 @@ def process_csv_file(
 
 if __name__ == "__main__":
     import argparse
-
-    # Preflight validation - MUST be first (before arg parsing to catch env issues early)!
-    from backend.preflight import validate_worker_env
-
-    validate_worker_env("simplicity_ingest_worker")
+    import sys
 
     parser = argparse.ArgumentParser(description="Simplicity Ingest Worker")
     parser.add_argument(
@@ -364,21 +306,46 @@ if __name__ == "__main__":
             print(f"Error:       {result.error_summary}")
         print(f"{'='*60}")
     elif args.once:
-        # Single job mode
+        # Single job mode - claim with worker_id for traceability
+        import socket
+
         env = get_supabase_env()
         dsn = get_supabase_db_url(env)
         app_name = get_safe_application_name("simplicity_once")
+        worker_id = f"simplicity_once_{socket.gethostname()}_{os.getpid()}"
         conn = psycopg.connect(dsn, application_name=app_name)
-        rpc = RPCClient(conn)
         try:
-            job = claim_pending_job(rpc)
-            if job:
-                logger.info(f"Processing job: {job['id']}")
-                process_job(conn, rpc, job)
+            rpc = RPCClient(conn)
+            claimed = rpc.claim_pending_job(
+                job_types=[JOB_TYPE],
+                lock_timeout_minutes=LOCK_TIMEOUT_MINUTES,
+                worker_id=worker_id,
+            )
+            if claimed:
+                job = {
+                    "id": str(claimed.job_id),
+                    "job_type": claimed.job_type,
+                    "payload": claimed.payload,
+                    "attempts": claimed.attempts,
+                }
+                logger.info(f"Processing job: {job['id']} (worker: {worker_id})")
+                try:
+                    process_job(conn, job)
+                    rpc.update_job_status(job_id=job["id"], status="completed")
+                    logger.info(f"Job {job['id']} completed")
+                except Exception as e:
+                    error_msg = str(e)[:500]
+                    logger.exception(f"Job {job['id']} failed: {e}")
+                    rpc.update_job_status(
+                        job_id=job["id"],
+                        status="failed",
+                        error=error_msg,
+                    )
             else:
                 logger.info("No pending jobs found")
         finally:
             conn.close()
     else:
-        # Worker loop mode
-        run_worker_loop()
+        # Worker loop mode using WorkerBootstrap
+        exit_code = run_worker()
+        sys.exit(exit_code)

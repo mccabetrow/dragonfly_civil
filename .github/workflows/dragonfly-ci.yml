@@ -88,6 +88,17 @@ jobs:
         run: |
           psql "$SUPABASE_DB_URL" -f supabase/schema.sql
 
+      - name: Run tools.doctor (contract + health gate)
+        run: python -m tools.doctor --env dev
+
+      - name: Run RPC contract compliance tests
+        env:
+          SUPABASE_URL: "https://placeholder.supabase.co"
+          SUPABASE_SERVICE_ROLE_KEY: "placeholder-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          SUPABASE_DB_URL: "${{ env.SUPABASE_DB_URL }}"
+          SUPABASE_PROJECT_REF: "placeholder"
+        run: python -m pytest tests/test_worker_rpc_contract.py -v --tb=short
+
       - name: Run config_check (dev)
         run: python -m tools.config_check --env dev
 

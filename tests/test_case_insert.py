@@ -17,8 +17,10 @@ from typing import Any
 import pytest
 
 from src.supabase_client import create_supabase_client
+from tests.helpers import execute_resilient
 
-pytestmark = pytest.mark.legacy  # Requires RPC/schema not always available
+# Mark as integration (PostgREST) + legacy (optional schema)
+pytestmark = [pytest.mark.integration, pytest.mark.legacy]
 
 
 def _ensure_supabase_credentials() -> tuple[Any, str]:
@@ -50,7 +52,9 @@ def _insert_judgment(client: Any, payload: dict[str, Any]) -> dict[str, Any] | N
     Uses ON CONFLICT to be idempotent on case_number.
     Returns the inserted/existing row.
     """
-    response = client.table("judgments").upsert(payload, on_conflict="case_number").execute()
+    response = execute_resilient(
+        lambda: client.table("judgments").upsert(payload, on_conflict="case_number").execute()
+    )
     data = getattr(response, "data", None)
     if data and len(data) > 0:
         return data[0]
@@ -59,12 +63,14 @@ def _insert_judgment(client: Any, payload: dict[str, Any]) -> dict[str, Any] | N
 
 def _fetch_judgment_by_case_number(client: Any, case_number: str) -> dict[str, Any] | None:
     """Fetch a judgment by case_number."""
-    response = (
-        client.table("judgments")
-        .select("id, case_number, plaintiff_name, defendant_name, judgment_amount")
-        .eq("case_number", case_number)
-        .limit(1)
-        .execute()
+    response = execute_resilient(
+        lambda: (
+            client.table("judgments")
+            .select("id, case_number, plaintiff_name, defendant_name, judgment_amount")
+            .eq("case_number", case_number)
+            .limit(1)
+            .execute()
+        )
     )
     data = getattr(response, "data", None)
     if data and len(data) > 0:

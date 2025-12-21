@@ -37,7 +37,8 @@ from ..db import get_pool
 
 logger = get_logger(__name__)
 
-settings = get_settings()
+# NOTE: settings loaded lazily via get_settings() inside functions
+# to avoid triggering Pydantic validation at import time
 
 
 # ---------------------------------------------------------------------------

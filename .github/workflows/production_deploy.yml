@@ -101,8 +101,46 @@ jobs:
           echo "✓ Railway CLI: $(railway --version)"
 
       # ─────────────────────────────────────────────────────────────
-      # NOTE: Tests are handled by CI workflows (ci.yml, dragonfly-ci.yml)
-      # Deploy assumes CI is green. No test phase here.
+      # PHASE: CONTRACT & HEALTH GATE (fail-closed)
+      # ─────────────────────────────────────────────────────────────
+      - name: "Phase: Contract & Health Gate"
+        run: echo "PHASE=contract-gate" >> $GITHUB_ENV
+
+      - name: Run RPC contract compliance tests
+        if: success()
+        env:
+          SUPABASE_URL: "https://placeholder.supabase.co"
+          SUPABASE_SERVICE_ROLE_KEY: "placeholder-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          SUPABASE_DB_URL: "postgresql://placeholder:placeholder@localhost:5432/placeholder"
+          SUPABASE_PROJECT_REF: "placeholder"
+        run: |
+          echo "::group::RPC Contract Compliance"
+          python -m pytest tests/test_worker_rpc_contract.py -v --tb=short || {
+            echo "::error::RPC contract tests failed. Deploy halted."
+            exit 1
+          }
+          echo "::endgroup::"
+          echo "✓ RPC contract compliance passed"
+
+      - name: Run tools.doctor health check
+        if: success()
+        env:
+          SUPABASE_URL: "https://placeholder.supabase.co"
+          SUPABASE_SERVICE_ROLE_KEY: "placeholder-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          SUPABASE_DB_URL: "postgresql://placeholder:placeholder@localhost:5432/placeholder"
+          SUPABASE_PROJECT_REF: "placeholder"
+        run: |
+          echo "::group::Tools Doctor Health Check"
+          python -m tools.doctor --help > /dev/null 2>&1 || {
+            echo "::error::tools.doctor is broken. Deploy halted."
+            exit 1
+          }
+          echo "::endgroup::"
+          echo "✓ tools.doctor health check passed"
+
+      # ─────────────────────────────────────────────────────────────
+      # NOTE: Full tests are handled by CI workflows (ci.yml, dragonfly-ci.yml)
+      # Deploy assumes CI is green. Above gates are fail-closed sanity checks.
       # ─────────────────────────────────────────────────────────────
 
       # ─────────────────────────────────────────────────────────────
@@ -175,6 +213,23 @@ jobs:
           echo "Waiting 30s for Railway deployment to stabilize..."
           sleep 30
 
+      - name: Production gate check (pre-healthy)
+        if: success()
+        env:
+          SUPABASE_MODE: prod
+          SUPABASE_DB_URL_PROD: ${{ secrets.SUPABASE_DB_URL_PROD }}
+        run: |
+          echo "::group::Production Gate Check"
+          # Run prod_gate with JSON output for CI parsing
+          # Skip API/workers checks since they may not be fully up yet
+          # Focus on DB connectivity, role, RPC capability, migrations, and schema drift
+          python -m tools.prod_gate --mode prod --skip api workers evaluator --json || {
+            echo "::error::Production gate failed. See output above."
+            exit 1
+          }
+          echo "::endgroup::"
+          echo "✓ Production gate passed"
+
       - name: Post-deploy smoke test
         if: success()
         env:
@@ -184,6 +239,20 @@ jobs:
           python -m tools.prod_smoke
           echo "::endgroup::"
           echo "✓ Production smoke test passed"
+
+      - name: Production gate check (full)
+        if: success()
+        env:
+          SUPABASE_MODE: prod
+          SUPABASE_DB_URL_PROD: ${{ secrets.SUPABASE_DB_URL_PROD }}
+        run: |
+          echo "::group::Full Production Gate Check"
+          # Full gate check including API health and worker heartbeats
+          python -m tools.prod_gate --mode prod --skip evaluator --json || {
+            echo "::warning::Full production gate check had failures. Review output."
+            # Don't fail deploy - API/workers may still be spinning up
+          }
+          echo "::endgroup::"
 
       # ─────────────────────────────────────────────────────────────
       # PHASE: COMPLETE

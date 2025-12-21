@@ -81,11 +81,17 @@ _DEPRECATED_KEYS_USED: set[str] = set()
 _REMOVED_KEYS = {
     "SUPABASE_URL_PROD",
     "SUPABASE_SERVICE_ROLE_KEY_PROD",
-    "SUPABASE_DB_URL_PROD",
-    "SUPABASE_DB_URL_DEV",
     "SUPABASE_DB_URL_DIRECT_PROD",
     "SUPABASE_DB_PASSWORD",
     "SUPABASE_DB_PASSWORD_PROD",
+}
+
+# Migration-only vars: warn but don't crash (used by scripts/tooling, not runtime app)
+# These are deprecated for RUNTIME but still allowed for MIGRATION SCRIPTS
+_MIGRATION_ONLY_KEYS = {
+    "SUPABASE_DB_URL_PROD",
+    "SUPABASE_DB_URL_DEV",
+    "SUPABASE_MIGRATE_DB_URL",  # Canonical migration-only credential
 }
 
 # Lowercase aliases that are deprecated but accepted (with warning)
@@ -109,6 +115,19 @@ def _check_removed_env_vars() -> None:
     for key in _REMOVED_KEYS:
         if os.environ.get(key):
             found_removed.append(key)
+
+    # Check for migration-only keys (warn but never crash)
+    found_migration_only = []
+    for key in _MIGRATION_ONLY_KEYS:
+        if os.environ.get(key):
+            found_migration_only.append(key)
+            _DEPRECATED_KEYS_USED.add(key)
+
+    if found_migration_only:
+        logger.info(
+            "Migration-only environment variables detected (OK for scripts, not for runtime): %s",
+            ", ".join(found_migration_only),
+        )
 
     if not found_removed:
         return
@@ -217,6 +236,12 @@ class Settings(BaseSettings):
         ...,
         description="Postgres connection string (pooler recommended)",
         json_schema_extra={"env": ["SUPABASE_DB_URL", "supabase_db_url"]},
+    )
+
+    # Migration-only credential (used by scripts/db_push.ps1, not runtime app)
+    SUPABASE_MIGRATE_DB_URL: str | None = Field(
+        default=None,
+        description="Postgres connection string for migrations only (direct port 5432)",
     )
 
     # =========================================================================

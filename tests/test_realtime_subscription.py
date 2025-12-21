@@ -20,6 +20,11 @@ from decimal import Decimal
 import pytest
 from postgrest.exceptions import APIError
 
+from tests.helpers import execute_resilient
+
+# Mark as integration tests (require PostgREST/Realtime)
+pytestmark = pytest.mark.integration
+
 # Set environment before imports
 os.environ.setdefault("SUPABASE_MODE", "dev")
 
@@ -51,9 +56,9 @@ def db_url():
 
 
 def _safe_query(supabase, query_fn):
-    """Execute query safely, skipping on auth errors."""
+    """Execute query safely with retry logic for transient errors."""
     try:
-        return query_fn()
+        return execute_resilient(query_fn)
     except APIError as e:
         if "401" in str(e) or "Invalid API key" in str(e):
             pytest.skip("Supabase API key not configured for tests")

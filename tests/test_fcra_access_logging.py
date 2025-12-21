@@ -19,7 +19,8 @@ import pytest
 from conftest import get_test_client, skip_if_no_db
 from postgrest.exceptions import APIError
 
-pytestmark = pytest.mark.legacy  # Requires FCRA access_logs table
+# Mark as integration (PostgREST) + legacy (optional FCRA schema)
+pytestmark = [pytest.mark.integration, pytest.mark.legacy]
 
 
 class TestAccessLogsTable:

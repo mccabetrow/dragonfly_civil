@@ -16,7 +16,8 @@ from ..config import get_settings
 
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
+# NOTE: settings loaded lazily via get_settings() inside functions
+# to avoid triggering Pydantic validation at import time
 
 # OpenAI embedding model
 EMBED_MODEL = "text-embedding-3-small"
@@ -34,13 +35,22 @@ def _get_openai_api_key() -> Optional[str]:
     Returns:
         API key string or None if not configured
     """
-    # Prefer settings, fall back to environment
-    if settings.openai_api_key:
-        return settings.openai_api_key
-
     import os
 
-    return os.environ.get("OPENAI_API_KEY")
+    # Try environment first (fast path, no validation)
+    env_key = os.environ.get("OPENAI_API_KEY")
+    if env_key:
+        return env_key
+
+    # Fall back to settings (triggers validation)
+    try:
+        settings = get_settings()
+        if settings.openai_api_key:
+            return settings.openai_api_key
+    except Exception:
+        pass  # Settings not available
+
+    return None
 
 
 async def generate_embedding(text: str) -> Optional[list[float]]:

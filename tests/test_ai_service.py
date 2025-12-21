@@ -7,7 +7,7 @@ Unit tests for embedding generation with mocked OpenAI API.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -48,9 +48,10 @@ class TestGenerateEmbedding:
 
         # Ensure env var is not set
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        # Clear settings cache to force re-read
-        with patch("backend.services.ai_service.settings") as mock_settings:
-            mock_settings.openai_api_key = None
+        # Mock get_settings() to return settings with no API key
+        mock_settings = MagicMock()
+        mock_settings.openai_api_key = None
+        with patch("backend.services.ai_service.get_settings", return_value=mock_settings):
             result = await generate_embedding("test text")
 
         assert result is None
