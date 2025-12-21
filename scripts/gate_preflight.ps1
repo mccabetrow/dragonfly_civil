@@ -175,7 +175,37 @@ else {
 }
 
 # ----------------------------------------------------------------------------
-# STEP 1.3: Unit Tests (non-integration tests)
+# STEP 1.3: Config Contract Tests (configuration logic is sound)
+# ----------------------------------------------------------------------------
+Write-StepStart "CONFIG-CONTRACT" "Verifying configuration contract"
+
+$configTestFile = Join-Path $RepoRoot "tests\test_core_config.py"
+if (Test-Path $configTestFile) {
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest $configTestFile -q 2>&1
+    $exitCode = $LASTEXITCODE
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        # Show just the summary lines
+        $result | Select-Object -Last 3 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Host ($result | Out-String) -ForegroundColor Red
+        Write-StepFail "CONFIG-CONTRACT" "Configuration contract tests failed"
+        Invoke-CriticalFailure
+    }
+    Write-StepPass "CONFIG-CONTRACT"
+}
+else {
+    Write-StepFail "CONFIG-CONTRACT" "tests/test_core_config.py not found"
+    Invoke-CriticalFailure
+}
+
+# ----------------------------------------------------------------------------
+# STEP 1.4: Unit Tests (non-integration tests)
 # ----------------------------------------------------------------------------
 Write-StepStart "UNIT-TESTS" "Running unit tests (excluding integration)"
 
