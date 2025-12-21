@@ -63,4 +63,9 @@ Get-Content -Path $EnvPath | ForEach-Object {
     }
 }
 
+# Canonical Names Only: Remove deprecated env vars so Python never sees them
+# These legacy variables may leak through parent processes or IDE settings
+Remove-Item Env:\SUPABASE_DB_URL_DEV -ErrorAction SilentlyContinue
+Remove-Item Env:\SUPABASE_DB_URL_PROD -ErrorAction SilentlyContinue
+
 Write-Host "[OK] Loaded $loadedCount variables from .env.$Mode" -ForegroundColor Green

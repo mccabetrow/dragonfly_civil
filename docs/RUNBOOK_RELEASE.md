@@ -1,6 +1,105 @@
 # Release Runbook — Dragonfly Civil
 
+> **The Constitution for Production Deployments**
+>
 > **Fail-closed principle**: If any gate fails, halt and fix before proceeding.
+
+---
+
+## Section 1: Contract Truth Sources
+
+### The Only Sources of Truth
+
+| Truth Domain           | Authoritative Source                     | Verification                               |
+| ---------------------- | ---------------------------------------- | ------------------------------------------ |
+| **Database Schema**    | `supabase/migrations/*.sql`              | `supabase db diff`                         |
+| **RPC Signatures**     | `tests/test_rpc_contract.py`             | `pytest tests/test_rpc_contract.py`        |
+| **Worker Contract**    | `tests/test_worker_rpc_contract.py`      | `pytest tests/test_worker_rpc_contract.py` |
+| **Environment Config** | `src/core_config.py` + `.env.{dev,prod}` | `python -m tools.env_doctor`               |
+| **View Definitions**   | `dashboards/sql/*.sql` + migrations      | `python -m tools.doctor --env prod`        |
+
+### What This Means
+
+1. **Database Migrations** (`supabase/migrations/`) define the schema. If a table, column, or RPC is not in a migration, it does not exist.
+
+2. **Contract Tests** (`tests/test_rpc_contract.py`) define what the application expects. If the DB signature drifts from the contract test, the deployment gate fails.
+
+3. **No Other Sources**: Production console output, Supabase Studio, or ad-hoc queries are **NOT** sources of truth. They are diagnostic tools only.
+
+---
+
+## Section 2: The Prime Directive
+
+> **No manual SQL is ever run in Production without a corresponding migration file and contract test update.**
+
+### Violations and Consequences
+
+| Violation                             | Risk                             | Consequence                 |
+| ------------------------------------- | -------------------------------- | --------------------------- |
+| Manual `ALTER TABLE` in prod          | Schema drift → Worker crashes    | Immediate rollback required |
+| RPC created without migration         | Next deploy overwrites it        | Feature silently breaks     |
+| Column added without contract test    | Workers may not use it correctly | Data corruption risk        |
+| `INSERT`/`UPDATE` without audit trail | Untraceable state changes        | Compliance failure          |
+
+### Approved SQL Execution Paths
+
+```
+✅ APPROVED:
+   1. supabase/migrations/{timestamp}_{description}.sql
+   2. scripts/db_push.ps1 -SupabaseEnv {dev|prod}
+   3. Verified by: python -m tools.doctor --env {env}
+
+❌ FORBIDDEN:
+   1. Direct SQL in Supabase Studio (production)
+   2. psql one-liners against production
+   3. Any change not captured in version control
+```
+
+---
+
+## Section 3: B3 Deployment Protocol
+
+### Overview
+
+The **B3 (Build-Before-Break) Protocol** ensures code correctness is verified before any production change.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    B3 DEPLOYMENT SEQUENCE                       │
+├─────────────────────────────────────────────────────────────────┤
+│  PHASE 0: FREEZE                                                │
+│    └─ Scale Railway workers to 0                                │
+│    └─ Reason: Prevent in-flight jobs during migration           │
+│                                                                 │
+│  PHASE 1: GATE (Hard Fail)                                      │
+│    └─ pytest -m "not integration"                               │
+│    └─ Tests: RPC-CONTRACT, WORKER-CONTRACT, UNIT-TESTS          │
+│    └─ If ANY fail → ABORT immediately                           │
+│                                                                 │
+│  PHASE 2: GATE (Soft Fail)                                      │
+│    └─ pytest -m "integration"                                   │
+│    └─ Tests: PostgREST, Pooler, Realtime connectivity           │
+│    └─ If fail → WARN but continue (external infra may be flaky) │
+│                                                                 │
+│  PHASE 3: MIGRATE                                               │
+│    └─ ./scripts/db_push.ps1 -SupabaseEnv prod                   │
+│    └─ Applies all pending migrations atomically                 │
+│                                                                 │
+│  PHASE 4: VERIFY                                                │
+│    └─ python -m tools.doctor --env prod                         │
+│    └─ python -m tools.prod_gate --env prod --strict             │
+│    └─ All checks must pass                                      │
+│                                                                 │
+│  PHASE 5: DEPLOY                                                │
+│    └─ Railway: redeploy with new code                           │
+│    └─ Scale workers back up                                     │
+│    └─ Monitor logs for 15 minutes                               │
+│                                                                 │
+│  PHASE 6: SMOKE                                                 │
+│    └─ python -m tools.prod_smoke                                │
+│    └─ Verify critical paths work end-to-end                     │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
