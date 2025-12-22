@@ -10,22 +10,29 @@ from tests.helpers import httpx_resilient
 # Mark as integration (PostgREST) + legacy (optional schema)
 pytestmark = [pytest.mark.integration, pytest.mark.legacy]
 
-BASE = f'https://{os.environ["SUPABASE_PROJECT_REF"]}.supabase.co'
-KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-H = {
-    "apikey": KEY,
-    "Authorization": f"Bearer {KEY}",
-    "Accept": "application/json",
-    "Content-Profile": SCHEMA_PROFILE,
-    "Accept-Profile": SCHEMA_PROFILE,
-}
+
+# Defer environment variable access to runtime (not import time)
+def _get_base() -> str:
+    return f'https://{os.environ.get("SUPABASE_PROJECT_REF", "placeholder")}.supabase.co'
+
+
+def _get_headers() -> dict:
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    return {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Accept": "application/json",
+        "Content-Profile": SCHEMA_PROFILE,
+        "Accept-Profile": SCHEMA_PROFILE,
+    }
 
 
 def _rest(path: str) -> str:
-    return f"{BASE}/rest/v1{path}"
+    return f"{_get_base()}/rest/v1{path}"
 
 
 def test_insert_case_and_read_tier() -> None:
+    H = _get_headers()
     case_number = f"PYTEST-{uuid.uuid4().hex[:6].upper()}"
     case = {
         "case_number": case_number,
