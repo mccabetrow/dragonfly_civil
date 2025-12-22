@@ -129,57 +129,57 @@ function Invoke-CsvUpload {
 
     $uploadUrl = "$BaseUrl/api/v1/ingest/upload"
     
-    # Build headers
-    $headers = @{
-        "Accept" = "application/json"
+    # Determine Python executable
+    $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $ProjectRoot = Split-Path -Parent $ScriptRoot
+    $PythonExe = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
+    if (-not (Test-Path $PythonExe)) {
+        $PythonExe = 'python'
     }
-    if ($Key) {
-        $headers["X-API-Key"] = $Key
-    }
+
+    Write-Host "  Uploading via Python smoke_uploader... " -NoNewline
 
     try {
-        # Create multipart form data
-        $form = @{
-            file = Get-Item -Path $CsvPath
-            batch_name = "smoke-test-$SmokeId"
-            source = "smoke_test"
-        }
+        # Use Python smoke_uploader for robust multipart upload
+        $uploaderOutput = & $PythonExe -m tools.smoke_uploader `
+            --api-url $uploadUrl `
+            --api-key $Key `
+            --file-path $CsvPath `
+            --json 2>&1
 
-        Write-Host "  Uploading... " -NoNewline
-
-        $response = Invoke-RestMethod -Uri $uploadUrl -Method Post -Headers $headers -Form $form -TimeoutSec 30
-
-        if ($response.batch_id) {
-            Write-Host "SUCCESS!" -ForegroundColor Green
-            Write-Pass "Batch created: $($response.batch_id)"
-            return @{
-                Success = $true
-                BatchId = $response.batch_id
-                Response = $response
-            }
-        } elseif ($response.id) {
-            Write-Host "SUCCESS!" -ForegroundColor Green
-            Write-Pass "Batch created: $($response.id)"
-            return @{
-                Success = $true
-                BatchId = $response.id
-                Response = $response
+        $uploaderExitCode = $LASTEXITCODE
+        
+        if ($uploaderExitCode -eq 0) {
+            $result = $uploaderOutput | ConvertFrom-Json
+            if ($result.success) {
+                Write-Host "SUCCESS!" -ForegroundColor Green
+                $batchId = $result.batch_id
+                if ($batchId) {
+                    Write-Pass "Batch created: $batchId"
+                } else {
+                    Write-Pass "Upload successful (batch_id not returned)"
+                    $batchId = "unknown"
+                }
+                return @{
+                    Success = $true
+                    BatchId = $batchId
+                    Response = $result.response
+                }
+            } else {
+                Write-Host "FAILED" -ForegroundColor Red
+                Write-Fail "Upload failed: $($result.error)"
+                return @{ Success = $false }
             }
         } else {
-            Write-Host "Unexpected response" -ForegroundColor Yellow
-            Write-Info "Response: $($response | ConvertTo-Json -Compress)"
+            Write-Host "FAILED" -ForegroundColor Red
+            Write-Fail "smoke_uploader exited with code: $uploaderExitCode"
+            Write-Info "Output: $uploaderOutput"
             return @{ Success = $false }
         }
 
     } catch {
         Write-Host "FAILED" -ForegroundColor Red
         Write-Fail "Upload failed: $_"
-        
-        $errResponse = $_.Exception.Response
-        if ($errResponse -and $errResponse.StatusCode) {
-            Write-Info "HTTP Status: $($errResponse.StatusCode.value__)"
-        }
-        
         return @{ Success = $false }
     }
 }

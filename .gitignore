@@ -15,12 +15,20 @@ data/simplicity_status_export.csv
 .DS_Store
 __pycache__/
 
-# Secrets - never commit these
+# ═══════════════════════════════════════════════════════════════════════════
+# SECRETS - NEVER COMMIT THESE (SEV-1 if leaked)
+# ═══════════════════════════════════════════════════════════════════════════
 .env
+.env.*
+*.env
 .env.dev
 .env.prod
 .env.local
+.env.staging
 */.env
+*/.env.*
 */.env.local
 judgment_ingestor/.env
+dragonfly-dashboard/.env
 dragonfly-dashboard/.env.local
+instance/

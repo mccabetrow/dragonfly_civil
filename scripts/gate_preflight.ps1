@@ -91,7 +91,52 @@ $startTime = Get-Date
 $integrationWarning = $false
 
 # ----------------------------------------------------------------------------
-# STEP 0: Load Dev Environment
+# STEP 0: PowerShell Version Check (Incident 2025-12-21-01)
+# ----------------------------------------------------------------------------
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    Write-Host ""
+    Write-Host ("=" * 70) -ForegroundColor Yellow
+    Write-Host "  ⚠️  WARNING: PowerShell $($PSVersionTable.PSVersion) detected" -ForegroundColor Yellow
+    Write-Host "  Recommended: PowerShell 7+ for reliable API testing" -ForegroundColor Yellow
+    Write-Host "  Install: winget install Microsoft.PowerShell" -ForegroundColor Cyan
+    Write-Host ("=" * 70) -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Some multipart/form-data operations may fail on PS5.1." -ForegroundColor DarkYellow
+    Write-Host "Continuing with caution..." -ForegroundColor DarkYellow
+    Write-Host ""
+}
+
+# ----------------------------------------------------------------------------
+# STEP 0.5: Secret Scanner (Incident 2025-12-22-01 - Postgres URI Leak)
+# ----------------------------------------------------------------------------
+Write-StepStart "SECRET-SCAN" "Scanning for leaked credentials in tracked files"
+
+$secretScannerPath = Join-Path $RepoRoot "tools\scan_secrets.py"
+if (Test-Path $secretScannerPath) {
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m tools.scan_secrets 2>&1
+    $exitCode = $LASTEXITCODE
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        # Show just the summary lines
+        $result | Select-Object -Last 10 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Host ($result | Out-String) -ForegroundColor Red
+        Write-StepFail "SECRET-SCAN" "Secrets detected in tracked files - BLOCK DEPLOYMENT"
+        Invoke-CriticalFailure
+    }
+    Write-StepPass "SECRET-SCAN"
+}
+else {
+    Write-Host "  Skipped (tools/scan_secrets.py not found)" -ForegroundColor DarkGray
+}
+
+# ----------------------------------------------------------------------------
+# STEP 1: Load Dev Environment
 # ----------------------------------------------------------------------------
 Write-StepStart "ENV" "Loading dev environment (.env.dev)"
 
@@ -205,7 +250,152 @@ else {
 }
 
 # ----------------------------------------------------------------------------
-# STEP 1.4: Unit Tests (non-integration tests)
+# STEP 1.4: Security Invariants (Zero Trust boundary tests)
+# ----------------------------------------------------------------------------
+Write-StepStart "SECURITY-INVARIANTS" "Verifying security boundaries (Zero Trust)"
+
+$securityTestFile = Join-Path $RepoRoot "tests\test_security_invariants.py"
+if (Test-Path $securityTestFile) {
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest $securityTestFile -v 2>&1
+    $exitCode = $LASTEXITCODE
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        # Show just the summary lines
+        $result | Select-Object -Last 5 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Host ($result | Out-String) -ForegroundColor Red
+        Write-StepFail "SECURITY-INVARIANTS" "Security boundary tests failed - DO NOT DEPLOY"
+        Invoke-CriticalFailure
+    }
+    Write-StepPass "SECURITY-INVARIANTS"
+}
+else {
+    Write-Host "  Skipped (tests/test_security_invariants.py not found)" -ForegroundColor DarkGray
+}
+
+# ----------------------------------------------------------------------------
+# STEP 1.4b: Live Security Invariants (RLS coverage, security definer audit)
+# ----------------------------------------------------------------------------
+Write-StepStart "SECURITY-LIVE" "Verifying live security invariants (RLS + SECDEF)"
+
+$securityLiveTestFile = Join-Path $RepoRoot "tests\test_security_invariants_live.py"
+if (Test-Path $securityLiveTestFile) {
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest $securityLiveTestFile -v -m security 2>&1
+    $exitCode = $LASTEXITCODE
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        # Show just the summary lines
+        $result | Select-Object -Last 7 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Host ($result | Out-String) -ForegroundColor Red
+        Write-StepFail "SECURITY-LIVE" "Live security invariant tests failed - RLS or SECDEF violations detected"
+        Invoke-CriticalFailure
+    }
+    Write-StepPass "SECURITY-LIVE"
+}
+else {
+    Write-Host "  Skipped (tests/test_security_invariants_live.py not found)" -ForegroundColor DarkGray
+}
+
+# ----------------------------------------------------------------------------
+# STEP 1.4c: Zero Trust Security Audit (RLS + SECDEF Whitelist)
+# ----------------------------------------------------------------------------
+Write-StepStart "SECURITY-AUDIT" "Verifying Zero Trust security audit (RLS + SECDEF whitelist)"
+
+$securityAuditTestFile = Join-Path $RepoRoot "tests\test_security_audit_zero_trust.py"
+if (Test-Path $securityAuditTestFile) {
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest $securityAuditTestFile -v 2>&1
+    $exitCode = $LASTEXITCODE
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        # Show just the summary lines
+        $result | Select-Object -Last 7 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Host ($result | Out-String) -ForegroundColor Red
+        Write-StepFail "SECURITY-AUDIT" "Zero Trust security audit failed - RLS or unauthorized SECDEF detected"
+        Invoke-CriticalFailure
+    }
+    Write-StepPass "SECURITY-AUDIT"
+}
+else {
+    Write-Host "  Skipped (tests/test_security_audit_zero_trust.py not found)" -ForegroundColor DarkGray
+}
+
+# ----------------------------------------------------------------------------
+# STEP 1.4d: Security Audit (General)
+# ----------------------------------------------------------------------------
+Write-StepStart "SECURITY-GENERAL" "Verifying general security invariants"
+
+$securityGeneralTestFile = Join-Path $RepoRoot "tests\test_security_audit.py"
+if (Test-Path $securityGeneralTestFile) {
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest $securityGeneralTestFile -v 2>&1
+    $exitCode = $LASTEXITCODE
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        # Show just the summary lines
+        $result | Select-Object -Last 7 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Host ($result | Out-String) -ForegroundColor Red
+        Write-StepFail "SECURITY-GENERAL" "Security audit tests failed"
+        Invoke-CriticalFailure
+    }
+    Write-StepPass "SECURITY-GENERAL"
+}
+else {
+    Write-Host "  Skipped (tests/test_security_audit.py not found)" -ForegroundColor DarkGray
+}
+
+# ----------------------------------------------------------------------------
+# STEP 1.4e: Performance Budget Tests
+# ----------------------------------------------------------------------------
+Write-StepStart "PERF-BUDGET" "Verifying performance budgets (Index + Query time)"
+
+$perfBudgetTestFile = Join-Path $RepoRoot "tests\test_performance_budget.py"
+if (Test-Path $perfBudgetTestFile) {
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest $perfBudgetTestFile -v -m performance 2>&1
+    $exitCode = $LASTEXITCODE
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        # Show just the summary lines
+        $result | Select-Object -Last 7 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Host ($result | Out-String) -ForegroundColor Red
+        Write-StepFail "PERF-BUDGET" "Performance budget tests failed - DB performance regression detected"
+        Invoke-CriticalFailure
+    }
+    Write-StepPass "PERF-BUDGET"
+}
+else {
+    Write-Host "  Skipped (tests/test_performance_budget.py not found)" -ForegroundColor DarkGray
+}
+
+# ----------------------------------------------------------------------------
+# STEP 1.5: Unit Tests (non-integration tests)
 # ----------------------------------------------------------------------------
 Write-StepStart "UNIT-TESTS" "Running unit tests (excluding integration)"
 

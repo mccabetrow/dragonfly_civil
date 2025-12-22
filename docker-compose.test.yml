@@ -1,0 +1,112 @@
+# docker-compose.test.yml
+#
+# Local CI Infrastructure for Deterministic Integration Testing
+#
+# This compose file provides a fully isolated PostgreSQL + PostgREST stack
+# for running integration tests without depending on Supabase Cloud.
+#
+# USAGE:
+# ======
+#   docker-compose -f docker-compose.test.yml up -d
+#   # Wait for health checks...
+#   # Run migrations and tests...
+#   docker-compose -f docker-compose.test.yml down -v
+#
+# SERVICES:
+# =========
+#   postgres   - PostgreSQL 15 with test database
+#   postgrest  - PostgREST API layer connected to postgres
+#
+# CREDENTIALS:
+# ============
+#   Database: postgres / postgres / postgres_test
+#   PostgREST: http://localhost:3001
+#
+# HEALTH CHECKS:
+# ==============
+#   postgres:  pg_isready
+#   postgrest: HTTP 200 on /
+#
+# VOLUMES:
+# ========
+#   postgres_test_data - Persisted database data (optional)
+#   ./supabase/migrations - Mounted for migration application
+#
+
+services:
+  # =========================================================================
+  # PostgreSQL Database
+  # =========================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: dragonfly_test_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres_test
+    ports:
+      - "5433:5432"  # Use 5433 to avoid conflicts with local Postgres
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      # Mount migrations for easy access (optional)
+      - ./supabase/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - dragonfly_test_network
+
+  # =========================================================================
+  # PostgREST API Layer
+  # =========================================================================
+  postgrest:
+    image: postgrest/postgrest:v12.0.2
+    container_name: dragonfly_test_postgrest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Connection to postgres
+      PGRST_DB_URI: "postgres://postgres:postgres@postgres:5432/postgres_test"
+      # Schema configuration
+      PGRST_DB_SCHEMAS: "public,ops,intake"
+      PGRST_DB_ANON_ROLE: "anon"
+      # JWT configuration (test secret)
+      PGRST_JWT_SECRET: "super-secret-jwt-token-for-testing-only-not-for-production"
+      PGRST_JWT_AUD: "authenticated"
+      # API settings
+      PGRST_OPENAPI_MODE: "ignore-privileges"
+      PGRST_OPENAPI_SERVER_PROXY_URI: "http://localhost:3001"
+      # Performance
+      PGRST_DB_POOL: "10"
+      PGRST_DB_POOL_ACQUISITION_TIMEOUT: "10"
+    ports:
+      - "3001:3000"  # PostgREST default port mapped to 3001
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - dragonfly_test_network
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  dragonfly_test_network:
+    driver: bridge
+    name: dragonfly_test_network
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_test_data:
+    name: dragonfly_test_postgres_data

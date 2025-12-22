@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -143,7 +144,7 @@ class EnvDoctor:
                 self.log(
                     EnvCheckResult(
                         passed=False,
-                        message=f"Non-Canonical Variable Detected: {key}",
+                        message=f"⚠️ CONTAMINATION DETECTED: Non-canonical variable [{key}] is present. Runtime may be ambiguous.",
                         severity="error",
                     )
                 )
@@ -152,7 +153,8 @@ class EnvDoctor:
                 self._style(
                     "  💡 Migration: Remove these variables and use canonical names:\n"
                     "     SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL\n"
-                    "     Set SUPABASE_MODE=dev|prod to switch environments.",
+                    "     Set SUPABASE_MODE=dev|prod to switch environments.\n"
+                    "     Run: .\\scripts\\shell_clean.ps1 -Mode <dev|prod>",
                     "info",
                 )
             )
@@ -305,6 +307,94 @@ class EnvDoctor:
             )
 
     # =========================================================================
+    # CHECK D: Database Connectivity
+    # =========================================================================
+    def check_db_connectivity(self) -> None:
+        """
+        Check D: Verify TCP connectivity to database host/port.
+
+        Performs a fast 1-second TCP connect to confirm the database
+        is reachable from this environment.
+        """
+        click.echo("\n" + "=" * 60)
+        click.echo("  CHECK D: Database Connectivity")
+        click.echo("=" * 60)
+
+        db_url = os.environ.get("SUPABASE_DB_URL", "")
+        if not db_url:
+            self.log(
+                EnvCheckResult(
+                    passed=False,
+                    message="Cannot test connectivity: SUPABASE_DB_URL not set",
+                    severity="warning",
+                )
+            )
+            return
+
+        try:
+            parsed = urlparse(db_url)
+            host = parsed.hostname
+            port = parsed.port or 5432
+
+            if not host:
+                self.log(
+                    EnvCheckResult(
+                        passed=False,
+                        message="Could not parse host from SUPABASE_DB_URL",
+                        severity="error",
+                    )
+                )
+                return
+
+            # Attempt TCP connection with 1-second timeout
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1.0)
+            result = sock.connect_ex((host, port))
+            sock.close()
+
+            if result == 0:
+                self.log(
+                    EnvCheckResult(
+                        passed=True,
+                        message=f"TCP connect to {host}:{port} succeeded",
+                        severity="pass",
+                    )
+                )
+            else:
+                self.log(
+                    EnvCheckResult(
+                        passed=False,
+                        message=f"TCP connect to {host}:{port} failed (code: {result})",
+                        severity="warning",
+                    )
+                )
+
+        except socket.timeout:
+            self.log(
+                EnvCheckResult(
+                    passed=False,
+                    message=f"TCP connect to {host}:{port} timed out after 1s",
+                    severity="warning",
+                )
+            )
+        except socket.gaierror as e:
+            self.log(
+                EnvCheckResult(
+                    passed=False,
+                    message=f"DNS resolution failed for {host}: {e}",
+                    severity="warning",
+                )
+            )
+        except Exception as e:
+            self.log(
+                EnvCheckResult(
+                    passed=False,
+                    message=f"Connectivity check error: {e}",
+                    severity="warning",
+                )
+            )
+
+    # =========================================================================
     # SUMMARY
     # =========================================================================
     def print_summary(self) -> int:
@@ -359,6 +449,7 @@ class EnvDoctor:
         self.check_canonical_names()
         self.check_missing_essentials()
         self.check_connection_mode()
+        self.check_db_connectivity()
 
         # Print verbose env dump if requested
         if self.verbose:
