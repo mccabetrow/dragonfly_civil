@@ -308,7 +308,7 @@ class WatchdogMonitor:
                 SELECT COUNT(*) AS stuck_count
                 FROM ops.job_queue
                 WHERE status = 'processing'
-                  AND claimed_at < NOW() - INTERVAL '15 minutes'
+                  AND started_at < NOW() - INTERVAL '15 minutes'
             """
             )
             row = cur.fetchone()

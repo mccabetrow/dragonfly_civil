@@ -54,31 +54,31 @@ SELECT 'CHECK 3: Stuck Jobs' AS check_name,
     job_type,
     status,
     worker_id,
-    claimed_at AS locked_at,
+    started_at,
     EXTRACT(
         EPOCH
-        FROM (NOW() - claimed_at)
+        FROM (NOW() - started_at)
     ) / 60 AS minutes_stuck,
     attempts,
     payload->>'file_path' AS file_path
 FROM ops.job_queue
-WHERE claimed_at < NOW() - INTERVAL '15 minutes'
+WHERE started_at < NOW() - INTERVAL '15 minutes'
     AND status = 'processing'
-ORDER BY claimed_at ASC;
+ORDER BY started_at ASC;
 -- ============================================================================
 -- CHECK 4: Stuck Job Count Summary
 -- ============================================================================
 SELECT 'CHECK 4: Stuck Job Summary' AS check_name,
     COUNT(*) AS stuck_job_count,
-    MIN(claimed_at) AS oldest_stuck_job,
+    MIN(started_at) AS oldest_stuck_job,
     MAX(
         EXTRACT(
             EPOCH
-            FROM (NOW() - claimed_at)
+            FROM (NOW() - started_at)
         ) / 60
     )::numeric(10, 1) AS max_minutes_stuck
 FROM ops.job_queue
-WHERE claimed_at < NOW() - INTERVAL '15 minutes'
+WHERE started_at < NOW() - INTERVAL '15 minutes'
     AND status = 'processing';
 -- ============================================================================
 -- CHECK 5: Reaper Function Exists and Is Callable
@@ -104,7 +104,7 @@ BEGIN -- Count stuck jobs (same logic as reaper)
 SELECT COUNT(*) INTO v_reaped_count
 FROM ops.job_queue
 WHERE status = 'processing'
-    AND claimed_at < NOW() - INTERVAL '15 minutes';
+    AND started_at < NOW() - INTERVAL '15 minutes';
 RAISE NOTICE 'CHECK 6: Manual Reaper Test - % jobs would be reaped',
 v_reaped_count;
 END $$;
@@ -137,7 +137,7 @@ SELECT 'SUMMARY' AS check_name,
     (
         SELECT COUNT(*)
         FROM ops.job_queue
-        WHERE claimed_at < NOW() - INTERVAL '15 minutes'
+        WHERE started_at < NOW() - INTERVAL '15 minutes'
             AND status = 'processing'
     ) AS stuck_jobs,
     CASE
@@ -156,7 +156,7 @@ SELECT 'SUMMARY' AS check_name,
         WHEN (
             SELECT COUNT(*)
             FROM ops.job_queue
-            WHERE claimed_at < NOW() - INTERVAL '15 minutes'
+            WHERE started_at < NOW() - INTERVAL '15 minutes'
                 AND status = 'processing'
         ) > 0 THEN '⚠️ STUCK JOBS EXIST'
         ELSE '✅ HEALTHY'
