@@ -61,6 +61,25 @@ jobs:
         run: pytest -q -m "not integration and not e2e" --tb=short
 
   # ===========================================================================
+  # Secret Detection - MUST PASS BEFORE ANY OTHER JOB
+  # ===========================================================================
+  secrets-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for gitleaks
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  # ===========================================================================
   # Lint & Format Check
   # ===========================================================================
   lint:
@@ -98,7 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     # Run on main branch or when manually triggered with run_integration=true
     if: github.ref == 'refs/heads/main' || github.event.inputs.run_integration == 'true'
-    needs: [unit-tests, lint]
+    needs: [unit-tests, lint, secrets-scan]
 
     steps:
       - name: Check out repository

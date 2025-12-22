@@ -93,6 +93,32 @@ class ReadinessDBResponse(BaseModel):
     pool_init_attempts: int
 
 
+class SystemHealthMetric(BaseModel):
+    """Individual SLO metric for system health."""
+
+    name: str
+    status: str  # "healthy", "warning", "critical"
+    value: float | int | None = None
+    threshold: str | None = None
+    message: str
+
+
+class SystemHealthResponse(BaseModel):
+    """
+    Comprehensive system health response for CEO Dashboard and alerting.
+
+    Aggregates key SLO metrics from queue, workers, and reaper.
+    """
+
+    overall_status: str  # "healthy", "degraded", "critical"
+    timestamp: str
+    environment: str
+    metrics: list[SystemHealthMetric]
+    queue_health: dict | None = None
+    worker_health: dict | None = None
+    reaper_health: dict | None = None
+
+
 # ==========================================================================
 # LIVENESS PROBE - /health (returns 200 if process is up)
 # ==========================================================================
@@ -450,6 +476,294 @@ async def health_ops() -> OperationalHealthResponse:
             failed_jobs_24h=0,
             last_event_at=None,
             events_24h=0,
+        )
+
+
+# ==========================================================================
+# SYSTEM HEALTH - /health/system (CEO Dashboard SLO metrics)
+# ==========================================================================
+
+
+@router.get(
+    "/system",
+    response_model=SystemHealthResponse,
+    summary="System health with SLO metrics",
+    description="Comprehensive system health for CEO Dashboard and alerting.",
+)
+async def health_check_system() -> SystemHealthResponse:
+    """
+    System-wide health check with SLO metrics.
+
+    Returns:
+    - Queue health (pending, stuck, failed counts)
+    - Worker health (active workers, last heartbeat)
+    - Reaper health (last run, stuck job count)
+    - Overall status: healthy/degraded/critical
+
+    Thresholds (configurable):
+    - CRITICAL: stuck_jobs > 0 OR no worker heartbeat in 10 min
+    - WARNING: pending_jobs > 50 OR failed_jobs_24h > 20
+    - HEALTHY: All metrics within thresholds
+    """
+    from ..db import get_pool
+
+    timestamp = datetime.utcnow().isoformat() + "Z"
+    settings = get_settings()
+    metrics: list[SystemHealthMetric] = []
+    queue_health: dict = {}
+    worker_health: dict = {}
+    reaper_health: dict = {}
+
+    try:
+        pool = await get_pool()
+        if pool is None:
+            return SystemHealthResponse(
+                overall_status="critical",
+                timestamp=timestamp,
+                environment=settings.environment,
+                metrics=[
+                    SystemHealthMetric(
+                        name="database",
+                        status="critical",
+                        message="Database pool not initialized",
+                    )
+                ],
+            )
+
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # ----------------------------------------------------------
+                # QUEUE HEALTH
+                # ----------------------------------------------------------
+                await cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                        COUNT(*) FILTER (WHERE status = 'processing') AS processing,
+                        COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+                        COUNT(*) FILTER (
+                            WHERE status = 'processing'
+                            AND started_at < NOW() - INTERVAL '15 minutes'
+                        ) AS stuck,
+                        COUNT(*) FILTER (
+                            WHERE status = 'failed'
+                            AND updated_at > NOW() - INTERVAL '24 hours'
+                        ) AS failed_24h
+                    FROM ops.job_queue
+                    """
+                )
+                row = await cur.fetchone()
+                queue_health = {
+                    "pending": row[0] or 0,
+                    "processing": row[1] or 0,
+                    "failed": row[2] or 0,
+                    "stuck": row[3] or 0,
+                    "failed_24h": row[4] or 0,
+                }
+
+                # Stuck jobs metric
+                stuck_count = queue_health["stuck"]
+                if stuck_count > 0:
+                    metrics.append(
+                        SystemHealthMetric(
+                            name="stuck_jobs",
+                            status="critical",
+                            value=stuck_count,
+                            threshold="0",
+                            message=f"{stuck_count} jobs stuck in processing > 15 min",
+                        )
+                    )
+                else:
+                    metrics.append(
+                        SystemHealthMetric(
+                            name="stuck_jobs",
+                            status="healthy",
+                            value=0,
+                            threshold="0",
+                            message="No stuck jobs",
+                        )
+                    )
+
+                # Pending jobs metric
+                pending_count = queue_health["pending"]
+                if pending_count > 100:
+                    metrics.append(
+                        SystemHealthMetric(
+                            name="pending_jobs",
+                            status="warning",
+                            value=pending_count,
+                            threshold="100",
+                            message=f"{pending_count} jobs pending (queue backlog)",
+                        )
+                    )
+                else:
+                    metrics.append(
+                        SystemHealthMetric(
+                            name="pending_jobs",
+                            status="healthy",
+                            value=pending_count,
+                            threshold="100",
+                            message=f"{pending_count} pending jobs",
+                        )
+                    )
+
+                # ----------------------------------------------------------
+                # WORKER HEALTH
+                # ----------------------------------------------------------
+                await cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS total_workers,
+                        COUNT(*) FILTER (
+                            WHERE last_seen > NOW() - INTERVAL '5 minutes'
+                        ) AS active_workers,
+                        MAX(last_seen) AS last_heartbeat
+                    FROM ops.worker_heartbeats
+                    """
+                )
+                row = await cur.fetchone()
+                worker_health = {
+                    "total_workers": row[0] or 0,
+                    "active_workers": row[1] or 0,
+                    "last_heartbeat": row[2].isoformat() + "Z" if row[2] else None,
+                }
+
+                active_workers = worker_health["active_workers"]
+                if active_workers == 0:
+                    metrics.append(
+                        SystemHealthMetric(
+                            name="active_workers",
+                            status="critical",
+                            value=0,
+                            threshold="1",
+                            message="No active workers (no heartbeat in 5 min)",
+                        )
+                    )
+                else:
+                    metrics.append(
+                        SystemHealthMetric(
+                            name="active_workers",
+                            status="healthy",
+                            value=active_workers,
+                            threshold="1",
+                            message=f"{active_workers} active worker(s)",
+                        )
+                    )
+
+                # ----------------------------------------------------------
+                # REAPER HEALTH (check cron.job_run_details if available)
+                # ----------------------------------------------------------
+                try:
+                    await cur.execute(
+                        """
+                        SELECT
+                            jrd.status,
+                            jrd.start_time,
+                            jrd.return_message
+                        FROM cron.job_run_details jrd
+                        JOIN cron.job j ON j.jobid = jrd.jobid
+                        WHERE j.jobname IN ('dragonfly_reaper', 'reap_stuck_jobs')
+                        ORDER BY jrd.start_time DESC
+                        LIMIT 1
+                        """
+                    )
+                    row = await cur.fetchone()
+                    if row:
+                        reaper_health = {
+                            "last_status": row[0],
+                            "last_run": row[1].isoformat() + "Z" if row[1] else None,
+                            "return_message": row[2],
+                        }
+
+                        # Check if reaper ran recently
+                        if row[1]:
+                            minutes_since = (
+                                datetime.utcnow() - row[1].replace(tzinfo=None)
+                            ).total_seconds() / 60
+                            if minutes_since > 15:
+                                metrics.append(
+                                    SystemHealthMetric(
+                                        name="reaper",
+                                        status="warning",
+                                        value=int(minutes_since),
+                                        threshold="15",
+                                        message=f"Reaper last ran {int(minutes_since)} min ago",
+                                    )
+                                )
+                            else:
+                                metrics.append(
+                                    SystemHealthMetric(
+                                        name="reaper",
+                                        status="healthy",
+                                        value=int(minutes_since),
+                                        threshold="15",
+                                        message=f"Reaper ran {int(minutes_since)} min ago",
+                                    )
+                                )
+                        else:
+                            metrics.append(
+                                SystemHealthMetric(
+                                    name="reaper",
+                                    status="warning",
+                                    message="Reaper has no execution history",
+                                )
+                            )
+                    else:
+                        reaper_health = {"configured": False}
+                        metrics.append(
+                            SystemHealthMetric(
+                                name="reaper",
+                                status="warning",
+                                message="Reaper schedule not found in pg_cron",
+                            )
+                        )
+                except Exception as e:
+                    # pg_cron might not be accessible
+                    reaper_health = {"error": str(e)}
+                    metrics.append(
+                        SystemHealthMetric(
+                            name="reaper",
+                            status="warning",
+                            message=f"Cannot check reaper: {type(e).__name__}",
+                        )
+                    )
+
+        # ----------------------------------------------------------
+        # DETERMINE OVERALL STATUS
+        # ----------------------------------------------------------
+        has_critical = any(m.status == "critical" for m in metrics)
+        has_warning = any(m.status == "warning" for m in metrics)
+
+        if has_critical:
+            overall_status = "critical"
+        elif has_warning:
+            overall_status = "degraded"
+        else:
+            overall_status = "healthy"
+
+        return SystemHealthResponse(
+            overall_status=overall_status,
+            timestamp=timestamp,
+            environment=settings.environment,
+            metrics=metrics,
+            queue_health=queue_health,
+            worker_health=worker_health,
+            reaper_health=reaper_health,
+        )
+
+    except Exception as e:
+        logger.error(f"System health check failed: {e}")
+        return SystemHealthResponse(
+            overall_status="critical",
+            timestamp=timestamp,
+            environment=settings.environment,
+            metrics=[
+                SystemHealthMetric(
+                    name="database",
+                    status="critical",
+                    message=f"Database error: {type(e).__name__}",
+                )
+            ],
         )
 
 

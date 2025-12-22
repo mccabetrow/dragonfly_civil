@@ -1,4 +1,12 @@
 repos:
+  # =========================================================================
+  # Secret Detection - MUST BE FIRST (block commits with secrets)
+  # =========================================================================
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
   - repo: https://github.com/psf/black
     rev: 24.10.0
     hooks:
@@ -55,13 +63,13 @@ repos:
       - id: no-supabase-linked
         name: no supabase --linked
         entry: >
-          bash -c 'if grep -vE "^[[:space:]]*(#|//).*" "$@" 2>/dev/null | grep -qE "supabase[[:space:]]+(db|migration|link).*--linked|--linked"; then
+          bash -c 'if grep -vE "^[[:space:]]*(#|//).*" "$@" 2>/dev/null | grep -qE "supabase[[:space:]]+(db|migration|link).*--linked"; then
           echo "";
           echo "ERROR: Use --db-url with SUPABASE_DB_URL_DEV/PROD instead of --linked.";
           echo "The --linked flag causes pooler DNS issues on Windows.";
           exit 1; fi; exit 0' --
         language: system
-        files: '\.(ps1|yml|yaml|sh)$'
+        files: '\.(ps1|sh)$'
         types: [text]
 
       # Migration workflow reminder

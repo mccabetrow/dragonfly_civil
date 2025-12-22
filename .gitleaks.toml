@@ -1,0 +1,107 @@
+# ============================================================================
+# Gitleaks Configuration - Dragonfly Civil
+# ============================================================================
+# Purpose: Detect secrets before they're committed
+# Docs: https://github.com/gitleaks/gitleaks
+# ============================================================================
+
+title = "Dragonfly Civil - Secret Detection Rules"
+
+# Extend the default gitleaks rules
+[extend]
+useDefault = true
+
+# ============================================================================
+# Custom Rules - Dragonfly-Specific Patterns
+# ============================================================================
+
+[[rules]]
+id = "supabase-db-url"
+description = "Supabase Database URL (contains password)"
+regex = '''postgresql://postgres(\.[a-zA-Z0-9-]+)?:[^@]+@(aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com|db\.[a-z]+\.supabase\.co):[0-9]+'''
+keywords = ["pooler.supabase.com", "supabase.co", "postgresql://postgres"]
+tags = ["database", "supabase", "sev1"]
+
+[[rules]]
+id = "supabase-service-role-key"
+description = "Supabase Service Role Key (JWT format, starts with eyJ)"
+regex = '''eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{50,}'''
+keywords = ["eyJ", "SUPABASE"]
+tags = ["api-key", "supabase", "sev1"]
+
+[[rules]]
+id = "supabase-anon-key"
+description = "Supabase Anon Key (JWT format)"
+regex = '''eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{50,}\.?[A-Za-z0-9_-]*'''
+keywords = ["ANON", "supabase"]
+tags = ["api-key", "supabase"]
+
+[[rules]]
+id = "discord-webhook"
+description = "Discord Webhook URL"
+regex = '''https://discord(?:app)?\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+'''
+keywords = ["discord", "webhook"]
+tags = ["webhook", "discord"]
+
+[[rules]]
+id = "openai-api-key"
+description = "OpenAI API Key"
+regex = '''sk-[A-Za-z0-9]{20,}'''
+keywords = ["openai", "sk-"]
+tags = ["api-key", "openai"]
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API Key"
+regex = '''sk-ant-[A-Za-z0-9-]+'''
+keywords = ["anthropic", "sk-ant"]
+tags = ["api-key", "anthropic"]
+
+[[rules]]
+id = "postgres-connection-string"
+description = "PostgreSQL Connection String with Password"
+regex = '''postgres(ql)?://[^:]+:[^@]+@[^/]+/[^\s"']+'''
+keywords = ["postgres://", "postgresql://"]
+tags = ["database", "sev1"]
+
+[[rules]]
+id = "private-key-pem"
+description = "Private Key (PEM format)"
+regex = '''-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'''
+keywords = ["PRIVATE KEY"]
+tags = ["private-key", "sev1"]
+
+# ============================================================================
+# Allowlist - False Positive Exclusions
+# ============================================================================
+
+[allowlist]
+description = "Allowlist for false positives"
+
+# Paths that should never be scanned
+paths = [
+  '''\.env\.example$''',
+  '''\.env\.template$''',
+  '''tests/fixtures/''',
+  '''docs/.*\.md$''',
+  '''\.venv/''',
+  '''node_modules/''',
+  '''^\.git/''',
+]
+
+# Patterns that are known false positives
+regexes = [
+  # Placeholder values in documentation
+  '''placeholder''',
+  '''your-.*-here''',
+  '''xxx+''',
+  '''<your.*>''',
+  # Example URLs in comments
+  '''example\.com''',
+  '''localhost''',
+  # Base64 test data (short strings)
+  '''eyJ[A-Za-z0-9_-]{10,20}$''',
+]
+
+# Specific commits to ignore (e.g., if secrets were already rotated)
+commits = []
