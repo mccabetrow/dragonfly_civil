@@ -163,6 +163,35 @@ Get-Content $envFile | ForEach-Object {
 
 Write-StepPass "ENV"
 
+# ----------------------------------------------------------------------------
+# STEP 1.5: Database Connectivity Test (Port 6543 vs 5432)
+# ----------------------------------------------------------------------------
+Write-StepStart "DB-CONNECT" "Validating database connectivity (Runtime + Migration)"
+
+$dbConnTestPath = Join-Path $RepoRoot "tools\test_db_connection.py"
+if (Test-Path $dbConnTestPath) {
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m tools.test_db_connection 2>&1
+    $exitCode = $LASTEXITCODE
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        # Show just the summary lines
+        $result | Select-Object -Last 12 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Host ($result | Out-String) -ForegroundColor Red
+        Write-StepFail "DB-CONNECT" "Database connectivity test failed - check SUPABASE_DB_URL and SUPABASE_MIGRATE_DB_URL"
+        Invoke-CriticalFailure
+    }
+    Write-StepPass "DB-CONNECT"
+}
+else {
+    Write-Host "  Skipped (tools/test_db_connection.py not found)" -ForegroundColor DarkGray
+}
+
 # ============================================================================
 # PHASE 1: HARD GATE (Code Correctness + Contract Tests)
 # ============================================================================
@@ -366,7 +395,36 @@ else {
 }
 
 # ----------------------------------------------------------------------------
-# STEP 1.4e: Performance Budget Tests
+# STEP 1.4e: Zero Trust Final Compliance (ops.v_rls_coverage = 0 violations)
+# ----------------------------------------------------------------------------
+Write-StepStart "ZERO-TRUST-FINAL" "Verifying Zero Trust compliance (RLS coverage views)"
+
+$zeroTrustFinalTestFile = Join-Path $RepoRoot "tests\test_zero_trust_final.py"
+if (Test-Path $zeroTrustFinalTestFile) {
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest $zeroTrustFinalTestFile -v 2>&1
+    $exitCode = $LASTEXITCODE
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        # Show just the summary lines
+        $result | Select-Object -Last 10 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Host ($result | Out-String) -ForegroundColor Red
+        Write-StepFail "ZERO-TRUST-FINAL" "Zero Trust compliance failed - ops.v_rls_coverage violations detected"
+        Invoke-CriticalFailure
+    }
+    Write-StepPass "ZERO-TRUST-FINAL"
+}
+else {
+    Write-Host "  Skipped (tests/test_zero_trust_final.py not found)" -ForegroundColor DarkGray
+}
+
+# ----------------------------------------------------------------------------
+# STEP 1.4f: Performance Budget Tests
 # ----------------------------------------------------------------------------
 Write-StepStart "PERF-BUDGET" "Verifying performance budgets (Index + Query time)"
 

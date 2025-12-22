@@ -41,13 +41,16 @@ END $$;
 -- ============================================================================
 -- Schedule ops.reap_stuck_jobs(15) to run every 5 minutes
 -- The 15 = timeout in minutes (jobs processing > 15 min are stuck)
-DO $$ BEGIN -- Check if cron schema exists (pg_cron enabled)
-IF EXISTS (
-    SELECT 1
-    FROM pg_namespace
-    WHERE nspname = 'cron'
-) THEN -- Remove existing schedule if present (idempotent)
-PERFORM cron.unschedule('reap_stuck_jobs');
+DO $$
+DECLARE v_cron_exists BOOLEAN;
+BEGIN -- Check if cron schema exists (pg_cron enabled)
+SELECT EXISTS (
+        SELECT 1
+        FROM pg_namespace
+        WHERE nspname = 'cron'
+    ) INTO v_cron_exists;
+IF v_cron_exists THEN -- Remove existing schedule if present (idempotent)
+BEGIN PERFORM cron.unschedule('reap_stuck_jobs');
 RAISE NOTICE 'Removed existing reap_stuck_jobs schedule (if any)';
 EXCEPTION
 WHEN undefined_function THEN NULL;
@@ -56,16 +59,12 @@ WHEN OTHERS THEN NULL;
 -- Job didn't exist, skip
 END;
 -- Create new schedule
-IF EXISTS (
-    SELECT 1
-    FROM pg_namespace
-    WHERE nspname = 'cron'
-) THEN PERFORM cron.schedule(
+PERFORM cron.schedule(
     'reap_stuck_jobs',
     -- job name
     '*/5 * * * *',
     -- every 5 minutes
-    $$SELECT ops.reap_stuck_jobs(15) $$ -- 15 min timeout
+    'SELECT ops.reap_stuck_jobs(15)' -- 15 min timeout
 );
 RAISE NOTICE 'Scheduled reap_stuck_jobs: every 5 minutes with 15 min timeout';
 ELSE RAISE NOTICE 'cron schema not found - use Python fallback scheduler';
@@ -109,14 +108,22 @@ SELECT CASE
 COMMENT ON VIEW ops.v_reaper_status IS 'Monitoring view for the stuck job reaper';
 -- Grant access to monitoring roles
 GRANT SELECT ON ops.v_reaper_status TO service_role;
+-- Grant to dragonfly_app if it exists
+DO $$ BEGIN IF EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname = 'dragonfly_app'
+) THEN
 GRANT SELECT ON ops.v_reaper_status TO dragonfly_app;
+END IF;
+IF EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname = 'dragonfly_readonly'
+) THEN
 GRANT SELECT ON ops.v_reaper_status TO dragonfly_readonly;
--- ============================================================================
--- 4. VERIFICATION QUERY
--- ============================================================================
--- Run this to verify the schedule is active:
---   SELECT * FROM cron.job WHERE jobname = 'reap_stuck_jobs';
---   SELECT * FROM cron.job_run_details WHERE jobid = (SELECT jobid FROM cron.job WHERE jobname = 'reap_stuck_jobs') ORDER BY start_time DESC LIMIT 10;
+END IF;
+END $$;
 COMMIT;
 -- ============================================================================
 -- PYTHON FALLBACK SCHEDULER
