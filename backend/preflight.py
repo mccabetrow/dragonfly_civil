@@ -357,13 +357,13 @@ def _validate_environment(result: PreflightResult) -> None:
     # Handle common variants
     if env_lower in ("production", "prd"):
         result.warnings.append(
-            f"ENVIRONMENT='{env}' normalized to 'prod'\n" "   Recommended: Use 'prod' directly"
+            f"ENVIRONMENT='{env}' normalized to 'prod'\n   Recommended: Use 'prod' directly"
         )
         return
 
     if env_lower in ("development", "local"):
         result.warnings.append(
-            f"ENVIRONMENT='{env}' normalized to 'dev'\n" "   Recommended: Use 'dev' directly"
+            f"ENVIRONMENT='{env}' normalized to 'dev'\n   Recommended: Use 'dev' directly"
         )
         return
 

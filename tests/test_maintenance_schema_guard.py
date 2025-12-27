@@ -333,7 +333,7 @@ class TestSchemaDataContracts:
         with self.conn.cursor() as cur:
             exists = _table_exists(cur, "public", "judgments")
             assert exists, (
-                "Table public.judgments does not exist. " "This is a CORE table - check migrations."
+                "Table public.judgments does not exist. This is a CORE table - check migrations."
             )
 
     def test_public_judgments_required_columns(self):
@@ -366,8 +366,7 @@ class TestSchemaDataContracts:
         with self.conn.cursor() as cur:
             exists = _table_exists(cur, "public", "plaintiffs")
             assert exists, (
-                "Table public.plaintiffs does not exist. "
-                "This is a CORE table - check migrations."
+                "Table public.plaintiffs does not exist. This is a CORE table - check migrations."
             )
 
     def test_public_plaintiffs_required_columns(self):
@@ -428,9 +427,7 @@ class TestSchemaDataContracts:
         """Verify ops.ingest_batches table exists."""
         with self.conn.cursor() as cur:
             exists = _table_exists(cur, "ops", "ingest_batches")
-            assert exists, (
-                "Table ops.ingest_batches does not exist. " "Run migrations to create it."
-            )
+            assert exists, "Table ops.ingest_batches does not exist. Run migrations to create it."
 
     def test_ops_ingest_batches_required_columns(self):
         """Verify ops.ingest_batches has required columns."""
@@ -454,8 +451,7 @@ class TestSchemaDataContracts:
         with self.conn.cursor() as cur:
             exists = _table_exists(cur, "enforcement", "enforcement_plans")
             assert exists, (
-                "Table enforcement.enforcement_plans does not exist. "
-                "Run migrations to create it."
+                "Table enforcement.enforcement_plans does not exist. Run migrations to create it."
             )
 
     def test_enforcement_plans_required_columns(self):
@@ -580,9 +576,7 @@ class TestSchemaDataContracts:
         """Verify ops.v_intake_monitor view exists."""
         with self.conn.cursor() as cur:
             exists = _view_exists(cur, "ops", "v_intake_monitor")
-            assert exists, (
-                "View ops.v_intake_monitor does not exist. " "Run migrations to create it."
-            )
+            assert exists, "View ops.v_intake_monitor does not exist. Run migrations to create it."
 
     def test_ops_v_intake_monitor_queryable(self):
         """Verify ops.v_intake_monitor can be queried."""
@@ -601,8 +595,7 @@ class TestSchemaDataContracts:
             exists = _view_exists(cur, "analytics", "v_intake_radar")
             if not exists:
                 pytest.skip(
-                    "analytics.v_intake_radar not yet deployed - "
-                    "migration 20251209180000 pending"
+                    "analytics.v_intake_radar not yet deployed - migration 20251209180000 pending"
                 )
 
     def test_analytics_v_intake_radar_queryable(self):
@@ -648,7 +641,7 @@ class TestSchemaDataContracts:
         with self.conn.cursor() as cur:
             exists = _view_exists(cur, "finance", "v_portfolio_stats")
             assert exists, (
-                "View finance.v_portfolio_stats does not exist. " "Run migrations to create it."
+                "View finance.v_portfolio_stats does not exist. Run migrations to create it."
             )
 
     def test_finance_v_portfolio_stats_queryable(self):

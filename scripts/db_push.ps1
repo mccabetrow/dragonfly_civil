@@ -9,19 +9,29 @@
 .PARAMETER SupabaseEnv
     Target environment: 'dev' or 'prod'. Required.
 
+.PARAMETER Force
+    Skip confirmation prompt for production (used by Release Train).
+
 .EXAMPLE
     .\scripts\db_push.ps1 -SupabaseEnv dev
     .\scripts\db_push.ps1 -SupabaseEnv prod
+    .\scripts\db_push.ps1 -SupabaseEnv prod -Force
 #>
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("dev", "prod")]
-    [string]$SupabaseEnv
+    [string]$SupabaseEnv,
+
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
 $env:SUPABASE_MODE = $SupabaseEnv
 
 # Delegate to the canonical migration script
-& "$PSScriptRoot\db_migrate.ps1" -SupabaseEnv $SupabaseEnv
+if ($Force) {
+    & "$PSScriptRoot\db_migrate.ps1" -SupabaseEnv $SupabaseEnv -Force
+} else {
+    & "$PSScriptRoot\db_migrate.ps1" -SupabaseEnv $SupabaseEnv
+}

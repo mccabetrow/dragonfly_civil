@@ -103,6 +103,18 @@ class SystemHealthMetric(BaseModel):
     message: str
 
 
+class IntakeHealthMetrics(BaseModel):
+    """Intake pipeline health metrics for observability."""
+
+    last_intake_success: str | None = None
+    pending_validation: int = 0
+    failed_rows_24h: int = 0
+    enrichment_backlog: int = 0
+    active_workers: int = 0
+    batches_24h: int = 0
+    success_rate_24h: float | None = None
+
+
 class SystemHealthResponse(BaseModel):
     """
     Comprehensive system health response for CEO Dashboard and alerting.
@@ -117,6 +129,7 @@ class SystemHealthResponse(BaseModel):
     queue_health: dict | None = None
     worker_health: dict | None = None
     reaper_health: dict | None = None
+    intake_health: IntakeHealthMetrics | None = None
 
 
 # ==========================================================================
@@ -728,6 +741,114 @@ async def health_check_system() -> SystemHealthResponse:
                         )
                     )
 
+                # ----------------------------------------------------------
+                # INTAKE HEALTH
+                # ----------------------------------------------------------
+                intake_health_data = IntakeHealthMetrics()
+                try:
+                    # Last successful intake
+                    await cur.execute(
+                        """
+                        SELECT MAX(completed_at)
+                        FROM intake.simplicity_batches
+                        WHERE status = 'completed'
+                        """
+                    )
+                    row = await cur.fetchone()
+                    if row and row[0]:
+                        intake_health_data.last_intake_success = row[0].isoformat() + "Z"
+
+                    # Pending validation (raw rows not yet validated)
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM intake.simplicity_raw_rows r
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM intake.simplicity_validated_rows v
+                            WHERE v.raw_row_id = r.id
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM intake.simplicity_failed_rows f
+                            WHERE f.raw_row_id = r.id AND f.resolved_at IS NULL
+                        )
+                        """
+                    )
+                    row = await cur.fetchone()
+                    intake_health_data.pending_validation = row[0] or 0
+
+                    # Failed rows in last 24h
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM intake.simplicity_failed_rows
+                        WHERE created_at > NOW() - INTERVAL '24 hours'
+                        AND resolved_at IS NULL
+                        """
+                    )
+                    row = await cur.fetchone()
+                    intake_health_data.failed_rows_24h = row[0] or 0
+
+                    # Enrichment backlog (pending enrichment jobs)
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM ops.job_queue
+                        WHERE job_type IN ('enrich_tlo', 'enrich_idicore')
+                        AND status = 'pending'
+                        """
+                    )
+                    row = await cur.fetchone()
+                    intake_health_data.enrichment_backlog = row[0] or 0
+
+                    # Active workers (from earlier query)
+                    intake_health_data.active_workers = worker_health.get("active_workers", 0)
+
+                    # Batches in last 24h with success rate
+                    await cur.execute(
+                        """
+                        SELECT 
+                            COUNT(*) AS batch_count,
+                            AVG(
+                                CASE WHEN row_count_total > 0 
+                                THEN (row_count_valid::float / row_count_total) * 100 
+                                ELSE 0 END
+                            ) AS avg_success_rate
+                        FROM intake.simplicity_batches
+                        WHERE created_at > NOW() - INTERVAL '24 hours'
+                        """
+                    )
+                    row = await cur.fetchone()
+                    intake_health_data.batches_24h = row[0] or 0
+                    if row[1] is not None:
+                        intake_health_data.success_rate_24h = round(float(row[1]), 2)
+
+                    # Add intake metrics to SLO checks
+                    if intake_health_data.pending_validation > 100:
+                        metrics.append(
+                            SystemHealthMetric(
+                                name="intake_pending",
+                                status="warning",
+                                value=intake_health_data.pending_validation,
+                                threshold="100",
+                                message=f"{intake_health_data.pending_validation} rows pending validation",
+                            )
+                        )
+
+                    if intake_health_data.failed_rows_24h > 50:
+                        metrics.append(
+                            SystemHealthMetric(
+                                name="intake_failures",
+                                status="warning",
+                                value=intake_health_data.failed_rows_24h,
+                                threshold="50",
+                                message=f"{intake_health_data.failed_rows_24h} failed rows in 24h",
+                            )
+                        )
+
+                except Exception as e:
+                    logger.warning(f"Failed to collect intake health: {e}")
+                    # Don't fail the whole health check
+
         # ----------------------------------------------------------
         # DETERMINE OVERALL STATUS
         # ----------------------------------------------------------
@@ -749,6 +870,7 @@ async def health_check_system() -> SystemHealthResponse:
             queue_health=queue_health,
             worker_health=worker_health,
             reaper_health=reaper_health,
+            intake_health=intake_health_data,
         )
 
     except Exception as e:

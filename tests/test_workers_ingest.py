@@ -512,9 +512,9 @@ class TestClaimPendingJob:
         source = worker_path.read_text(encoding="utf-8")
 
         # The entry point should NOT pass _job_claimer to bootstrap.run()
-        assert (
-            "bootstrap.run(_job_processor, _job_claimer)" not in source
-        ), "ingest_processor should use bootstrap's default claim (with worker_id)"
+        assert "bootstrap.run(_job_processor, _job_claimer)" not in source, (
+            "ingest_processor should use bootstrap's default claim (with worker_id)"
+        )
 
     def test_rpc_claim_pending_job_accepts_worker_id(self):
         """Verify RPCClient.claim_pending_job accepts worker_id parameter."""

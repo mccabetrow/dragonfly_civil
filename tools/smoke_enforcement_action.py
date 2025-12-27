@@ -91,10 +91,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     env = get_supabase_env()
     client = create_supabase_client()
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  ENFORCEMENT ACTION SMOKE TEST")
     print(f"  Environment: {env}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     test_case_index = f"SMOKE-EA-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     judgment_id = args.judgment_id
@@ -275,9 +275,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 client.table("core_judgments").delete().eq("id", judgment_id).execute()
                 print(f"  [OK] Deleted judgment {judgment_id}")
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("  SMOKE TEST COMPLETE")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
         return 0
 
     except Exception as e:

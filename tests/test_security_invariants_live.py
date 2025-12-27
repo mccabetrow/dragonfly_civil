@@ -34,6 +34,16 @@ except ImportError:
 
 
 # =============================================================================
+# MARKERS AND SKIP CONDITIONS
+# =============================================================================
+
+pytestmark = [
+    pytest.mark.security,  # Security gate marker
+    pytest.mark.skipif(psycopg is None, reason="psycopg v3 required"),
+]
+
+
+# =============================================================================
 # SECURITY DEFINER WHITELIST
 # =============================================================================
 # Only these functions are allowed to use SECURITY DEFINER
@@ -207,13 +217,8 @@ FORCE_RLS_EXCLUDED_TABLES = frozenset(
 
 
 # =============================================================================
-# MARKERS AND SKIP CONDITIONS
+# DB CONNECTION HELPERS
 # =============================================================================
-
-pytestmark = [
-    pytest.mark.security,
-    pytest.mark.skipif(psycopg is None, reason="psycopg v3 required"),
-]
 
 
 def _get_db_url() -> str | None:

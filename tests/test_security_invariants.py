@@ -48,6 +48,7 @@ except ImportError:
 # =============================================================================
 
 pytestmark = [
+    pytest.mark.security,  # Security gate marker
     pytest.mark.skipif(psycopg is None, reason="psycopg v3 required"),
 ]
 
@@ -176,9 +177,9 @@ class TestAuthenticatedRoleRestrictions:
                 cur.execute("SELECT has_table_privilege('ops.job_queue', 'INSERT') as can_insert")
                 result = cur.fetchone()
                 assert result is not None
-                assert not result[
-                    "can_insert"
-                ], "authenticated role has INSERT privilege on ops.job_queue"
+                assert not result["can_insert"], (
+                    "authenticated role has INSERT privilege on ops.job_queue"
+                )
 
     def test_authenticated_cannot_select_from_worker_heartbeats(self) -> None:
         """
@@ -197,9 +198,9 @@ class TestAuthenticatedRoleRestrictions:
                     rows = cur.fetchall()
                     # If we get here, RLS should have blocked (returning 0 rows)
                     # This is acceptable if RLS is enforced
-                    assert (
-                        len(rows) == 0
-                    ), "RLS should block authenticated from seeing worker_heartbeats"
+                    assert len(rows) == 0, (
+                        "RLS should block authenticated from seeing worker_heartbeats"
+                    )
                 except psycopg.errors.InsufficientPrivilege:
                     # Expected: no SELECT privilege
                     pass

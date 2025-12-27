@@ -103,7 +103,7 @@ async def send_email(
         response = client.send(message)
 
         logger.info(
-            f"Email sent: to={to_email}, subject='{subject}', " f"status={response.status_code}"
+            f"Email sent: to={to_email}, subject='{subject}', status={response.status_code}"
         )
 
         return {
@@ -152,7 +152,7 @@ async def send_sms(
             to=to_number,
         )
 
-        logger.info(f"SMS sent: to={to_number}, sid={sms.sid}, " f"status={sms.status}")
+        logger.info(f"SMS sent: to={to_number}, sid={sms.sid}, status={sms.status}")
 
         return {
             "success": True,
@@ -389,10 +389,10 @@ async def send_daily_recap() -> dict[str, Any]:
             <h2>🌙 Dragonfly Daily Recap</h2>
             <p><strong>{today_str}</strong></p>
             <table style="font-size: 16px; border-collapse: collapse;">
-                <tr><td style="padding: 8px;">📋 New Judgments</td><td style="padding: 8px;"><strong>{stats['new_judgments']:,}</strong></td></tr>
-                <tr><td style="padding: 8px;">🚗 Gig Hits</td><td style="padding: 8px;"><strong>{stats['gig_hits']:,}</strong></td></tr>
-                <tr><td style="padding: 8px;">📬 Papers Served</td><td style="padding: 8px;"><strong>{stats['served_papers']:,}</strong></td></tr>
-                <tr><td style="padding: 8px;">💰 Portfolio Value</td><td style="padding: 8px;"><strong>${stats['portfolio_value']:,.2f}</strong></td></tr>
+                <tr><td style="padding: 8px;">📋 New Judgments</td><td style="padding: 8px;"><strong>{stats["new_judgments"]:,}</strong></td></tr>
+                <tr><td style="padding: 8px;">🚗 Gig Hits</td><td style="padding: 8px;"><strong>{stats["gig_hits"]:,}</strong></td></tr>
+                <tr><td style="padding: 8px;">📬 Papers Served</td><td style="padding: 8px;"><strong>{stats["served_papers"]:,}</strong></td></tr>
+                <tr><td style="padding: 8px;">💰 Portfolio Value</td><td style="padding: 8px;"><strong>${stats["portfolio_value"]:,.2f}</strong></td></tr>
             </table>
             <p style="margin-top: 20px; color: #28a745;">✅ All systems operational. Sleep well! 🛏️</p>
             """

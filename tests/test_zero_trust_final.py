@@ -9,6 +9,13 @@ import os
 
 import pytest
 
+# =============================================================================
+# MARKERS
+# =============================================================================
+
+pytestmark = pytest.mark.security  # Security gate marker
+
+
 # Ensure we use dev environment for tests
 os.environ.setdefault("SUPABASE_MODE", "dev")
 
@@ -16,10 +23,17 @@ from src.supabase_client import get_supabase_db_url
 
 
 def get_direct_connection():
-    """Get a direct psycopg connection for testing."""
+    """Get a direct psycopg connection for testing.
+
+    Prefers SUPABASE_MIGRATE_DB_URL (direct, port 5432) over pooler URL
+    to avoid transient pooler issues during CI/local testing.
+    """
+    import os
+
     import psycopg
 
-    db_url = get_supabase_db_url()
+    # Prefer direct connection for tests (more reliable than pooler)
+    db_url = os.environ.get("SUPABASE_MIGRATE_DB_URL") or get_supabase_db_url()
     return psycopg.connect(db_url, autocommit=True)
 
 
@@ -197,6 +211,57 @@ class TestZeroTrustCompliance:
 class TestTableLockdown:
     """Test that sensitive tables are properly locked down."""
 
+    # Allowlist of views that are intentionally granted to anon for dashboard use.
+    # Any view not in this list with anon SELECT will fail the test.
+    # Document WHY each view is allowed:
+    ALLOWED_ANON_VIEWS = {
+        # Dashboard views - aggregated, non-sensitive metrics for CEO/ops dashboard
+        "public.v_plaintiffs_overview",  # Plaintiff summary stats (no PII)
+        "public.v_judgment_pipeline",  # Judgment funnel metrics
+        "public.v_enforcement_overview",  # Enforcement progress stats
+        "public.v_enforcement_recent",  # Recent enforcement activity
+        "public.v_plaintiff_call_queue",  # Call queue for outreach
+        "public.v_case_copilot_latest",  # Case copilot summary
+        "public.v_enforcement_timeline",  # Enforcement timeline
+        "public.v_live_feed_events",  # Live activity feed
+        "public.v_ops_daily_summary",  # Daily operations metrics
+        # Analytics views
+        "analytics.v_intake_radar",  # Intake pipeline metrics
+        "analytics.v_collectability_distribution",  # Collectability buckets
+        "analytics.v_collectability_scores",  # Collectability scoring
+        # Enforcement views
+        "enforcement.v_candidate_wage_garnishments",  # Garnishment candidates
+        "enforcement.v_enforcement_pipeline_status",  # Pipeline status
+        "enforcement.v_plaintiff_call_queue",  # Plaintiff call queue
+        "enforcement.v_radar",  # Enforcement radar
+        # Finance views
+        "finance.v_pool_performance",  # Pool performance metrics
+        "finance.v_portfolio_stats",  # Portfolio statistics
+        # Intelligence views
+        "intelligence.v_gig_platforms_active",  # Gig platform activity
+        # System views (read-only, safe)
+        "extensions.pg_stat_statements",  # Query statistics (no sensitive data)
+        "extensions.pg_stat_statements_info",  # Stats metadata
+        # Add new dashboard views here with justification
+    }
+
+    # Columns that should NEVER be exposed to anon, even in views
+    SENSITIVE_COLUMNS = {
+        "ssn",
+        "social_security",
+        "tax_id",
+        "ein",
+        "bank_account",
+        "routing_number",
+        "credit_card",
+        "password",
+        "password_hash",
+        "secret",
+        "api_key",
+        "access_token",
+        "refresh_token",
+    }
+
     @pytest.mark.parametrize(
         "schema,table",
         [
@@ -246,6 +311,79 @@ class TestTableLockdown:
 
                 assert has_rls, f"{schema}.{table}: RLS not enabled"
                 assert force_rls, f"{schema}.{table}: FORCE RLS not set"
+        finally:
+            conn.close()
+
+    def test_anon_only_accesses_allowed_views(self):
+        """Verify anon role only has SELECT on explicitly allowed dashboard views."""
+        conn = get_direct_connection()
+        try:
+            with conn.cursor() as cur:
+                # Find all views where anon has SELECT privilege
+                cur.execute(
+                    """
+                    SELECT 
+                        n.nspname || '.' || c.relname AS view_fqn,
+                        c.relname AS view_name,
+                        n.nspname AS schema_name
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE c.relkind = 'v'  -- views only
+                      AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'cron')
+                      AND has_table_privilege('anon', c.oid, 'SELECT')
+                    ORDER BY n.nspname, c.relname
+                    """
+                )
+                anon_views = cur.fetchall()
+
+                unauthorized = []
+                for view_fqn, view_name, schema_name in anon_views:
+                    if view_fqn not in self.ALLOWED_ANON_VIEWS:
+                        unauthorized.append(view_fqn)
+
+                if unauthorized:
+                    unauthorized_list = "\n".join(f"  - {v}" for v in unauthorized)
+                    pytest.fail(
+                        f"Anon has SELECT on {len(unauthorized)} unauthorized view(s):\n{unauthorized_list}\n\n"
+                        f"If intentional, add to ALLOWED_ANON_VIEWS with justification."
+                    )
+        finally:
+            conn.close()
+
+    def test_anon_views_have_no_sensitive_columns(self):
+        """Verify allowed anon views don't expose sensitive columns."""
+        conn = get_direct_connection()
+        try:
+            with conn.cursor() as cur:
+                violations = []
+
+                for view_fqn in self.ALLOWED_ANON_VIEWS:
+                    parts = view_fqn.split(".")
+                    if len(parts) != 2:
+                        continue
+                    schema_name, view_name = parts
+
+                    # Get columns of this view
+                    cur.execute(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = %s
+                        """,
+                        (schema_name, view_name),
+                    )
+                    columns = [row[0].lower() for row in cur.fetchall()]
+
+                    for col in columns:
+                        for sensitive in self.SENSITIVE_COLUMNS:
+                            if sensitive in col:
+                                violations.append(f"{view_fqn}.{col} (matches: {sensitive})")
+
+                if violations:
+                    violation_list = "\n".join(f"  - {v}" for v in violations)
+                    pytest.fail(
+                        f"Allowed anon views contain {len(violations)} potentially sensitive column(s):\n{violation_list}"
+                    )
         finally:
             conn.close()
 

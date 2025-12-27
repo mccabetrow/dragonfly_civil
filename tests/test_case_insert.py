@@ -110,7 +110,7 @@ def test_insert_case_is_idempotent() -> None:
 
     # Idempotency check: IDs must match
     assert first_id == second_id, (
-        f"Case insert must be idempotent. " f"First id={first_id}, Second id={second_id}"
+        f"Case insert must be idempotent. First id={first_id}, Second id={second_id}"
     )
 
     # Verify only one row exists

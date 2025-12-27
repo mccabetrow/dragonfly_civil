@@ -44,9 +44,9 @@ class TestAccessLogsTable:
         result = (
             client.from_("access_logs").select("id, table_name, access_type").limit(5).execute()
         )
-        assert (
-            not hasattr(result, "error") or result.error is None
-        ), "service_role should be able to read access_logs"
+        assert not hasattr(result, "error") or result.error is None, (
+            "service_role should be able to read access_logs"
+        )
 
 
 class TestLogAccessFunction:
@@ -93,9 +93,9 @@ class TestLogAccessFunction:
                 },
             ).execute()
 
-            assert (
-                not hasattr(result, "error") or result.error is None
-            ), f"Access type '{access_type}' should be valid"
+            assert not hasattr(result, "error") or result.error is None, (
+                f"Access type '{access_type}' should be valid"
+            )
 
 
 class TestLogExportFunction:
@@ -161,9 +161,9 @@ class TestAccessLogsImmutability:
             )
             if verify_result.data and len(verify_result.data) > 0:
                 metadata = verify_result.data[0].get("metadata", {})
-                assert (
-                    metadata.get("original") is True
-                ), "access_logs record should not be modifiable - FCRA compliance"
+                assert metadata.get("original") is True, (
+                    "access_logs record should not be modifiable - FCRA compliance"
+                )
         except APIError:
             # Getting an error on UPDATE is SUCCESS - security is working
             # The RULE blocks UPDATE with "cannot perform UPDATE RETURNING"
@@ -204,9 +204,9 @@ class TestAccessLogsImmutability:
             client.from_("access_logs").delete().eq("id", log_id).execute()
             # If we get here without error, verify record still exists
             verify_result = client.from_("access_logs").select("id").eq("id", log_id).execute()
-            assert (
-                verify_result.data and len(verify_result.data) > 0
-            ), "access_logs record should not be deletable - FCRA compliance"
+            assert verify_result.data and len(verify_result.data) > 0, (
+                "access_logs record should not be deletable - FCRA compliance"
+            )
         except APIError as e:
             # Getting an error on DELETE is SUCCESS - security is working
             # 0A000 = feature_not_supported (RULE blocks DELETE RETURNING)

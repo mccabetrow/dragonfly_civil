@@ -121,9 +121,9 @@ class TestSacredLocking:
 
         # Assert: Exactly ONE worker got the job
         successful_claims = [r for r in claim_results if r.get("claimed")]
-        assert (
-            len(successful_claims) == 1
-        ), f"Expected exactly 1 successful claim, got {len(successful_claims)}: {claim_results}"
+        assert len(successful_claims) == 1, (
+            f"Expected exactly 1 successful claim, got {len(successful_claims)}: {claim_results}"
+        )
 
         # Verify the winner got the correct job
         winner = successful_claims[0]
@@ -196,9 +196,9 @@ class TestSacredLocking:
         for r in claim_results:
             all_claimed.extend(r["claimed_jobs"])
 
-        assert len(all_claimed) == len(
-            set(all_claimed)
-        ), f"Duplicate claims detected: {all_claimed}"
+        assert len(all_claimed) == len(set(all_claimed)), (
+            f"Duplicate claims detected: {all_claimed}"
+        )
 
         # Cleanup
         with get_connection() as conn:
@@ -253,9 +253,9 @@ class TestSacredReaper:
         assert len(reaped) >= 1, "Reaper should have found the stuck job"
         reaped_job = next((r for r in reaped if r["job_id"] == job_id), None)
         assert reaped_job is not None, "Our test job should be in reaped results"
-        assert (
-            reaped_job["action_taken"] == "recovered"
-        ), f"Expected 'recovered', got '{reaped_job['action_taken']}'"
+        assert reaped_job["action_taken"] == "recovered", (
+            f"Expected 'recovered', got '{reaped_job['action_taken']}'"
+        )
 
         # Verify job is now pending with backoff
         with get_connection() as conn:
@@ -272,9 +272,9 @@ class TestSacredReaper:
         assert job["status"] == "pending", f"Expected 'pending', got '{job['status']}'"
         assert job["next_run_at"] is not None, "Backoff should set next_run_at"
         assert job["reap_count"] >= 1, "reap_count should be incremented"
-        assert "[RECOVERED]" in (
-            job["last_error"] or ""
-        ), f"last_error should contain recovery message: {job['last_error']}"
+        assert "[RECOVERED]" in (job["last_error"] or ""), (
+            f"last_error should contain recovery message: {job['last_error']}"
+        )
 
         # Cleanup
         with get_connection() as conn:
@@ -323,9 +323,9 @@ class TestSacredReaper:
         # Assert: Job was moved to DLQ
         reaped_job = next((r for r in reaped if r["job_id"] == job_id), None)
         assert reaped_job is not None, "Our test job should be in reaped results"
-        assert (
-            reaped_job["action_taken"] == "dlq"
-        ), f"Expected 'dlq', got '{reaped_job['action_taken']}'"
+        assert reaped_job["action_taken"] == "dlq", (
+            f"Expected 'dlq', got '{reaped_job['action_taken']}'"
+        )
 
         # Verify job is now failed
         with get_connection() as conn:
@@ -340,9 +340,9 @@ class TestSacredReaper:
                 job = cur.fetchone()
 
         assert job["status"] == "failed", f"Expected 'failed', got '{job['status']}'"
-        assert "[DLQ]" in (
-            job["last_error"] or ""
-        ), f"last_error should contain DLQ message: {job['last_error']}"
+        assert "[DLQ]" in (job["last_error"] or ""), (
+            f"last_error should contain DLQ message: {job['last_error']}"
+        )
 
         # Cleanup
         with get_connection() as conn:
@@ -525,9 +525,9 @@ class TestSacredIdempotency:
                 second_id = cur.fetchone()["job_id"]
                 conn.commit()
 
-        assert (
-            first_id == second_id
-        ), f"Idempotent RPC should return same ID: {first_id} != {second_id}"
+        assert first_id == second_id, (
+            f"Idempotent RPC should return same ID: {first_id} != {second_id}"
+        )
 
         # Cleanup
         with get_connection() as conn:
@@ -601,9 +601,9 @@ class TestExponentialBackoff:
 
         # Allow 5 second tolerance for timing
         actual = result["backoff_secs"]
-        assert (
-            abs(actual - expected_seconds) < 5
-        ), f"Backoff at attempt {attempts}: expected ~{expected_seconds}s, got {actual}s"
+        assert abs(actual - expected_seconds) < 5, (
+            f"Backoff at attempt {attempts}: expected ~{expected_seconds}s, got {actual}s"
+        )
 
         # Cleanup
         with get_connection() as conn:

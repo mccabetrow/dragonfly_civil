@@ -339,8 +339,7 @@ class SchemaGuard:
             else:
                 await self._send_alert(
                     "Schema Repair Failed ❌",
-                    f"Repair encountered errors.\n\n"
-                    f"Error: {repair_result.get('error', 'Unknown')}",
+                    f"Repair encountered errors.\n\nError: {repair_result.get('error', 'Unknown')}",
                 )
                 logger.error("[SchemaGuard] Repair failed")
 

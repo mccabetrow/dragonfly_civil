@@ -80,8 +80,7 @@ class IntakeGuardian:
         result = GuardianResult()
 
         logger.info(
-            f"🛡️ Intake Guardian: Checking for stuck batches "
-            f"(stale > {self.stale_minutes} minutes)"
+            f"🛡️ Intake Guardian: Checking for stuck batches (stale > {self.stale_minutes} minutes)"
         )
 
         try:

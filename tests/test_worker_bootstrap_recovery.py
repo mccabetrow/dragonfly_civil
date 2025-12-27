@@ -130,9 +130,9 @@ class TestBackoffStateIntegration:
         # Each subsequent delay should be >= previous (exponential)
         for i in range(1, len(delays)):
             # Allow for jitter variance but generally increasing
-            assert (
-                delays[i] >= delays[i - 1] * 0.8
-            ), f"Delay {i} ({delays[i]}) should be >= delay {i-1} ({delays[i - 1]})"
+            assert delays[i] >= delays[i - 1] * 0.8, (
+                f"Delay {i} ({delays[i]}) should be >= delay {i - 1} ({delays[i - 1]})"
+            )
 
     def test_record_success_resets_backoff(self):
         """Success should reset backoff to initial state."""
@@ -157,7 +157,7 @@ class TestBackoffStateIntegration:
         # Default threshold is 10
         for i in range(9):
             backoff.record_failure()
-            assert not backoff.is_in_crash_loop(), f"Should not be crash loop at {i+1} failures"
+            assert not backoff.is_in_crash_loop(), f"Should not be crash loop at {i + 1} failures"
 
         backoff.record_failure()  # 10th failure
         assert backoff.is_in_crash_loop(), "Should detect crash loop at 10 failures"

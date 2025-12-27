@@ -257,7 +257,7 @@ class TestCORSConfiguration:
         )
 
         assert response.status_code == 200, (
-            f"Preflight failed with {response.status_code}. " f"Headers: {dict(response.headers)}"
+            f"Preflight failed with {response.status_code}. Headers: {dict(response.headers)}"
         )
         assert response.headers.get("Access-Control-Allow-Origin") == self.PROD_ORIGIN
 
@@ -272,9 +272,9 @@ class TestCORSConfiguration:
             },
         )
 
-        assert (
-            response.status_code == 200
-        ), f"Preflight for git preview origin failed with {response.status_code}"
+        assert response.status_code == 200, (
+            f"Preflight for git preview origin failed with {response.status_code}"
+        )
         assert response.headers.get("Access-Control-Allow-Origin") == self.PROD_ORIGIN_GIT
 
     def test_cors_preflight_vercel_preview_origin(self, cors_client: TestClient) -> None:

@@ -294,7 +294,7 @@ if __name__ == "__main__":
     if args.file:
         # Direct file processing mode
         result = process_csv_file(args.file, args.source_ref, args.env)
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Batch ID:    {result.batch_id}")
         print(f"Total Rows:  {result.total_rows}")
         print(f"Staged:      {result.staged_rows}")
@@ -304,7 +304,7 @@ if __name__ == "__main__":
         print(f"Duplicates:  {result.duplicate_rows}")
         if result.error_summary:
             print(f"Error:       {result.error_summary}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
     elif args.once:
         # Single job mode - claim with worker_id for traceability
         import socket

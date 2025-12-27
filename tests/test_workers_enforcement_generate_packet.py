@@ -47,9 +47,7 @@ class TestGeneratePacketEndpoint:
         # Mock judgments table lookup
         judgments_response = MagicMock()
         judgments_response.data = [{"id": 123, "case_number": "2024-CV-001234"}]
-        client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = (
-            judgments_response
-        )
+        client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = judgments_response
 
         # Mock job_queue insert
         job_response = MagicMock()
@@ -105,9 +103,7 @@ class TestGeneratePacketEndpoint:
         from backend.routers.enforcement import GeneratePacketRequest, generate_enforcement_packet
 
         # Mock empty judgment result
-        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = (
-            []
-        )
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
 
         with patch(
             "backend.routers.enforcement.get_supabase_client",
@@ -210,9 +206,7 @@ class TestJobStatusEndpoint:
         from backend.routers.enforcement import get_job_status
 
         mock_client = MagicMock()
-        mock_client.schema.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = (
-            []
-        )
+        mock_client.schema.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
 
         with patch(
             "backend.routers.enforcement.get_supabase_client",

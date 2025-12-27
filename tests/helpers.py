@@ -92,13 +92,13 @@ def execute_resilient(
                 time.sleep(sleep_time)
             else:
                 logger.warning(
-                    f"Transient error ({exc_type}): {exc}. " f"All {retries} retries exhausted."
+                    f"Transient error ({exc_type}): {exc}. All {retries} retries exhausted."
                 )
 
     # All retries exhausted
     if skip_on_exhaustion:
         pytest.skip(
-            f"Skipping due to PostgREST unavailable after {retries} retries: " f"{last_exception}"
+            f"Skipping due to PostgREST unavailable after {retries} retries: {last_exception}"
         )
     else:
         raise last_exception  # type: ignore[misc]

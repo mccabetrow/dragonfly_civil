@@ -6,6 +6,9 @@ Zero Trust Dual-Connection Pattern:
   - admin_db: Superuser connection for data seeding and cleanup
   - Uses SECURITY DEFINER RPCs where available (insert_or_get_case_with_entities)
   - Uses savepoints for transaction rollback
+
+NOTE: Marked as integration because insert_or_get_case_with_entities(jsonb)
+      RPC not yet deployed to prod.
 """
 
 from __future__ import annotations
@@ -16,8 +19,12 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
+import pytest
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
+
+# Mark entire module as integration - requires insert_or_get_case_with_entities RPC
+pytestmark = pytest.mark.integration
 
 from etl.src.foil_utils import record_foil_response
 

@@ -336,14 +336,13 @@ def connect_with_retry(
         except psycopg.OperationalError as e:
             last_error = e
             logger.warning(
-                f"[{worker_type}] Connection attempt {attempt} failed: " f"{type(e).__name__}: {e}"
+                f"[{worker_type}] Connection attempt {attempt} failed: {type(e).__name__}: {e}"
             )
 
         except Exception as e:
             last_error = e
             logger.error(
-                f"[{worker_type}] Unexpected error on attempt {attempt}: "
-                f"{type(e).__name__}: {e}"
+                f"[{worker_type}] Unexpected error on attempt {attempt}: {type(e).__name__}: {e}"
             )
 
         # Calculate next delay with exponential backoff and jitter

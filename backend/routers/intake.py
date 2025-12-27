@@ -734,3 +734,416 @@ async def get_batch_errors(
             page=page,
             page_size=page_size,
         )
+
+
+# ---------------------------------------------------------------------------
+# V1 Endpoints - Using intake.view_batch_progress
+# Ops-Grade Observability endpoints for detailed batch inspection
+# ---------------------------------------------------------------------------
+
+
+class SimplicitBatchProgress(BaseModel):
+    """Progress details for a Simplicity batch from intake.view_batch_progress."""
+
+    batch_id: str
+    filename: str | None = None
+    source_reference: str | None = None
+    status: str
+    total_rows: int = 0
+    processed_count: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    job_count: int = 0
+    progress_pct: float = 0.0
+    success_rate_pct: float = 0.0
+    error_summary: str | None = None
+    created_at: str | None = None
+
+
+class SimplicityBatchError(BaseModel):
+    """Error entry for a Simplicity batch."""
+
+    row_index: int
+    error_stage: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    raw_data_preview: str | None = None  # Truncated/masked for security
+    retryable: bool = True
+    created_at: str | None = None
+
+
+class SimplicityBatchErrorsResponse(BaseModel):
+    """Paginated errors response for a Simplicity batch."""
+
+    batch_id: str
+    errors: list[SimplicityBatchError]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get(
+    "/v1/batches/{batch_id}",
+    response_model=ApiResponse[SimplicitBatchProgress],
+    summary="Get Simplicity batch progress (v1)",
+    description="""
+Get detailed progress for a Simplicity intake batch.
+
+Uses `intake.view_batch_progress` for real-time progress tracking.
+Returns counts for total, staged, success, failed, and job queue.
+""",
+)
+async def get_simplicity_batch_progress(
+    batch_id: UUID,
+    auth: AuthContext = Depends(get_current_user),
+) -> ApiResponse[SimplicitBatchProgress]:
+    """Get batch progress from intake.view_batch_progress."""
+
+    pool = await get_pool()
+
+    async with pool.connection() as conn:
+        from psycopg.rows import dict_row
+
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT 
+                    batch_id,
+                    filename,
+                    source_reference,
+                    status,
+                    total_rows,
+                    processed_count,
+                    success_count,
+                    failed_count,
+                    job_count,
+                    progress_pct,
+                    success_rate_pct,
+                    error_summary,
+                    created_at
+                FROM intake.view_batch_progress 
+                WHERE batch_id = %s
+                """,
+                (batch_id,),
+            )
+            row = await cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Batch not found")
+
+        data = SimplicitBatchProgress(
+            batch_id=str(row["batch_id"]),
+            filename=row["filename"],
+            source_reference=row["source_reference"],
+            status=row["status"],
+            total_rows=row["total_rows"] or 0,
+            processed_count=row["processed_count"] or 0,
+            success_count=row["success_count"] or 0,
+            failed_count=row["failed_count"] or 0,
+            job_count=row["job_count"] or 0,
+            progress_pct=float(row["progress_pct"] or 0),
+            success_rate_pct=float(row["success_rate_pct"] or 0),
+            error_summary=row["error_summary"],
+            created_at=row["created_at"].isoformat() if row["created_at"] else None,
+        )
+        return api_response(data=data)
+
+
+@router.get(
+    "/v1/batches/{batch_id}/errors",
+    response_model=ApiResponse[SimplicityBatchErrorsResponse],
+    summary="Get Simplicity batch errors (v1)",
+    description="""
+Get paginated error log for a Simplicity intake batch.
+
+Returns error details including row_index, error_code, error_message,
+and a truncated preview of the raw_data (masked for security).
+""",
+)
+async def get_simplicity_batch_errors(
+    batch_id: UUID,
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=200, description="Results per page"),
+    auth: AuthContext = Depends(get_current_user),
+) -> ApiResponse[SimplicityBatchErrorsResponse]:
+    """Get error log entries for a Simplicity batch."""
+
+    pool = await get_pool()
+
+    async with pool.connection() as conn:
+        from psycopg.rows import dict_row
+
+        # Verify batch exists
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM intake.simplicity_batches WHERE id = %s",
+                (batch_id,),
+            )
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="Batch not found")
+
+        # Get total count of unresolved errors
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT COUNT(*) FROM intake.simplicity_failed_rows
+                WHERE batch_id = %s AND resolved_at IS NULL
+                """,
+                (batch_id,),
+            )
+            row = await cur.fetchone()
+            total = row[0] if row else 0
+
+        # Get paginated errors
+        offset = (page - 1) * page_size
+
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT
+                    row_index,
+                    error_stage,
+                    error_code,
+                    error_message,
+                    raw_data,
+                    retryable,
+                    created_at
+                FROM intake.simplicity_failed_rows
+                WHERE batch_id = %s AND resolved_at IS NULL
+                ORDER BY row_index
+                LIMIT %s OFFSET %s
+                """,
+                (batch_id, page_size, offset),
+            )
+            rows = await cur.fetchall()
+
+        import json
+
+        errors = []
+        for row in rows:
+            # Truncate/mask raw_data for security
+            raw_data_preview = None
+            if row["raw_data"]:
+                try:
+                    raw_str = json.dumps(row["raw_data"])
+                    # Truncate to 200 chars
+                    if len(raw_str) > 200:
+                        raw_data_preview = raw_str[:200] + "..."
+                    else:
+                        raw_data_preview = raw_str
+                except Exception:
+                    raw_data_preview = "[unable to serialize]"
+
+            errors.append(
+                SimplicityBatchError(
+                    row_index=row["row_index"],
+                    error_stage=row["error_stage"],
+                    error_code=row["error_code"],
+                    error_message=row["error_message"],
+                    raw_data_preview=raw_data_preview,
+                    retryable=row["retryable"] if row["retryable"] is not None else True,
+                    created_at=row["created_at"].isoformat() if row["created_at"] else None,
+                )
+            )
+
+        data = SimplicityBatchErrorsResponse(
+            batch_id=str(batch_id),
+            errors=errors,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+        return api_response(data=data)
+
+
+# ---------------------------------------------------------------------------
+# Intake Trace Endpoint - Timeline view for a batch
+# ---------------------------------------------------------------------------
+
+
+class IntakeTraceEvent(BaseModel):
+    """Single event in an intake trace timeline."""
+
+    timestamp: str
+    stage: str
+    event: str
+    details: dict | None = None
+    row_index: int | None = None
+    correlation_id: str | None = None
+
+
+class IntakeTraceResponse(BaseModel):
+    """Full timeline trace for a batch."""
+
+    batch_id: str
+    filename: str | None = None
+    status: str
+    total_rows: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    events: list[IntakeTraceEvent]
+    job_summary: dict | None = None
+
+
+@router.get(
+    "/v1/batches/{batch_id}/trace",
+    response_model=ApiResponse[IntakeTraceResponse],
+    summary="Get intake trace timeline for a batch",
+    description="""
+Get a detailed timeline of all events for an intake batch.
+
+This endpoint provides a chronological view of:
+- Batch lifecycle events (created, processing, completed)
+- Validation events (row validated, row failed)
+- Job queue events (enqueued, processing, completed, failed)
+- Audit log events from ops.ingest_event_log
+
+Useful for debugging batch processing issues and understanding
+the complete lifecycle of an intake operation.
+""",
+)
+async def get_batch_trace(
+    batch_id: UUID,
+    auth: AuthContext = Depends(get_current_user),
+) -> ApiResponse[IntakeTraceResponse]:
+    """Get timeline trace for a batch."""
+    import json
+
+    pool = await get_pool()
+
+    async with pool.connection() as conn:
+        from psycopg.rows import dict_row
+
+        # Get batch details
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT id, filename, status, row_count_total, row_count_valid, row_count_failed, created_at, completed_at
+                FROM intake.simplicity_batches
+                WHERE id = %s
+                """,
+                (batch_id,),
+            )
+            batch = await cur.fetchone()
+
+            if not batch:
+                raise HTTPException(status_code=404, detail="Batch not found")
+
+        events: list[IntakeTraceEvent] = []
+
+        # Event 1: Batch created
+        events.append(
+            IntakeTraceEvent(
+                timestamp=batch["created_at"].isoformat() if batch["created_at"] else "",
+                stage="batch",
+                event="created",
+                details={"filename": batch["filename"]},
+            )
+        )
+
+        # Gather events from ops.ingest_event_log if exists
+        async with conn.cursor(row_factory=dict_row) as cur:
+            try:
+                await cur.execute(
+                    """
+                    SELECT stage, event, metadata, created_at, correlation_id
+                    FROM ops.ingest_event_log
+                    WHERE batch_id = %s
+                    ORDER BY created_at
+                    LIMIT 100
+                    """,
+                    (batch_id,),
+                )
+                audit_rows = await cur.fetchall()
+                for row in audit_rows:
+                    events.append(
+                        IntakeTraceEvent(
+                            timestamp=row["created_at"].isoformat() if row["created_at"] else "",
+                            stage=row["stage"] or "audit",
+                            event=row["event"] or "log",
+                            details=row["metadata"] if isinstance(row["metadata"], dict) else None,
+                            correlation_id=(
+                                str(row["correlation_id"]) if row["correlation_id"] else None
+                            ),
+                        )
+                    )
+            except Exception:
+                # Table may not exist yet
+                pass
+
+        # Gather validation failure events (sample)
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT row_index, error_stage, error_code, error_message, created_at, correlation_id
+                FROM intake.simplicity_failed_rows
+                WHERE batch_id = %s
+                ORDER BY created_at
+                LIMIT 20
+                """,
+                (batch_id,),
+            )
+            failed_rows = await cur.fetchall()
+            for row in failed_rows:
+                events.append(
+                    IntakeTraceEvent(
+                        timestamp=row["created_at"].isoformat() if row["created_at"] else "",
+                        stage=row["error_stage"] or "validate",
+                        event="row_failed",
+                        details={
+                            "error_code": row["error_code"],
+                            "message": row["error_message"][:100] if row["error_message"] else None,
+                        },
+                        row_index=row["row_index"],
+                        correlation_id=(
+                            str(row["correlation_id"]) if row["correlation_id"] else None
+                        ),
+                    )
+                )
+
+        # Gather job queue events
+        job_summary = {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT status, COUNT(*) as cnt
+                FROM ops.job_queue
+                WHERE payload->>'batch_id' = %s OR payload->>'simplicity_batch_id' = %s
+                GROUP BY status
+                """,
+                (str(batch_id), str(batch_id)),
+            )
+            for row in await cur.fetchall():
+                if row["status"] in job_summary:
+                    job_summary[row["status"]] = row["cnt"]
+
+        # Event: Batch completed (if applicable)
+        if batch["completed_at"]:
+            events.append(
+                IntakeTraceEvent(
+                    timestamp=batch["completed_at"].isoformat(),
+                    stage="batch",
+                    event="completed",
+                    details={
+                        "status": batch["status"],
+                        "total": batch["row_count_total"],
+                        "valid": batch["row_count_valid"],
+                        "failed": batch["row_count_failed"],
+                    },
+                )
+            )
+
+        # Sort events by timestamp
+        events.sort(key=lambda e: e.timestamp)
+
+        data = IntakeTraceResponse(
+            batch_id=str(batch_id),
+            filename=batch["filename"],
+            status=batch["status"],
+            total_rows=batch["row_count_total"] or 0,
+            success_count=batch["row_count_valid"] or 0,
+            failed_count=batch["row_count_failed"] or 0,
+            events=events,
+            job_summary=job_summary,
+        )
+        return api_response(data=data)

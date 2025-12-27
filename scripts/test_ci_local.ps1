@@ -151,7 +151,11 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role, dragonfly_wor
 function Invoke-IntegrationTests {
     Write-Step "Running Integration Tests"
     $env:DATABASE_URL = $TestDbUrl
+    # Use direct connection URL for CI stability (bypasses Supabase pooler)
+    # For local Docker testing, $TestDbUrl is already direct (port 5433)
+    # For Supabase testing, use SUPABASE_MIGRATE_DB_URL (port 5432) instead of SUPABASE_DB_URL (port 6543)
     $env:SUPABASE_DB_URL = $TestDbUrl
+    $env:SUPABASE_MIGRATE_DB_URL = $TestDbUrl
     $env:POSTGREST_URL = $PostgRESTUrl
     $env:SUPABASE_MODE = "test"
     Push-Location $ProjectRoot

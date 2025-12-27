@@ -13,7 +13,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.legacy]
 
 # Defer environment variable access to runtime (not import time)
 def _get_base() -> str:
-    return f'https://{os.environ.get("SUPABASE_PROJECT_REF", "placeholder")}.supabase.co'
+    return f"https://{os.environ.get('SUPABASE_PROJECT_REF', 'placeholder')}.supabase.co"
 
 
 def _get_headers() -> dict:

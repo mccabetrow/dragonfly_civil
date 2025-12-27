@@ -244,8 +244,7 @@ async def init_db_pool(app: Any | None = None) -> None:
 
         if elapsed >= MAX_TOTAL_WAIT_SECONDS:
             logger.error(
-                f"DB pool init: time budget exhausted "
-                f"({elapsed:.1f}s >= {MAX_TOTAL_WAIT_SECONDS}s)"
+                f"DB pool init: time budget exhausted ({elapsed:.1f}s >= {MAX_TOTAL_WAIT_SECONDS}s)"
             )
             break
 

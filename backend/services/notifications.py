@@ -123,7 +123,7 @@ async def notify_batch_failed(
 
         await send_ops_alert(
             subject=f"⚠️ BATCH FAILED: {source.title()}",
-            body=(f"Batch ID: {batch_id}\n" f"Source: {source}\n\n" f"Error:\n{error_summary}"),
+            body=(f"Batch ID: {batch_id}\nSource: {source}\n\nError:\n{error_summary}"),
             include_sms=True,  # SMS for failures
         )
     except Exception as e:

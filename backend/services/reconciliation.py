@@ -704,7 +704,7 @@ class ReconciliationService:
 
         query = f"""
             UPDATE ops.data_discrepancies
-            SET {', '.join(updates)}
+            SET {", ".join(updates)}
             WHERE id = %s::uuid
         """
         params.append(discrepancy_id)
@@ -944,8 +944,7 @@ class ReconciliationService:
             )
         else:
             logger.warning(
-                f"[Integrity] Batch {batch_id[:8]} DISCREPANCY: "
-                f"{result['verification_message']}"
+                f"[Integrity] Batch {batch_id[:8]} DISCREPANCY: {result['verification_message']}"
             )
 
         return verification

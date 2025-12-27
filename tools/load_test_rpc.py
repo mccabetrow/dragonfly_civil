@@ -154,7 +154,7 @@ def get_db_url(env: str = "dev") -> str:
 
     if not url:
         raise ValueError(
-            f"No database URL found for env={env}. " "Set SUPABASE_DB_URL or SUPABASE_DB_URL_{ENV}."
+            f"No database URL found for env={env}. Set SUPABASE_DB_URL or SUPABASE_DB_URL_{{ENV}}."
         )
 
     return url

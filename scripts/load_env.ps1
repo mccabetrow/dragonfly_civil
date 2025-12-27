@@ -69,4 +69,6 @@ Get-Content -Path $EnvPath | ForEach-Object {
 # Remove-Item Env:\SUPABASE_DB_URL_DEV -ErrorAction SilentlyContinue
 # Remove-Item Env:\SUPABASE_DB_URL_PROD -ErrorAction SilentlyContinue
 
-Write-Host "[OK] Loaded $loadedCount variables from .env.$Mode" -ForegroundColor Green
+# Display the actual file name, not the $Mode variable which may be default
+$envFileName = [System.IO.Path]::GetFileName($EnvPath)
+Write-Host "[OK] Loaded $loadedCount variables from $envFileName" -ForegroundColor Green

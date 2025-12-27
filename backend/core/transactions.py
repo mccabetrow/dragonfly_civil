@@ -392,8 +392,7 @@ class OptimisticLockError(Exception):
         self.entity_id = entity_id
         self.expected_version = expected_version
         super().__init__(
-            f"Optimistic lock failed for {entity} {entity_id}: "
-            f"expected version {expected_version}"
+            f"Optimistic lock failed for {entity} {entity_id}: expected version {expected_version}"
         )
 
 

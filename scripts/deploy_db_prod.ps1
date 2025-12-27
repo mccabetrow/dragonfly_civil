@@ -136,48 +136,64 @@ Get-Content $envFile | ForEach-Object {
 Write-Host "Loaded $($loadedVars.Count) environment variables from .env.prod" -ForegroundColor Green
 Write-Host "SUPABASE_MODE = prod" -ForegroundColor Green
 
-# Get the database URL using a helper script
+# Get the MIGRATION-SPECIFIC database URL (Port 5432 Direct Connection)
+# CRITICAL: Migrations MUST use the direct connection, NOT the transaction pooler.
 $pythonExe = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-$getUrlScript = 'from src.supabase_client import get_supabase_db_url; print(get_supabase_db_url())'
+
+# Check for SUPABASE_MIGRATE_DB_URL in environment
+$migrateUrl = $env:SUPABASE_MIGRATE_DB_URL
+if (-not $migrateUrl) {
+    Invoke-AbortDeploy "Missing SUPABASE_MIGRATE_DB_URL. This env var is required for migrations."
+}
+
+# Parse and validate the port - MUST be 5432 (Direct), NOT 6543 (Pooler)
 try {
-    $dbUrl = & $pythonExe -c $getUrlScript 2>&1 | Select-Object -Last 1
-    if (-not $dbUrl -or $LASTEXITCODE -ne 0) {
-        if ($DryRun) {
-            Write-Warn "Could not get database URL (dry run continues)"
-            $dbUrl = "postgresql://[not-resolved]"
-        }
-        else {
-            Invoke-AbortDeploy "Failed to get database URL from supabase_client"
-        }
+    $uri = [System.Uri]$migrateUrl.Replace("postgresql://", "http://")
+    $port = $uri.Port
+    
+    if ($port -eq 6543) {
+        Write-Host ""
+        Write-Host "+----------------------------------------------------------------------+" -ForegroundColor Red
+        Write-Host "|  [X] FATAL: Cannot run migrations via Transaction Pooler (6543)     |" -ForegroundColor Red
+        Write-Host "|                                                                      |" -ForegroundColor Red
+        Write-Host "|  Migrations require prepared statements and transaction control     |" -ForegroundColor Red
+        Write-Host "|  that are incompatible with PgBouncer's transaction pooling.        |" -ForegroundColor Red
+        Write-Host "|                                                                      |" -ForegroundColor Red
+        Write-Host "|  ACTION: Use SUPABASE_MIGRATE_DB_URL with port 5432 (Direct).       |" -ForegroundColor Red
+        Write-Host "+----------------------------------------------------------------------+" -ForegroundColor Red
+        Invoke-AbortDeploy "SUPABASE_MIGRATE_DB_URL uses port 6543 (Pooler). Must use port 5432 (Direct)."
     }
+    
+    if ($port -ne 5432) {
+        Invoke-AbortDeploy "SUPABASE_MIGRATE_DB_URL uses unexpected port $port. Expected port 5432 (Direct)."
+    }
+    
+    Write-Host "[OK] Migration URL validated: Port 5432 (Direct Connection)" -ForegroundColor Green
 }
 catch {
-    if ($DryRun) {
-        Write-Warn "Could not get database URL (dry run continues): $_"
-        $dbUrl = "postgresql://[not-resolved]"
-    }
-    else {
-        Invoke-AbortDeploy "Failed to get database URL: $_"
-    }
+    Invoke-AbortDeploy "Failed to parse SUPABASE_MIGRATE_DB_URL: $_"
 }
+
+$dbUrl = $migrateUrl
 
 # Mask the password for display
 $maskedUrl = $dbUrl -replace ':[^:@]+@', ':****@'
-Write-Host "Database URL: $maskedUrl" -ForegroundColor Gray
+Write-Host "Migration DB URL: $maskedUrl" -ForegroundColor Gray
 
 # ----------------------------------------------------------------------------
-# STEP 3: Apply Migrations
+# STEP 3: Apply Migrations (using --db-url for explicit connection control)
 # ----------------------------------------------------------------------------
 Write-Step 3 "APPLYING MIGRATIONS"
 
 if ($DryRun) {
-    Write-Host "[DRY RUN] Would run: supabase db push --include-all" -ForegroundColor Yellow
+    Write-Host "[DRY RUN] Would run: supabase db push --db-url <MIGRATE_URL>" -ForegroundColor Yellow
 }
 else {
-    Write-Host "Running: supabase db push --include-all" -ForegroundColor White
+    Write-Host "Running: supabase db push --db-url <MIGRATE_URL>" -ForegroundColor White
+    Write-Host "(Using explicit SUPABASE_MIGRATE_DB_URL for direct connection)" -ForegroundColor Gray
     
     try {
-        $pushResult = & supabase db push --include-all --db-url $dbUrl 2>&1
+        $pushResult = & supabase db push --db-url $dbUrl 2>&1
         $exitCode = $LASTEXITCODE
         
         # Show output
@@ -192,6 +208,33 @@ else {
     }
     catch {
         Invoke-AbortDeploy "Migration failed: $_"
+    }
+}
+
+# ----------------------------------------------------------------------------
+# STEP 3.5: Verify Database Connection Post-Push
+# ----------------------------------------------------------------------------
+Write-Host ""
+Write-Host "Verifying database connectivity post-migration..." -ForegroundColor White
+
+if ($DryRun) {
+    Write-Host "[DRY RUN] Would run: python -m tools.test_db_connection" -ForegroundColor Yellow
+}
+else {
+    try {
+        & $pythonExe -m tools.test_db_connection
+        $exitCode = $LASTEXITCODE
+        
+        if ($exitCode -ne 0) {
+            Write-Warn "Database connection verification failed (exit code $exitCode)"
+            Write-Host "Migrations were applied, but post-verification failed." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "[OK] Database connectivity verified" -ForegroundColor Green
+        }
+    }
+    catch {
+        Write-Warn "Failed to verify database connection: $_"
     }
 }
 

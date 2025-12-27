@@ -16,6 +16,7 @@ Exit Codes:
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import re
 import subprocess
@@ -23,6 +24,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
+
+# Fix Windows console encoding for Unicode characters
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -74,6 +80,10 @@ SKIP_FILES = {
     "pnpm-lock.yaml",
     "poetry.lock",
     "Pipfile.lock",
+    # Files containing secret detection patterns (not actual secrets)
+    ".gitleaks.toml",
+    "scan_secrets.py",
+    "generate_db_urls.py",
 }
 
 

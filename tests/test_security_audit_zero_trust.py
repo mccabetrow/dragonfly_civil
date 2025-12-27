@@ -41,6 +41,16 @@ except ImportError:
 
 
 # =============================================================================
+# MARKERS AND SKIP CONDITIONS
+# =============================================================================
+
+pytestmark = [
+    pytest.mark.security,  # Security gate marker
+    pytest.mark.skipif(not HAS_PSYCOPG, reason="psycopg v3 required"),
+]
+
+
+# =============================================================================
 # CONFIGURATION
 # =============================================================================
 
@@ -246,10 +256,8 @@ ALLOWED_SEC_DEFINERS = frozenset(
 
 
 # =============================================================================
-# SKIP CONDITIONS
+# DB CONNECTION HELPERS
 # =============================================================================
-
-pytestmark = pytest.mark.skipif(not HAS_PSYCOPG, reason="psycopg v3 required")
 
 
 def _get_db_url() -> str | None:

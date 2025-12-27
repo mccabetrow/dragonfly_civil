@@ -40,9 +40,9 @@ def _assert_timestamp_close(
 ) -> None:
     assert actual is not None, "timestamp value is missing"
     delta = abs((actual - expected).total_seconds())
-    assert (
-        delta <= tolerance_seconds
-    ), f"timestamps differ by {delta} seconds which exceeds tolerance"
+    assert delta <= tolerance_seconds, (
+        f"timestamps differ by {delta} seconds which exceeds tolerance"
+    )
 
 
 @pytest.mark.integration

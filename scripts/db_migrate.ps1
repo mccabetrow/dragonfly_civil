@@ -18,10 +18,15 @@
 .PARAMETER DryRun
     If specified, lists pending migrations without applying them.
 
+.PARAMETER Force
+    If specified, skips the confirmation prompt for production.
+    Use this flag when running from automated scripts like the Release Train.
+
 .EXAMPLE
     .\scripts\db_migrate.ps1 -SupabaseEnv dev -DryRun
     .\scripts\db_migrate.ps1 -SupabaseEnv dev
     .\scripts\db_migrate.ps1 -SupabaseEnv prod
+    .\scripts\db_migrate.ps1 -SupabaseEnv prod -Force
 #>
 
 param(
@@ -29,7 +34,9 @@ param(
     [ValidateSet('dev', 'prod')]
     [string]$SupabaseEnv = 'dev',
 
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    [switch]$Force
 )
 
 # ----------------------------------------------------------------------------
@@ -187,31 +194,47 @@ if (-not (Test-Path $SupabaseCli)) {
 }
 Write-Info "Using Supabase CLI: $SupabaseCli"
 
-# Step 2: Load environment variables from .env
-$envFile = Join-Path $RepoRoot '.env'
+# Step 2: Load environment variables from .env.$SupabaseEnv
+$envFile = Join-Path $RepoRoot ".env.$SupabaseEnv"
 if (Test-Path $envFile) {
     . (Join-Path $ScriptDir 'load_env.ps1') -EnvPath $envFile
 }
 else {
-    Write-Warn ".env file not found at $envFile"
+    # Fallback to root .env
+    $envFile = Join-Path $RepoRoot '.env'
+    if (Test-Path $envFile) {
+        . (Join-Path $ScriptDir 'load_env.ps1') -EnvPath $envFile
+    }
+    else {
+        Write-Warn ".env file not found"
+    }
 }
 
 # Step 3: Get the appropriate DB URL based on -SupabaseEnv
-# CRITICAL: Always use explicit --db-url, never link-based commands (avoids pooler DNS issues)
-$dbUrlVarName = if ($SupabaseEnv -eq 'prod') { 'SUPABASE_DB_URL_PROD' } else { 'SUPABASE_DB_URL_DEV' }
-# Use $env: (process-level) since load_env.ps1 sets there, not [Environment]::GetEnvironmentVariable (system-level)
-$DbUrl = (Get-Item "env:$dbUrlVarName" -ErrorAction SilentlyContinue).Value
+# CRITICAL: Always use explicit --db-url with DIRECT connection (port 5432), never pooler
+# Prefer SUPABASE_MIGRATE_DB_URL (canonical) over legacy SUPABASE_DB_URL_* vars
+$DbUrl = $null
+$dbUrlVarName = "SUPABASE_MIGRATE_DB_URL"
+
+# Try the canonical SUPABASE_MIGRATE_DB_URL first (uses direct connection, port 5432)
+$DbUrl = (Get-Item "env:SUPABASE_MIGRATE_DB_URL" -ErrorAction SilentlyContinue).Value
+
+if ([string]::IsNullOrWhiteSpace($DbUrl)) {
+    # Fall back to legacy variable names
+    $dbUrlVarName = if ($SupabaseEnv -eq 'prod') { 'SUPABASE_DB_URL_PROD' } else { 'SUPABASE_DB_URL_DEV' }
+    $DbUrl = (Get-Item "env:$dbUrlVarName" -ErrorAction SilentlyContinue).Value
+}
 
 if ([string]::IsNullOrWhiteSpace($DbUrl)) {
     Write-Host ""
     Write-ErrorAndExit @"
-$dbUrlVarName is not set.
+SUPABASE_MIGRATE_DB_URL is not set.
 
 To fix this:
 1. Go to Supabase Dashboard -> Settings -> Database -> Connection string
-2. Copy the full URI (starts with postgresql://...)
-3. Paste it into .env as:
-   $dbUrlVarName=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+2. Copy the DIRECT connection URI (port 5432, NOT pooler)
+3. Paste it into .env.dev or .env.prod as:
+   SUPABASE_MIGRATE_DB_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
 4. Re-run this script.
 "@
 }
@@ -221,8 +244,8 @@ $displayUrl = $DbUrl -replace ':[^:@]+@', ':****@'
 Write-Success "Using DB URL: $displayUrl"
 Write-Info "Variable: $dbUrlVarName"
 
-# Step 3b: Safety check for prod - require confirmation unless running in CI
-if ($SupabaseEnv -eq 'prod' -and -not $env:CI -and -not $env:GITHUB_ACTIONS) {
+# Step 3b: Safety check for prod - require confirmation unless running in CI or with -Force
+if ($SupabaseEnv -eq 'prod' -and -not $env:CI -and -not $env:GITHUB_ACTIONS -and -not $Force) {
     Write-Host ""
     Write-Host "⚠️  WARNING: You are about to apply migrations to PRODUCTION" -ForegroundColor Red
     Write-Host ""
@@ -230,6 +253,8 @@ if ($SupabaseEnv -eq 'prod' -and -not $env:CI -and -not $env:GITHUB_ACTIONS) {
     Write-Host "  1. Push migration to main (applies to dev automatically)" -ForegroundColor Yellow
     Write-Host "  2. Go to Actions → Supabase Migrations → Run workflow" -ForegroundColor Yellow
     Write-Host "  3. Select 'prod' environment" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Or use -Force to skip this prompt (e.g., from Release Train)" -ForegroundColor DarkGray
     Write-Host ""
 
     $confirmation = Read-Host "Type 'PROD' to continue, or press Enter to abort"
@@ -250,7 +275,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-ErrorAndExit "Failed to list migrations. Check your database connection string."
 }
 
-$pendingIds = Get-PendingMigrations -ListOutput $listOutput
+$pendingIds = @(Get-PendingMigrations -ListOutput $listOutput)
 
 if ($pendingIds.Count -eq 0) {
     Write-Success "No pending migrations. Database is up to date."
@@ -273,8 +298,9 @@ if ($DryRun) {
 
 # Step 6: Apply migrations with retry/repair logic
 # CRITICAL: Use 'migration up', not 'db push' - db push can hang on pooler DNS issues
+# Use --include-all to apply migrations even if out-of-order with remote history
 Write-Host ""
-Write-Info "Applying migrations with 'supabase migration up --db-url'..."
+Write-Info "Applying migrations with 'supabase migration up --include-all --db-url'..."
 
 $maxRetries = 5
 $attempt = 0
@@ -283,7 +309,7 @@ $repairCount = 0
 while ($attempt -lt $maxRetries) {
     $attempt++
 
-    $upOutput = & $SupabaseCli migration up --db-url $DbUrl 2>&1 | Out-String
+    $upOutput = & $SupabaseCli migration up --include-all --db-url $DbUrl 2>&1 | Out-String
 
     if ($LASTEXITCODE -eq 0) {
         Write-Success "All migrations applied successfully."

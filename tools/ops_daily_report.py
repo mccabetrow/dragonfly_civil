@@ -127,9 +127,9 @@ class OpsDailyReport:
         }
         status_placeholders = ", ".join(f"%({key})s" for key in self._status_params())
         case_filter = (
-            "COALESCE(NULLIF(lower(status), ''), 'active') NOT IN (" f"{status_placeholders})"
+            f"COALESCE(NULLIF(lower(status), ''), 'active') NOT IN ({status_placeholders})"
         )
-        count_sql = "SELECT COUNT(*) FROM public.enforcement_cases " f"WHERE {case_filter}"
+        count_sql = f"SELECT COUNT(*) FROM public.enforcement_cases WHERE {case_filter}"
         sample_sql = (
             "SELECT id, case_number, status, opened_at, created_at "
             "FROM public.enforcement_cases "

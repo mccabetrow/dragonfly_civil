@@ -63,7 +63,7 @@ def ensure_queues() -> None:
         print(f"[ensure_queues] Database error: {exc}")
         raise SystemExit(1)
 
-    print(f"[ensure_queues] { _format_status(created_status) }")
+    print(f"[ensure_queues] {_format_status(created_status)}")
     print(f"[ensure_queues] queues present: {', '.join(rows)}")
 
 

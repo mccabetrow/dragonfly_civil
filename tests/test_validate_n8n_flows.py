@@ -26,6 +26,6 @@ def test_public_schema_relations_normalize_to_table_name():
 
     findings = validate_n8n_flows.evaluate_references(references, relations, rpcs)
 
-    assert any(
-        ref.name == "public.demo_table" and exists for ref, exists in findings
-    ), "Expected public.demo_table reference to resolve via normalization"
+    assert any(ref.name == "public.demo_table" and exists for ref, exists in findings), (
+        "Expected public.demo_table reference to resolve via normalization"
+    )

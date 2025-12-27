@@ -113,7 +113,7 @@ class OpsHealthcheck:
         status_params = self._dismissed_status_params()
         status_placeholders = ", ".join(f"%({key})s" for key in status_params)
         case_filter = (
-            "COALESCE(NULLIF(lower(ec.status), ''), 'active') NOT IN (" f"{status_placeholders})"
+            f"COALESCE(NULLIF(lower(ec.status), ''), 'active') NOT IN ({status_placeholders})"
         )
         count_sql = (
             "SELECT COUNT(*) FROM public.enforcement_cases ec "
@@ -134,7 +134,7 @@ class OpsHealthcheck:
         status_params = self._dismissed_status_params()
         status_placeholders = ", ".join(f"%({key})s" for key in status_params)
         case_filter = (
-            "COALESCE(NULLIF(lower(ec.status), ''), 'active') NOT IN (" f"{status_placeholders})"
+            f"COALESCE(NULLIF(lower(ec.status), ''), 'active') NOT IN ({status_placeholders})"
         )
         count_sql = (
             "SELECT COUNT(*) FROM public.enforcement_cases ec "

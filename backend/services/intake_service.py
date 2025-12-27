@@ -583,8 +583,7 @@ class IntakeService:
                 pd.read_csv(file_path, chunksize=CHUNK_SIZE, dtype=str)
             ):
                 logger.info(
-                    f"Processing chunk {chunk_idx + 1} "
-                    f"({len(chunk_df)} rows) for batch {batch_id}"
+                    f"Processing chunk {chunk_idx + 1} ({len(chunk_df)} rows) for batch {batch_id}"
                 )
 
                 # Normalize column names

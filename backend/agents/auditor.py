@@ -51,8 +51,7 @@ class Auditor:
     def _log_start(self, input_data: AuditorInput) -> None:
         """Hook: Called when audit starts."""
         logger.info(
-            f"[Auditor] Starting audit for "
-            f"packet_id={input_data.drafter_output.packet.packet_id}"
+            f"[Auditor] Starting audit for packet_id={input_data.drafter_output.packet.packet_id}"
         )
 
     def _log_complete(self, output: AuditorOutput, duration_ms: float) -> None:

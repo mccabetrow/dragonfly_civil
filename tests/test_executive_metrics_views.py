@@ -387,24 +387,24 @@ def test_v_enforcement_overview_has_correct_columns(db_url: str) -> None:
             column_rows = cur.fetchall()
             columns = [dict(r)["column_name"] for r in column_rows]
 
-            assert (
-                "enforcement_stage" in columns
-            ), "v_enforcement_overview missing 'enforcement_stage'"
-            assert (
-                "collectability_tier" in columns
-            ), "v_enforcement_overview missing 'collectability_tier'"
+            assert "enforcement_stage" in columns, (
+                "v_enforcement_overview missing 'enforcement_stage'"
+            )
+            assert "collectability_tier" in columns, (
+                "v_enforcement_overview missing 'collectability_tier'"
+            )
             assert "case_count" in columns, "v_enforcement_overview missing 'case_count'"
-            assert (
-                "total_judgment_amount" in columns
-            ), "v_enforcement_overview missing 'total_judgment_amount'"
+            assert "total_judgment_amount" in columns, (
+                "v_enforcement_overview missing 'total_judgment_amount'"
+            )
 
             # Verify it does NOT have the old wrong column names
-            assert (
-                "count" not in columns
-            ), "v_enforcement_overview should not have 'count' (use 'case_count')"
-            assert (
-                "total_value" not in columns
-            ), "v_enforcement_overview should not have 'total_value' (use 'total_judgment_amount')"
+            assert "count" not in columns, (
+                "v_enforcement_overview should not have 'count' (use 'case_count')"
+            )
+            assert "total_value" not in columns, (
+                "v_enforcement_overview should not have 'total_value' (use 'total_judgment_amount')"
+            )
     finally:
         conn.rollback()
         conn.close()

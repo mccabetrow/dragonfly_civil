@@ -221,7 +221,7 @@ async def pending_batch_processor_job() -> None:
             )
 
         logger.info(
-            f"📦 Batch processor complete: {success_count} succeeded, " f"{failure_count} failed"
+            f"📦 Batch processor complete: {success_count} succeeded, {failure_count} failed"
         )
 
     except Exception as e:

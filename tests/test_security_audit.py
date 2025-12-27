@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from tools.security_audit import (
-    PIPELINE_VIEWS,
-    RESTRICTED_TABLES,
-    RelationSecurity,
-    evaluate_rules,
-)
+import pytest
+
+from tools.security_audit import PIPELINE_VIEWS, RESTRICTED_TABLES, RelationSecurity, evaluate_rules
+
+# =============================================================================
+# MARKERS
+# =============================================================================
+
+pytestmark = pytest.mark.security  # Security gate marker
 
 
 def _mk_relation(

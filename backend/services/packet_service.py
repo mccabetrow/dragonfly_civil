@@ -341,7 +341,7 @@ async def generate_packet(
     # Validate packet type
     if packet_type not in PACKET_TYPES:
         raise PacketError(
-            f"Invalid packet type: {packet_type}. " f"Valid types: {list(PACKET_TYPES.keys())}"
+            f"Invalid packet type: {packet_type}. Valid types: {list(PACKET_TYPES.keys())}"
         )
 
     template_filename = PACKET_TYPES[packet_type]
@@ -349,7 +349,7 @@ async def generate_packet(
 
     if not template_path.exists():
         raise PacketError(
-            f"Template not found: {template_path}. " "Please ensure the template file exists."
+            f"Template not found: {template_path}. Please ensure the template file exists."
         )
 
     logger.info(

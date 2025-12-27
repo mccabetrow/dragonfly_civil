@@ -170,8 +170,7 @@ def poll_job_status(
             return status, error if isinstance(error, dict) else {"message": str(error)}
         elif status in ("pending", "processing"):
             click.echo(
-                f"[smoke_prod] Status: {status} (elapsed: {elapsed:.1f}s, "
-                f"updated: {updated_at})"
+                f"[smoke_prod] Status: {status} (elapsed: {elapsed:.1f}s, updated: {updated_at})"
             )
             time.sleep(poll_interval)
         else:

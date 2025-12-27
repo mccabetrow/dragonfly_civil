@@ -22,6 +22,12 @@ from typing import NamedTuple
 
 import pytest
 
+# =============================================================================
+# MARKERS
+# =============================================================================
+
+pytestmark = pytest.mark.contract  # Contract gate marker
+
 
 class RPCSignature(NamedTuple):
     """Expected RPC signature."""
@@ -135,44 +141,44 @@ class TestRPCClientContract:
     def test_claim_pending_job_signature(self, rpc_client_content: str) -> None:
         """claim_pending_job must have the canonical signature."""
         # Check method exists
-        assert (
-            "def claim_pending_job(" in rpc_client_content
-        ), "RPCClient must have claim_pending_job method"
+        assert "def claim_pending_job(" in rpc_client_content, (
+            "RPCClient must have claim_pending_job method"
+        )
 
         # Check it calls the correct SQL
-        assert (
-            "ops.claim_pending_job(" in rpc_client_content
-        ), "claim_pending_job must call ops.claim_pending_job RPC"
+        assert "ops.claim_pending_job(" in rpc_client_content, (
+            "claim_pending_job must call ops.claim_pending_job RPC"
+        )
 
         # Check p_worker_id parameter exists
-        assert (
-            "p_worker_id" in rpc_client_content
-        ), "claim_pending_job SQL must include p_worker_id parameter"
+        assert "p_worker_id" in rpc_client_content, (
+            "claim_pending_job SQL must include p_worker_id parameter"
+        )
 
         # Check worker_id is a parameter in the Python method
-        assert (
-            "worker_id:" in rpc_client_content or "worker_id =" in rpc_client_content
-        ), "claim_pending_job Python method must accept worker_id"
+        assert "worker_id:" in rpc_client_content or "worker_id =" in rpc_client_content, (
+            "claim_pending_job Python method must accept worker_id"
+        )
 
     def test_update_job_status_signature(self, rpc_client_content: str) -> None:
         """update_job_status must have the canonical signature."""
-        assert (
-            "def update_job_status(" in rpc_client_content
-        ), "RPCClient must have update_job_status method"
+        assert "def update_job_status(" in rpc_client_content, (
+            "RPCClient must have update_job_status method"
+        )
 
-        assert (
-            "ops.update_job_status(" in rpc_client_content
-        ), "update_job_status must call ops.update_job_status RPC"
+        assert "ops.update_job_status(" in rpc_client_content, (
+            "update_job_status must call ops.update_job_status RPC"
+        )
 
         # Check backoff_seconds parameter exists
-        assert (
-            "p_backoff_seconds" in rpc_client_content
-        ), "update_job_status SQL must include p_backoff_seconds parameter"
+        assert "p_backoff_seconds" in rpc_client_content, (
+            "update_job_status SQL must include p_backoff_seconds parameter"
+        )
 
         # Check p_error_message parameter exists (not p_error)
-        assert (
-            "p_error_message" in rpc_client_content
-        ), "update_job_status SQL must use p_error_message (not p_error)"
+        assert "p_error_message" in rpc_client_content, (
+            "update_job_status SQL must use p_error_message (not p_error)"
+        )
 
     def test_queue_job_signature(self, rpc_client_content: str) -> None:
         """queue_job must have the canonical signature."""
@@ -185,13 +191,13 @@ class TestRPCClientContract:
 
     def test_register_heartbeat_signature(self, rpc_client_content: str) -> None:
         """register_heartbeat must have the canonical signature."""
-        assert (
-            "def register_heartbeat(" in rpc_client_content
-        ), "RPCClient must have register_heartbeat method"
+        assert "def register_heartbeat(" in rpc_client_content, (
+            "RPCClient must have register_heartbeat method"
+        )
 
-        assert (
-            "ops.register_heartbeat(" in rpc_client_content
-        ), "register_heartbeat must call ops.register_heartbeat RPC"
+        assert "ops.register_heartbeat(" in rpc_client_content, (
+            "register_heartbeat must call ops.register_heartbeat RPC"
+        )
 
     def test_no_raw_dml_on_ops_tables(self, rpc_client_content: str) -> None:
         """RPCClient must not contain raw INSERT/UPDATE/DELETE on ops tables."""
@@ -227,9 +233,9 @@ class TestRPCClientContract:
 
                 # If there are real matches, they should be inside SELECT ops.* calls
                 for line in lines_with_matches:
-                    assert (
-                        "SELECT" in line.upper() or not line.strip()
-                    ), f"Raw DML to ops schema detected: {line}"
+                    assert "SELECT" in line.upper() or not line.strip(), (
+                        f"Raw DML to ops schema detected: {line}"
+                    )
 
 
 # ============================================================================
@@ -269,15 +275,15 @@ class TestMigrationContract:
         param_lines = [p.strip() for p in params.split(",") if p.strip()]
 
         # Should have 3 parameters
-        assert (
-            len(param_lines) == 3
-        ), f"claim_pending_job must have 3 parameters, found {len(param_lines)}: {param_lines}"
+        assert len(param_lines) == 3, (
+            f"claim_pending_job must have 3 parameters, found {len(param_lines)}: {param_lines}"
+        )
 
         # Check parameter names
         assert "p_job_types" in params.lower(), "Missing p_job_types parameter"
-        assert (
-            "p_lock_timeout_minutes" in params.lower()
-        ), "Missing p_lock_timeout_minutes parameter"
+        assert "p_lock_timeout_minutes" in params.lower(), (
+            "Missing p_lock_timeout_minutes parameter"
+        )
         assert "p_worker_id" in params.lower(), "Missing p_worker_id parameter"
 
     def test_update_job_status_has_four_params(self, migration_content: str) -> None:
@@ -327,9 +333,9 @@ class TestMigrationContract:
                 # Make sure it's not in a comment
                 line_start = migration_content.rfind("\n", 0, match.start()) + 1
                 line = migration_content[line_start : match.end()]
-                assert line.strip().startswith(
-                    "--"
-                ), f"Dangerous grant detected (should be revoked): {line}"
+                assert line.strip().startswith("--"), (
+                    f"Dangerous grant detected (should be revoked): {line}"
+                )
 
     def test_uses_fully_qualified_column_refs(self, migration_content: str) -> None:
         """claim_pending_job must use fully qualified column references."""
@@ -342,14 +348,14 @@ class TestMigrationContract:
         func_body = match.group(0)
 
         # Check for inner_jq. prefix (subquery alias)
-        assert (
-            "inner_jq.id" in func_body.lower() or "inner_jq.job_type" in func_body.lower()
-        ), "claim_pending_job subquery must use inner_jq. prefix for column references"
+        assert "inner_jq.id" in func_body.lower() or "inner_jq.job_type" in func_body.lower(), (
+            "claim_pending_job subquery must use inner_jq. prefix for column references"
+        )
 
         # Check for jq. prefix (main update alias)
-        assert (
-            "jq.id" in func_body.lower() or "jq.attempts" in func_body.lower()
-        ), "claim_pending_job UPDATE must use jq. prefix for column references"
+        assert "jq.id" in func_body.lower() or "jq.attempts" in func_body.lower(), (
+            "claim_pending_job UPDATE must use jq. prefix for column references"
+        )
 
 
 # ============================================================================
@@ -376,9 +382,9 @@ class TestNoAmbiguousOverloads:
         # The canonical migration should be the last one (or second to last if there's a rollback)
         # This test documents which migrations define the function
         # The key is that DROP FUNCTION statements should clear old versions
-        assert (
-            len(migrations_with_func) >= 1
-        ), "At least one migration must define ops.claim_pending_job"
+        assert len(migrations_with_func) >= 1, (
+            "At least one migration must define ops.claim_pending_job"
+        )
 
         # Check the latest migration drops old versions first
         if migrations_with_func:
@@ -389,9 +395,9 @@ class TestNoAmbiguousOverloads:
 
             # If there are multiple migrations, the latest should drop old versions
             if len(migrations_with_func) > 1:
-                assert (
-                    has_drop
-                ), f"Latest migration ({migrations_with_func[-1]}) should DROP old claim_pending_job variants"
+                assert has_drop, (
+                    f"Latest migration ({migrations_with_func[-1]}) should DROP old claim_pending_job variants"
+                )
 
 
 # ============================================================================
@@ -422,9 +428,9 @@ class TestDoctorAlignment:
         doctor_path = get_project_root() / "tools" / "doctor.py"
         content = read_file_content(doctor_path)
 
-        assert (
-            "SECURITY_DEFINER" in content or "security_definer" in content.lower()
-        ), "Doctor tool must verify SECURITY DEFINER on RPCs"
+        assert "SECURITY_DEFINER" in content or "security_definer" in content.lower(), (
+            "Doctor tool must verify SECURITY DEFINER on RPCs"
+        )
 
 
 # ============================================================================

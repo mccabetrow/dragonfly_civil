@@ -123,9 +123,9 @@ class TestListBatchesSQLConstruction:
                     query, params = data_queries[0]
                     placeholder_count = query.count("%s")
                     param_count = len(params) if params else 0
-                    assert (
-                        placeholder_count == param_count
-                    ), f"Placeholder/param mismatch: {placeholder_count} placeholders, {param_count} params"
+                    assert placeholder_count == param_count, (
+                        f"Placeholder/param mismatch: {placeholder_count} placeholders, {param_count} params"
+                    )
 
 
 class TestListBatchesEdgeCases:

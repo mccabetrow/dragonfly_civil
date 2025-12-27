@@ -156,9 +156,9 @@ class TestCEOCommandCenterView:
                     f"{self.SCHEMA}.{self.VIEW_NAME} view not found - "
                     "migration 20251209200000 not applied"
                 )
-            assert _view_exists(
-                cur, self.SCHEMA, self.VIEW_NAME
-            ), f"{self.VIEW_NAME} view should exist"
+            assert _view_exists(cur, self.SCHEMA, self.VIEW_NAME), (
+                f"{self.VIEW_NAME} view should exist"
+            )
 
     def test_view_has_expected_columns(self):
         """The view should have all expected columns."""
@@ -215,13 +215,13 @@ class TestCEOCommandCenterView:
             from decimal import Decimal
 
             assert isinstance(total_judgments, int), "total_judgments should be int"
-            assert isinstance(
-                total_value, (int, float, Decimal)
-            ), "total_judgment_value should be numeric"
+            assert isinstance(total_value, (int, float, Decimal)), (
+                "total_judgment_value should be numeric"
+            )
             assert isinstance(j24h, int), "judgments_24h should be int"
-            assert isinstance(
-                batch_rate, (int, float, Decimal)
-            ), "batch_success_rate should be numeric"
+            assert isinstance(batch_rate, (int, float, Decimal)), (
+                "batch_success_rate should be numeric"
+            )
             assert gen_at is not None, "generated_at should not be null"
 
             # Validate ranges
@@ -270,9 +270,9 @@ class TestCEOCommandCenterRPC:
                     f"{self.SCHEMA}.{self.FUNC_NAME}() not found - "
                     "migration 20251209200000 not applied"
                 )
-            assert _function_exists(
-                cur, self.SCHEMA, self.FUNC_NAME
-            ), f"{self.FUNC_NAME} function should exist"
+            assert _function_exists(cur, self.SCHEMA, self.FUNC_NAME), (
+                f"{self.FUNC_NAME} function should exist"
+            )
 
     def test_function_is_callable(self):
         """The function should be callable and return data."""

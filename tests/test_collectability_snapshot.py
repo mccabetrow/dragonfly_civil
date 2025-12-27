@@ -8,6 +8,8 @@ Zero Trust Dual-Connection Pattern:
 
 Note: Uses public.insert_case RPC (SECURITY DEFINER) for case insertion,
       but direct INSERT to judgments.enrichment_runs requires admin access.
+
+NOTE: Marked as integration because insert_case(jsonb) RPC not yet deployed to prod.
 """
 
 import uuid
@@ -18,6 +20,9 @@ import psycopg
 import pytest
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
+
+# Mark entire module as integration - requires insert_case(jsonb) RPC
+pytestmark = pytest.mark.integration
 
 
 def _ensure_collectability_view(cur: psycopg.Cursor) -> None:

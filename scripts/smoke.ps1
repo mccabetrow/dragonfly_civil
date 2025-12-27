@@ -9,8 +9,14 @@ if (-not (Test-Path -LiteralPath $python)) {
 	$python = "python"
 }
 
+# Use here-string for safe Python execution (pipe to stdin to preserve quotes)
+$EnsureSessionScript = @'
+from etl.src.auth.session_manager import ensure_session
+ensure_session()
+'@
+
 Write-Host "Ensuring WebCivil session" -ForegroundColor Cyan
-& $python -c "from etl.src.auth.session_manager import ensure_session; ensure_session()"
+$EnsureSessionScript | & $python -
 if ($LASTEXITCODE -ne 0) {
 	Write-Error "Session bootstrap failed"
 	exit $LASTEXITCODE

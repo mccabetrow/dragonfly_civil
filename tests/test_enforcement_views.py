@@ -149,9 +149,9 @@ class TestEnforcementRadarView:
         url = _get_connection_url()
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
-                assert _view_exists(
-                    cur, "enforcement", "v_radar"
-                ), "enforcement.v_radar not found in pg_views"
+                assert _view_exists(cur, "enforcement", "v_radar"), (
+                    "enforcement.v_radar not found in pg_views"
+                )
 
     def test_v_radar_has_required_columns(self):
         """Verify v_radar exposes the required columns."""
@@ -237,9 +237,9 @@ class TestEnrichmentHealthView:
         url = _get_connection_url()
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
-                assert _view_exists(
-                    cur, "ops", "v_enrichment_health"
-                ), "ops.v_enrichment_health not found in pg_views"
+                assert _view_exists(cur, "ops", "v_enrichment_health"), (
+                    "ops.v_enrichment_health not found in pg_views"
+                )
 
     def test_v_enrichment_health_has_expected_columns(self):
         """Verify v_enrichment_health has the job count columns."""

@@ -144,8 +144,7 @@ async def process_foil_followups() -> int:
 
                         processed += 1
                         logger.debug(
-                            f"Processed FOIL follow-up for request {foil_id} "
-                            f"(case: {case_number})"
+                            f"Processed FOIL follow-up for request {foil_id} (case: {case_number})"
                         )
 
                     except Exception as e:
