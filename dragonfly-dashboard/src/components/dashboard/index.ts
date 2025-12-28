@@ -23,3 +23,7 @@ export type { OverviewHeroProps } from './OverviewHero';
 // Tier distribution bar
 export { TierDistributionBar } from './TierDistributionBar';
 export type { TierDistributionBarProps, TierSegment } from './TierDistributionBar';
+
+// Intake station (file dropzone)
+export { IntakeStation } from './IntakeStation';
+export type { IntakeStationProps } from './IntakeStation';
