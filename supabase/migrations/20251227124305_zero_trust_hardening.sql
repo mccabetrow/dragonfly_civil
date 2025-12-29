@@ -160,7 +160,8 @@ COMMENT ON VIEW ops.v_rls_coverage IS 'Zero Trust RLS coverage report. All table
 -- Aggregates ops.job_queue by status and job_type
 -- Returns: job_type, status, count, oldest_pending_minutes
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW ops.v_queue_health AS
+DROP VIEW IF EXISTS ops.v_queue_health;
+CREATE VIEW ops.v_queue_health AS
 SELECT job_type,
     status,
     count(*) AS job_count,
@@ -176,8 +177,8 @@ SELECT job_type,
         WHERE status = 'pending'
     ) AS pending_count,
     count(*) FILTER (
-        WHERE status = 'running'
-    ) AS running_count,
+        WHERE status = 'processing'
+    ) AS processing_count,
     count(*) FILTER (
         WHERE status = 'failed'
     ) AS failed_count,
@@ -191,7 +192,7 @@ ORDER BY CASE
         status
         WHEN 'failed' THEN 1
         WHEN 'pending' THEN 2
-        WHEN 'running' THEN 3
+        WHEN 'processing' THEN 3
         WHEN 'completed' THEN 4
         ELSE 5
     END,
@@ -202,14 +203,15 @@ COMMENT ON VIEW ops.v_queue_health IS 'Job queue health aggregated by type and s
 -- -----------------------------------------------------------------------------
 -- Quick summary view for health checks
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW ops.v_queue_summary AS
+DROP VIEW IF EXISTS ops.v_queue_summary;
+CREATE VIEW ops.v_queue_summary AS
 SELECT count(*) AS total_jobs,
     count(*) FILTER (
         WHERE status = 'pending'
     ) AS pending_jobs,
     count(*) FILTER (
-        WHERE status = 'running'
-    ) AS running_jobs,
+        WHERE status = 'processing'
+    ) AS processing_jobs,
     count(*) FILTER (
         WHERE status = 'failed'
     ) AS failed_jobs,

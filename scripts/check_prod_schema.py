@@ -32,6 +32,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="prod",
         help="Supabase credential set to validate (default: prod)",
     )
+    parser.add_argument(
+        "--tolerant",
+        action="store_true",
+        help="Downgrade schema drift from FAIL to WARN (for initial deploys)",
+    )
     return parser.parse_args(argv)
 
 
@@ -41,14 +46,16 @@ def _format_hash(hash_value: str | None) -> str:
     return f"{hash_value[:12]}..."
 
 
-def _print_drift(drift: SchemaDiff) -> None:
+def _print_drift(drift: SchemaDiff, *, tolerant: bool = False) -> None:
+    label = "WARN" if tolerant else "FAIL"
     for message in format_drift(drift):
-        print(f"[FAIL] {message}")
+        print(f"[{label}] {message}")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     env = args.env
+    tolerant = args.tolerant
 
     try:
         db_url = get_supabase_db_url(env)
@@ -59,6 +66,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         freeze_data = load_schema_freeze(SCHEMA_FREEZE_PATH)
     except FileNotFoundError:
+        if tolerant:
+            print(
+                f"[WARN] schema freeze missing at {SCHEMA_FREEZE_PATH} (Allowed for Initial Deploy)"
+            )
+            return 0
         print(f"[FAIL] schema freeze missing at {SCHEMA_FREEZE_PATH}")
         return 1
     except ValueError as exc:
@@ -88,7 +100,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[OK] {env} schema matches {_format_hash(hash_value)}")
         return 0
 
-    _print_drift(drift)
+    _print_drift(drift, tolerant=tolerant)
+
+    if tolerant:
+        print(f"[WARN] {env} schema deviates from frozen snapshot (Allowed for Initial Deploy)")
+        return 0
+
     print(f"[FAIL] {env} schema deviates from the frozen snapshot")
     return 1
 

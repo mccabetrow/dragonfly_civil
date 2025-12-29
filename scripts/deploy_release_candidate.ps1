@@ -15,19 +15,19 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $PythonExe = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmm"
 
+# Import dual-mode status helper (uses ASCII on PS5, emoji on PS7+)
+. "$PSScriptRoot\Write-Status.ps1"
+
 function Write-Section([string]$Title) {
-    Write-Host ""
-    Write-Host ("=" * 70) -ForegroundColor Cyan
-    Write-Host "  $Title" -ForegroundColor Cyan
-    Write-Host ("=" * 70) -ForegroundColor Cyan
+    Write-StatusBanner -Message $Title -Color Cyan
 }
 
 function Write-Success([string]$Message) {
-    Write-Host "[OK] $Message" -ForegroundColor Green
+    Write-Status -Level OK -Message $Message
 }
 
 function Write-Failure([string]$Message) {
-    Write-Host "[FAIL] $Message" -ForegroundColor Red
+    Write-Status -Level FAIL -Message $Message
 }
 
 function Require-File([string]$Path) {
@@ -130,7 +130,13 @@ if (-not $DryRun) {
     $prevErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     
-    & $PythonExe -m tools.doctor_all --env $Mode 2>&1 | ForEach-Object { Write-Host $_ }
+    # Pass --tolerant flag when in InitialDeploy mode
+    if ($InitialDeploy) {
+        & $PythonExe -m tools.doctor_all --env $Mode --tolerant 2>&1 | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        & $PythonExe -m tools.doctor_all --env $Mode 2>&1 | ForEach-Object { Write-Host $_ }
+    }
     $healthExitCode = $LASTEXITCODE
     
     $ErrorActionPreference = $prevErrorAction

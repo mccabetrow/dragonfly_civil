@@ -312,3 +312,79 @@ def test_connection(use_pooler: bool = True) -> bool:
         return True
     except Exception:
         return False
+
+
+# =============================================================================
+# Connection Storm Prevention
+# =============================================================================
+
+
+def is_pooler_url(dsn: Optional[str] = None) -> bool:
+    """
+    Check if the DSN uses the Supabase pooler (port 6543).
+
+    Args:
+        dsn: Database connection string. Uses SUPABASE_DB_URL if not provided.
+
+    Returns:
+        True if the DSN uses the pooler (port 6543).
+    """
+    if dsn is None:
+        dsn = os.environ.get("SUPABASE_DB_URL", "")
+    return ":6543" in dsn or "pooler.supabase.com" in dsn
+
+
+def connection_advice() -> str:
+    """
+    Return advice on connection configuration based on current settings.
+
+    Returns:
+        Human-readable advice string.
+    """
+    dsn = os.environ.get("SUPABASE_DB_URL", "")
+    migrate_dsn = os.environ.get("SUPABASE_MIGRATE_DB_URL", "")
+
+    issues = []
+
+    # Check if runtime uses direct connection in production
+    if ":5432" in dsn and os.environ.get("SUPABASE_MODE") == "prod":
+        issues.append(
+            "⚠️ Production runtime uses direct connection (5432). "
+            "Consider switching to pooler (6543) for better connection management."
+        )
+
+    # Check if migration uses pooler (should use direct)
+    if migrate_dsn and ":6543" in migrate_dsn:
+        issues.append(
+            "⚠️ Migration URL uses pooler (6543). "
+            "Migrations should use direct connection (5432) for DDL statements."
+        )
+
+    if not issues:
+        return "✅ Connection configuration looks healthy."
+
+    return "\n".join(issues)
+
+
+def get_connection_stats() -> dict:
+    """
+    Get current connection configuration statistics.
+
+    Returns:
+        Dictionary with connection info (no secrets).
+    """
+    dsn = os.environ.get("SUPABASE_DB_URL", "")
+    migrate_dsn = os.environ.get("SUPABASE_MIGRATE_DB_URL", "")
+
+    return {
+        "runtime_uses_pooler": is_pooler_url(dsn),
+        "runtime_port": "6543" if ":6543" in dsn else "5432" if ":5432" in dsn else "unknown",
+        "migrate_uses_pooler": is_pooler_url(migrate_dsn) if migrate_dsn else None,
+        "migrate_port": (
+            ("6543" if ":6543" in migrate_dsn else "5432" if ":5432" in migrate_dsn else "unknown")
+            if migrate_dsn
+            else None
+        ),
+        "max_retries": MAX_RETRIES,
+        "connection_timeout": CONNECTION_TIMEOUT_SECONDS,
+    }

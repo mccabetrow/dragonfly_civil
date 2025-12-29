@@ -55,13 +55,26 @@ export async function demoSafeRpc<T>(
 }
 
 function buildClient(): SupabaseClient {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  // Sanitize env vars - remove hidden whitespace/newlines that break auth
+  const rawUrl = import.meta.env.VITE_SUPABASE_URL;
+  const rawAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  const url = rawUrl?.trim().replace(/[\r\n\t]/g, '').replace(/\/+$/, '');
+  const anonKey = rawAnonKey?.trim().replace(/[\r\n\t]/g, '');
+
+  // Debug logging for Realtime auth troubleshooting
+  console.log('[Dragonfly Supabase] URL:', url || '(missing)');
+  console.log('[Dragonfly Supabase] Anon Key:', anonKey ? `***${anonKey.slice(-8)}` : '(missing)');
 
   if (!url || !anonKey) {
-    throw new Error(
-      'Supabase credentials are missing. Populate VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment.',
-    );
+    const errorMsg = 'Supabase credentials are missing. Populate VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel.';
+    console.error('[Dragonfly Supabase]', errorMsg);
+    throw new Error(errorMsg);
+  }
+
+  // Validate anon key is not service role (common mistake)
+  if (anonKey.includes('"role":"service_role"') || anonKey.includes('service_role')) {
+    console.warn('[Dragonfly Supabase] WARNING: Key appears to be service_role! Use anon key for frontend.');
   }
 
   return createClient(url, anonKey);

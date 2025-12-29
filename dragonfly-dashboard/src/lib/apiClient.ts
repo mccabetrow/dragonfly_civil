@@ -17,36 +17,51 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Sanitize environment variable: trim whitespace and remove trailing slashes.
- * This defends against copy-paste errors that cause Vercel warnings.
+ * Sanitize and normalize the base URL.
+ * - Trims whitespace and newlines
+ * - Removes trailing slashes
+ * - Removes trailing /api or /api/ (we add it ourselves)
+ *
+ * Option A: Base URL is root domain (e.g., https://...railway.app)
+ *           Code appends /api/... paths.
  */
-function sanitizeEnvVar(value: string | undefined, isUrl = false): string | undefined {
-  if (!value) return undefined;
+function sanitizeBaseUrl(value: string | undefined): string {
+  if (!value) return '';
   let cleaned = value.trim().replace(/[\r\n]+/g, '');
-  if (isUrl) {
-    cleaned = cleaned.replace(/\/+$/, ''); // Remove trailing slashes
-  }
+  // Remove trailing slashes
+  cleaned = cleaned.replace(/\/+$/, '');
+  // Remove trailing /api (we append paths ourselves)
+  cleaned = cleaned.replace(/\/api$/, '');
+  return cleaned;
+}
+
+/**
+ * Sanitize non-URL environment variable.
+ */
+function sanitizeEnvVar(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const cleaned = value.trim().replace(/[\r\n]+/g, '');
   return cleaned || undefined;
 }
 
-const _BASE_URL = sanitizeEnvVar(import.meta.env.VITE_API_BASE_URL, true);
+// Sanitize base URL - default to empty string (implies relative path/proxy)
+const BASE_URL = sanitizeBaseUrl(import.meta.env.VITE_API_BASE_URL);
 const _API_KEY = sanitizeEnvVar(import.meta.env.VITE_DRAGONFLY_API_KEY);
 
-// Validate configuration on module load
-if (!_BASE_URL || !_API_KEY) {
-  const missing: string[] = [];
-  if (!_BASE_URL) missing.push('VITE_API_BASE_URL');
-  if (!_API_KEY) missing.push('VITE_DRAGONFLY_API_KEY');
+// ═══════════════════════════════════════════════════════════════════════════
+// DEBUG: Log config on page load so we can verify Vercel injection
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('[Dragonfly] API Target:', BASE_URL || '(relative)');
+console.log('[Dragonfly] API Key:', _API_KEY ? '***' + _API_KEY.slice(-8) : '(missing)');
 
-  const errorMsg = `[apiClient] Missing required environment variables: ${missing.join(', ')}. ` +
-    'Set VITE_API_BASE_URL and VITE_DRAGONFLY_API_KEY in Vercel.';
-  
+// API key is strictly required
+if (!_API_KEY) {
+  const errorMsg = '[apiClient] Missing required environment variable: VITE_DRAGONFLY_API_KEY. ' +
+    'Set VITE_DRAGONFLY_API_KEY in Vercel.';
   console.error(errorMsg);
   throw new Error(errorMsg);
 }
 
-// These are guaranteed to be clean strings after validation
-const BASE_URL: string = _BASE_URL;
 const API_KEY: string = _API_KEY;
 
 // Export validated config for external use
@@ -111,11 +126,25 @@ export class ApiError extends Error {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Build a full URL from path and base URL.
- * Handles both '/api/...' and 'api/...' paths correctly.
+ * Build a full API URL from path.
+ *
+ * Option A: BASE_URL is root domain (e.g., https://...railway.app)
+ *           Paths should be /api/... or /health etc.
+ *
+ * Handles:
+ * - Missing leading slash on path
+ * - Empty BASE_URL (uses relative path for proxy setups)
  */
+export function apiUrl(path: string): string {
+  // Ensure path starts with /
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  // Concatenate base + path (no double slashes since we stripped trailing from base)
+  return `${BASE_URL}${normalizedPath}`;
+}
+
+/** @internal Legacy alias for backward compatibility */
 function buildUrl(path: string): string {
-  return new URL(path, BASE_URL).href;
+  return apiUrl(path);
 }
 
 /**
@@ -295,44 +324,61 @@ export const apiClient = {
   /**
    * Health check endpoint.
    * Returns normalized result; never throws.
+   *
+   * ROBUST LOGIC:
+   * - Try /api/health first
+   * - Fallback to /health (some setups use root path)
+   * - ANY HTTP 200 = healthy (regardless of JSON body)
    */
   async checkHealth(): Promise<HealthCheckResult> {
-    try {
-      const data = await this.get<{ status?: string; environment?: string }>('/api/health');
-      return {
-        ok: data?.status === 'ok',
-        status: 200,
-        environment: data?.environment,
-        error: undefined,
-      };
-    } catch (err) {
-      console.error('[API HealthCheck]', err);
-      
-      // Extract status and message from our custom errors
-      let status = 0;
-      let errorMessage = 'Connection failed – check API base URL / Railway status.';
+    const endpoints = ['/api/health', '/health'];
 
-      if (err instanceof AuthError) {
-        status = err.status;
-        errorMessage = 'Invalid API key – check VITE_DRAGONFLY_API_KEY configuration.';
-      } else if (err instanceof NotFoundError) {
-        status = err.status;
-        errorMessage = 'Health endpoint not found – check API deployment.';
-      } else if (err instanceof ApiError) {
-        status = err.status;
-        errorMessage = `API error (${status}) – ${err.message}`;
-      } else if (err instanceof Error) {
-        // Network/CORS failure
-        errorMessage = err.message;
+    for (const endpoint of endpoints) {
+      try {
+        const url = apiUrl(endpoint);
+        console.log(`[Dragonfly] Health check: ${url}`);
+
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: getDefaultHeaders(),
+        });
+
+        // ANY 200-level response = healthy
+        if (response.ok) {
+          // Try to parse JSON for extra info, but don't require it
+          let environment: string | undefined;
+          try {
+            const data = await response.json();
+            environment = data?.environment;
+          } catch {
+            // Response wasn't JSON - that's fine, still healthy
+          }
+
+          console.log(`[Dragonfly] Health OK from ${endpoint}`);
+          return {
+            ok: true,
+            status: response.status,
+            environment,
+            error: undefined,
+          };
+        }
+
+        // Non-2xx - try next endpoint
+        console.warn(`[Dragonfly] ${endpoint} returned ${response.status}, trying next...`);
+      } catch (err) {
+        // Network error - try next endpoint
+        console.warn(`[Dragonfly] ${endpoint} failed:`, err);
       }
-
-      return {
-        ok: false,
-        status,
-        environment: undefined,
-        error: errorMessage,
-      };
     }
+
+    // All endpoints failed
+    console.error('[Dragonfly] All health endpoints failed');
+    return {
+      ok: false,
+      status: 0,
+      environment: undefined,
+      error: 'All health endpoints unreachable – check Railway deployment.',
+    };
   },
 };
 

@@ -87,6 +87,12 @@ paths = [
   '''\.venv/''',
   '''node_modules/''',
   '''^\.git/''',
+  # Utility scripts that generate/format credentials (use variable interpolation)
+  '''scripts/generate_db_strings\.ps1$''',
+  '''scripts/generate_vercel_config\.ps1$''',
+  '''scripts/generate_vercel_env\.ps1$''',
+  '''tools/format_direct_db_url\.py$''',
+  '''tools/verify_db_auth\.py$''',
 ]
 
 # Patterns that are known false positives

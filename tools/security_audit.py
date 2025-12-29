@@ -74,16 +74,26 @@ PIPELINE_VIEWS: Set[str] = {
     "v_plaintiff_open_tasks",
 }
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ZERO TRUST VIEW POLICY
+# ═══════════════════════════════════════════════════════════════════════════
+# Views that are explicitly whitelisted for public SELECT access.
+# ALL OTHER VIEWS must have NO grants to anon/authenticated/public.
+# This enforces RPC-only architecture.
+ALLOWED_PUBLIC_VIEWS: Set[str] = set()  # Empty by default - strict lockdown
+
+# Privileges that are NEVER allowed on views for public roles
+VIEW_FORBIDDEN_PRIVS: Set[str] = {"INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"}
+
 KEY_TABLE_POLICIES: Dict[str, KeyTablePolicy] = {
     "judgments": KeyTablePolicy(
         write_roles=frozenset({"service_role"}),
         require_rls=True,
         force_rls=True,
     ),
-    # plaintiffs: authenticated can UPDATE for dashboard status changes
-    # INSERT/DELETE restricted to service_role
+    # plaintiffs: Only service_role can write (Zero Trust architecture)
     "plaintiffs": KeyTablePolicy(
-        write_roles=frozenset({"service_role", "authenticated"}),
+        write_roles=frozenset({"service_role"}),
         require_rls=True,
         force_rls=True,
     ),
@@ -263,9 +273,44 @@ def _enforce_key_table_rules(
         violations.append(f"{rel.name}: missing write privileges for roles {sorted(missing)}")
 
 
+def _enforce_zero_trust_views(rel: RelationSecurity, violations: List[str]) -> None:
+    """Enforce Zero Trust policy: No view access for anon/authenticated/public.
+
+    CRITICAL violations: Any write privileges (INSERT, UPDATE, DELETE, etc.)
+    FAIL violations: SELECT access unless view is in ALLOWED_PUBLIC_VIEWS whitelist
+    """
+    public_roles = ("anon", "authenticated", "public")
+
+    for role in public_roles:
+        privs = rel.grants.get(role, set())
+        if not privs:
+            continue
+
+        # CRITICAL: Write privileges on views are NEVER allowed
+        forbidden = privs & VIEW_FORBIDDEN_PRIVS
+        if forbidden:
+            violations.append(f"CRITICAL: View {rel.name} allows {sorted(forbidden)} to {role}")
+
+        # FAIL: SELECT access unless explicitly whitelisted
+        if "SELECT" in privs and rel.name not in ALLOWED_PUBLIC_VIEWS:
+            violations.append(
+                f"{rel.name}: role '{role}' has SELECT but view not in ALLOWED_PUBLIC_VIEWS whitelist"
+            )
+
+
 def evaluate_rules(relations: Sequence[RelationSecurity]) -> List[str]:
     violations: List[str] = []
     for rel in relations:
+        # ─────────────────────────────────────────────────────────────────────
+        # VIEWS: Zero Trust Policy - RPC-Only Architecture
+        # ─────────────────────────────────────────────────────────────────────
+        if rel.kind == "v":
+            _enforce_zero_trust_views(rel, violations)
+            continue  # Views have their own rules, skip table rules
+
+        # ─────────────────────────────────────────────────────────────────────
+        # TABLES: Key table policies
+        # ─────────────────────────────────────────────────────────────────────
         config = KEY_TABLE_POLICIES.get(rel.name)
         if config:
             _enforce_key_table_rules(rel, config, violations)
@@ -282,22 +327,6 @@ def evaluate_rules(relations: Sequence[RelationSecurity]) -> List[str]:
                     violations.append(
                         f"{rel.name}: role '{role}' must only have SELECT but has {sorted(invalid)}"
                     )
-
-        if rel.kind == "v" and rel.name not in PIPELINE_VIEWS:
-            _assert_no_grants(violations, rel, ("anon", "authenticated", "public"))
-
-        if rel.name in PIPELINE_VIEWS:
-            for role in ("anon", "authenticated"):
-                privs = rel.grants.get(role, set())
-                invalid = privs - READ_ONLY_PRIVS
-                if invalid:
-                    violations.append(
-                        f"{rel.name}: role '{role}' must only have SELECT but has {sorted(invalid)}"
-                    )
-            if rel.grants.get("public"):
-                violations.append(
-                    f"{rel.name}: role 'public' must not have privileges {sorted(rel.grants['public'])}"
-                )
 
     return violations
 

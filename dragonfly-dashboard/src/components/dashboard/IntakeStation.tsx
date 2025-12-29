@@ -384,10 +384,10 @@ export const IntakeStation: FC<IntakeStationProps> = ({
                 <CheckCircle2 className="h-8 w-8 text-emerald-400" />
               </motion.div>
               <h3 className="text-lg font-semibold text-emerald-400 mb-2 font-mono">
-                ✅ Batch Queued
+                ✅ Sent to Processing
               </h3>
               <p className="text-sm text-slate-400 mb-4 font-mono">
-                Batch ID: <span className="text-white">{batchId.slice(0, 8)}...</span>
+                Batch <span className="text-white font-bold">{batchId.slice(0, 8)}</span> queued for intake
               </p>
               <button
                 type="button"

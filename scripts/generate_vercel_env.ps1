@@ -65,22 +65,46 @@ Get-Content $EnvFile | ForEach-Object {
 }
 
 # Railway Backend URL (hardcoded since it's not in .env.prod)
-$railwayUrl = "https://dragonflycivil-production-d57a.up.railway.app"
+# Option A: Root domain only - the frontend code appends /api/...
+$railwayUrlRaw = "https://dragonflycivil-production-d57a.up.railway.app"
+# Sanitize: strip any trailing slashes or /api suffix
+$railwayUrl = $railwayUrlRaw -replace '/+$', '' -replace '/api$', ''
 
 # Extract values
 $supabaseUrl = $envVars["SUPABASE_URL"]
 $supabaseServiceKey = $envVars["SUPABASE_SERVICE_ROLE_KEY"]
 $dragonflyApiKey = $envVars["DRAGONFLY_API_KEY"]
 
-# Note: We need to find the anon key - it's different from service role key
-# For now, we'll generate a placeholder and note it needs to be updated
+# Extract project reference from SUPABASE_URL for anon key lookup
+# Format: https://PROJECT_REF.supabase.co
+$projectRef = ""
+if ($supabaseUrl -match "https://([^.]+)\.supabase\.co") {
+    $projectRef = $matches[1]
+}
+
+# Supabase Anon Key - Read from .env.prod or require manual entry
+# This is the PUBLIC anon key (safe for frontend), NOT the service role key
+# Get from: Supabase Dashboard -> Settings -> API -> anon/public key
+$supabaseAnonKey = ""
+$EnvProdPath = Join-Path $PSScriptRoot "..\.env.prod"
+if (Test-Path $EnvProdPath) {
+    $content = Get-Content $EnvProdPath -Raw
+    if ($content -match 'SUPABASE_ANON_KEY=(.+)') {
+        $supabaseAnonKey = $matches[1].Trim()
+    }
+}
+if (-not $supabaseAnonKey) {
+    $supabaseAnonKey = "<GET FROM SUPABASE DASHBOARD - Settings -> API -> anon/public key>"
+}
+
+# Note: If you need a different project's anon key, get it from Supabase Dashboard
 
 Write-Host ""
 Write-Host "[REQUIRED] Backend API Connection:" -ForegroundColor Green
 Write-Host ""
 
-# VITE_API_BASE_URL - Railway backend with /api suffix
-Write-Host "VITE_API_BASE_URL=$railwayUrl/api" -ForegroundColor White
+# VITE_API_BASE_URL - Clean root URL (no /api suffix - frontend appends paths)
+Write-Host "VITE_API_BASE_URL=$railwayUrl" -ForegroundColor White
 
 # VITE_DRAGONFLY_API_KEY - API key for X-DRAGONFLY-API-KEY header
 Write-Host "VITE_DRAGONFLY_API_KEY=$dragonflyApiKey" -ForegroundColor White
@@ -92,14 +116,18 @@ Write-Host ""
 # VITE_SUPABASE_URL
 Write-Host "VITE_SUPABASE_URL=$supabaseUrl" -ForegroundColor White
 
-# VITE_SUPABASE_ANON_KEY - Note: This is different from service role key
-# The anon key is safe for frontend use, service role is NOT
-Write-Host ""
-Write-Host "[IMPORTANT] VITE_SUPABASE_ANON_KEY:" -ForegroundColor Yellow
-Write-Host "  Get from: Supabase Dashboard -> Settings -> API -> anon/public key" -ForegroundColor DarkGray
-Write-Host "  Project: $supabaseUrl" -ForegroundColor DarkGray
-Write-Host ""
-Write-Host "  DO NOT use the service role key on the frontend!" -ForegroundColor Red
+# VITE_SUPABASE_ANON_KEY
+if ($supabaseAnonKey) {
+    Write-Host "VITE_SUPABASE_ANON_KEY=$supabaseAnonKey" -ForegroundColor White
+}
+else {
+    Write-Host ""
+    Write-Host "[IMPORTANT] VITE_SUPABASE_ANON_KEY:" -ForegroundColor Yellow
+    Write-Host "  Get from: Supabase Dashboard -> Settings -> API -> anon/public key" -ForegroundColor DarkGray
+    Write-Host "  Project: $supabaseUrl" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  DO NOT use the service role key on the frontend!" -ForegroundColor Red
+}
 
 Write-Host ""
 Write-Host "----------------------------------------" -ForegroundColor DarkGray
@@ -114,12 +142,13 @@ Write-Host " COPY-PASTE BLOCK" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Generate clean copy-paste block
+# Generate clean copy-paste block (root URL only - frontend appends /api/...)
+$anonKeyDisplay = if ($supabaseAnonKey) { $supabaseAnonKey } else { "<GET FROM SUPABASE DASHBOARD>" }
 $copyBlock = @"
-VITE_API_BASE_URL=$railwayUrl/api
+VITE_API_BASE_URL=$railwayUrl
 VITE_DRAGONFLY_API_KEY=$dragonflyApiKey
 VITE_SUPABASE_URL=$supabaseUrl
-VITE_SUPABASE_ANON_KEY=<GET FROM SUPABASE DASHBOARD>
+VITE_SUPABASE_ANON_KEY=$anonKeyDisplay
 VITE_DEMO_MODE=false
 "@
 

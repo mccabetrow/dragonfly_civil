@@ -1,0 +1,14 @@
+# Gitleaks Ignore File
+# These files contain placeholder/generated credentials or example patterns
+# that are not actual secrets
+
+# Password generator script - generates new passwords, doesn't contain real ones
+scripts/generate_db_strings.ps1
+
+# Utility scripts that format/verify URLs (use variable interpolation, not real passwords)
+tools/format_direct_db_url.py
+tools/verify_db_auth.py
+
+# Config generators - read from .env files, placeholders in comments
+scripts/generate_vercel_config.ps1
+scripts/generate_vercel_env.ps1

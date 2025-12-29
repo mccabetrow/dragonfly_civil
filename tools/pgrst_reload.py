@@ -1,74 +1,52 @@
 """Trigger a PostgREST schema cache reload for Supabase.
 
-This module provides a thin CLI wrapper that calls the
-``pgrst_reload`` RPC exposed by Supabase. It mirrors the style of the
-other utilities in the ``tools`` package so it can be launched via
-``python -m tools.pgrst_reload``.
+This module triggers a schema cache reload using the standard PostgreSQL
+NOTIFY mechanism. PostgREST listens for 'pgrst' notifications and reloads
+its schema cache when one is received.
+
+Usage:
+    python -m tools.pgrst_reload
 """
 
 from __future__ import annotations
 
 import sys
-from typing import Final
 
-import requests
+import psycopg
 
-from src.supabase_client import get_settings
-
-RELOAD_PATH: Final[str] = "/rest/v1/rpc/pgrst_reload"
+from src.supabase_client import get_supabase_db_url, get_supabase_env
 
 
-def _resolve_endpoint(base_url: str) -> str:
-    if base_url.endswith("/"):
-        return f"{base_url.rstrip('/')}{RELOAD_PATH}"
-    return f"{base_url}{RELOAD_PATH}"
-
-
-def _request_headers(api_key: str) -> dict[str, str]:
-    return {
-        "apikey": api_key,
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-
-def _reload_schema(url: str, api_key: str) -> None:
-    endpoint = _resolve_endpoint(url)
-    response = requests.post(endpoint, headers=_request_headers(api_key), json={})
-    if 200 <= response.status_code < 300:
-        print("[pgrst_reload] Schema cache reload triggered successfully.")
-        return
-
+def _reload_schema_via_notify(db_url: str) -> bool:
+    """Send NOTIFY pgrst to trigger PostgREST schema cache reload."""
     try:
-        detail = response.json()
-    except ValueError:
-        detail = response.text
-
-    print(
-        "[pgrst_reload] Failed to reload schema cache:",
-        f"status={response.status_code}",
-        f"body={detail}",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+        with psycopg.connect(db_url, autocommit=True, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                cur.execute("NOTIFY pgrst")
+        return True
+    except psycopg.Error as e:
+        print(f"[pgrst_reload] Database error: {e}", file=sys.stderr)
+        return False
 
 
 def main() -> None:
-    settings = get_settings()
-    base_url = settings.supabase_url
-    api_key = settings.supabase_service_role_key
+    env = get_supabase_env()
+    db_url = get_supabase_db_url(env)
 
-    if not base_url or not api_key:
+    if not db_url:
         print(
-            "[pgrst_reload] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment.",
+            "[pgrst_reload] Missing database URL. Check SUPABASE_DB_URL.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    try:
-        _reload_schema(base_url, api_key)
-    except requests.RequestException as exc:
-        print(f"[pgrst_reload] Network failure: {exc}", file=sys.stderr)
+    print(f"[pgrst_reload] Sending NOTIFY pgrst to {env} database...")
+
+    if _reload_schema_via_notify(db_url):
+        print("[pgrst_reload] ✅ PostgREST Schema Cache Reloaded via NOTIFY")
+        sys.exit(0)
+    else:
+        print("[pgrst_reload] Failed to reload schema cache", file=sys.stderr)
         sys.exit(1)
 
 

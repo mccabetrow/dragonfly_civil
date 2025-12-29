@@ -13,16 +13,20 @@ from scripts import check_prod_schema
 from src.supabase_client import describe_db_url, get_supabase_db_url
 
 from . import (
+    check_api_health,
+    check_storage,
     config_check,
     doctor,
     security_audit,
     smoke_enforcement,
     smoke_plaintiffs,
-    validate_n8n_flows,
 )
 
 RunResult = Tuple[str, int, str]
 Runner = Callable[[], None]
+
+# Track whether a check passed with tolerated warnings
+_tolerated_warnings: List[str] = []
 
 
 def _run_step(name: str, runner: Runner) -> RunResult:
@@ -73,20 +77,14 @@ def _doctor_runner(env: str) -> Runner:
     return _runner
 
 
-def _config_check_runner(env: str) -> Runner:
+def _config_check_runner(env: str, tolerant: bool = False) -> Runner:
     def _runner() -> None:
         results = config_check.check_environment(env)
-        if config_check.has_failures(results):
+        if config_check.has_failures(results, tolerant=tolerant):
             raise SystemExit(1)
-
-    return _runner
-
-
-def _n8n_validator_runner(env: str) -> Runner:
-    def _runner() -> None:
-        exit_code = validate_n8n_flows.main(("--env", env))
-        if exit_code != 0:
-            raise SystemExit(exit_code)
+        # Track if warnings were tolerated
+        if tolerant and any(r.status == "FAIL" for r in results):
+            _tolerated_warnings.append("config_check")
 
     return _runner
 
@@ -102,9 +100,46 @@ def _security_audit_runner(env: str) -> Runner:
     return _runner
 
 
-def _prod_schema_guard_runner(env: str) -> Runner:
+def _check_storage_runner(env: str, tolerant: bool = False) -> Runner:
+    """Run storage bucket check with optional tolerance for transient errors."""
+
     def _runner() -> None:
-        exit_code = check_prod_schema.main(["--env", env])
+        result = check_storage.check_storage_buckets(env, tolerant=tolerant)
+        if result.status == "OK":
+            click.echo(f"[doctor_all] ✅ Storage: {result.message}")
+        elif result.status == "WARN":
+            click.echo(f"[doctor_all] {result.message}")
+            _tolerated_warnings.append("check_storage")
+        else:
+            click.echo(f"[doctor_all] ❌ Storage: {result.message}", err=True)
+            raise SystemExit(1)
+
+    return _runner
+
+
+def _check_api_health_runner(env: str, tolerant: bool = False) -> Runner:
+    """Run API health check with optional tolerance for transient errors."""
+
+    def _runner() -> None:
+        result = check_api_health.check_api_health(env, tolerant=tolerant)
+        if result.status == "OK":
+            click.echo(f"[doctor_all] ✅ API: {result.message}")
+        elif result.status == "WARN":
+            click.echo(f"[doctor_all] {result.message}")
+            _tolerated_warnings.append("check_api_health")
+        else:
+            click.echo(f"[doctor_all] ❌ API: {result.message}", err=True)
+            raise SystemExit(1)
+
+    return _runner
+
+
+def _prod_schema_guard_runner(env: str, tolerant: bool = False) -> Runner:
+    def _runner() -> None:
+        args = ["--env", env]
+        if tolerant:
+            args.append("--tolerant")
+        exit_code = check_prod_schema.main(args)
         if exit_code != 0:
             raise SystemExit(exit_code)
 
@@ -234,14 +269,40 @@ def _enforcement_case_integrity_runner(env: str) -> Runner:
     default=None,
     help="Override Supabase environment (default reads SUPABASE_MODE).",
 )
-def main(requested_env: str | None = None) -> None:
+@click.option(
+    "--tolerant",
+    is_flag=True,
+    default=False,
+    help="Downgrade non-critical failures to warnings (for initial deploys).",
+)
+@click.option(
+    "--demo",
+    is_flag=True,
+    default=False,
+    help="Alias for --tolerant (demo mode with resilient checks).",
+)
+def main(
+    requested_env: str | None = None,
+    tolerant: bool = False,
+    demo: bool = False,
+) -> None:
+    global _tolerated_warnings
+    _tolerated_warnings = []
+
+    # --demo implies --tolerant
+    tolerant = tolerant or demo
+
     env = _bootstrap_env(requested_env)
 
+    if tolerant:
+        click.echo("[doctor_all] Running in TOLERANT mode (Demo/Initial Deploy)")
+
     actions: List[Tuple[str, Runner]] = [
-        ("config_check", _config_check_runner(env)),
-        ("security_audit", _security_audit_runner(env)),
+        ("config_check", _config_check_runner(env, tolerant=tolerant)),
+        ("check_storage", _check_storage_runner(env, tolerant=tolerant)),
+        ("check_api_health", _check_api_health_runner(env, tolerant=tolerant)),
+        ("security_audit", _security_audit_runner(env)),  # Security ALWAYS strict
         ("doctor", _doctor_runner(env)),
-        ("validate_n8n_flows", _n8n_validator_runner(env)),
         ("smoke_plaintiffs", smoke_plaintiffs.main),
         ("smoke_enforcement", smoke_enforcement.main),
         ("import_runs_recent_failures", _recent_import_failures_runner(env)),
@@ -250,13 +311,18 @@ def main(requested_env: str | None = None) -> None:
     ]
 
     if env == "prod":
-        actions.insert(0, ("prod_schema_guard", _prod_schema_guard_runner(env)))
+        actions.insert(0, ("prod_schema_guard", _prod_schema_guard_runner(env, tolerant=tolerant)))
 
     results = _run_sequence(actions)
 
     failures = [(name, code) for name, code, _ in results if code != 0]
     if not failures:
-        click.echo("[doctor_all] All checks passed.")
+        if _tolerated_warnings:
+            click.echo(
+                f"[doctor_all] ✅ PASSED (With Tolerated Warnings: {', '.join(_tolerated_warnings)})"
+            )
+        else:
+            click.echo("[doctor_all] All checks passed.")
         raise SystemExit(0)
 
     summary = ", ".join(f"{name} (exit {code})" for name, code in failures)

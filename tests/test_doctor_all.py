@@ -11,9 +11,14 @@ from tools import doctor_all
 def _patch_common_success(monkeypatch, env: str = "dev", patch_config: bool = True) -> None:
     monkeypatch.setattr(doctor_all, "_bootstrap_env", lambda requested: env)
     if patch_config:
-        monkeypatch.setattr(doctor_all, "_config_check_runner", lambda env: (lambda: None))
+        # Runner functions now accept tolerant kwarg
+        monkeypatch.setattr(
+            doctor_all, "_config_check_runner", lambda env, tolerant=False: (lambda: None)
+        )
     monkeypatch.setattr(doctor_all, "_doctor_runner", lambda env: lambda: None)
-    monkeypatch.setattr(doctor_all, "_n8n_validator_runner", lambda env: (lambda: None))
+    monkeypatch.setattr(
+        doctor_all, "_n8n_validator_runner", lambda env, tolerant=False: (lambda: None)
+    )
     monkeypatch.setattr(doctor_all, "_security_audit_runner", lambda env: (lambda: None))
     monkeypatch.setattr(doctor_all.smoke_plaintiffs, "main", lambda: None)
     monkeypatch.setattr(doctor_all.smoke_enforcement, "main", lambda: None)
@@ -168,7 +173,7 @@ def test_doctor_all_dev_warns_missing_keys(monkeypatch):
     monkeypatch.setattr(
         doctor_all.config_check,
         "has_failures",
-        lambda results: any(result.status == "FAIL" for result in results),
+        lambda results, tolerant=False: any(result.status == "FAIL" for result in results),
     )
     monkeypatch.setattr(
         doctor_all,
@@ -194,7 +199,7 @@ def test_doctor_all_prod_missing_keys_fails(monkeypatch):
     monkeypatch.setattr(
         doctor_all.config_check,
         "has_failures",
-        lambda results: any(result.status == "FAIL" for result in results),
+        lambda results, tolerant=False: any(result.status == "FAIL" for result in results),
     )
     monkeypatch.setattr(
         doctor_all,

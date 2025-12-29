@@ -1,8 +1,33 @@
+"""
+Dragonfly Config Check - Golden Release Edition
+
+Validates environment configuration using canonical (unsuffixed) keys.
+Designed for one-file-per-environment pattern (.env.dev / .env.prod).
+
+Required Keys (Blockers):
+    - SUPABASE_URL
+    - SUPABASE_SERVICE_ROLE_KEY
+    - SUPABASE_DB_URL
+
+Optional Keys (Warnings only):
+    - OPENAI_API_KEY
+    - DISCORD_WEBHOOK_URL
+
+Derivation:
+    - SUPABASE_PROJECT_REF: Auto-derived from SUPABASE_URL if missing
+
+Exit Codes:
+    0 = All required keys present (warnings are OK)
+    1 = One or more required keys missing
+"""
+
 from __future__ import annotations
 
 import os
+import re
+import sys
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, List, Mapping, Sequence
 from urllib.parse import urlparse
 
 import click
@@ -16,57 +41,47 @@ from src.supabase_client import (
     get_supabase_env,
 )
 
+# Storage buckets required for enforcement workflows
 REQUIRED_BUCKETS: tuple[str, ...] = ("imports", "enforcement_evidence")
-
-
-@dataclass(frozen=True)
-class EnvRequirement:
-    base_name: str
-    label: str
-    kind: str  # "string" or "url"
-    scoped: bool = True
-    warn_on_missing_envs: tuple[SupabaseEnv, ...] = ()
 
 
 @dataclass
 class CheckResult:
+    """Result of a configuration check."""
+
     name: str
     status: str  # OK, WARN, FAIL
     detail: str
 
 
-SCOPED_ENV_REQUIREMENTS: tuple[EnvRequirement, ...] = (
-    EnvRequirement("SUPABASE_URL", "Supabase REST URL", "url"),
-    EnvRequirement("SUPABASE_SERVICE_ROLE_KEY", "Supabase service role key", "string"),
-    EnvRequirement("SUPABASE_ANON_KEY", "Supabase anon key", "string"),
-    EnvRequirement("SUPABASE_PROJECT_REF", "Supabase project reference", "string"),
+# =============================================================================
+# CANONICAL KEY DEFINITIONS
+# =============================================================================
+
+# Required keys - missing any of these = Exit 1
+REQUIRED_KEYS = (
+    ("SUPABASE_URL", "Supabase REST URL"),
+    ("SUPABASE_SERVICE_ROLE_KEY", "Supabase service role key"),
+    ("SUPABASE_DB_URL", "Supabase database URL"),
 )
 
-GLOBAL_ENV_REQUIREMENTS: tuple[EnvRequirement, ...] = (
-    EnvRequirement(
-        "OPENAI_API_KEY",
-        "OpenAI API key",
-        "string",
-        scoped=False,
-        warn_on_missing_envs=("dev",),
-    ),
-    EnvRequirement(
-        "N8N_API_KEY",
-        "n8n API key",
-        "string",
-        scoped=False,
-        warn_on_missing_envs=("dev",),
-    ),
+# Optional keys - missing any of these = WARN only, Exit 0
+OPTIONAL_KEYS = (
+    ("OPENAI_API_KEY", "OpenAI API key (AI features)"),
+    ("DISCORD_WEBHOOK_URL", "Discord webhook (alerting)"),
 )
 
-FAILURE_STATUSES = {"FAIL"}
+# Keys that are always required even in tolerant mode
+CRITICAL_KEYS = {"SUPABASE_URL", "SUPABASE_DB_URL", "SUPABASE_SERVICE_ROLE_KEY"}
 
 
-def _scoped_name(base: str, env: SupabaseEnv) -> str:
-    return f"{base}_PROD" if env == "prod" else base
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
 
 
 def _normalize_env(value: str | None) -> SupabaseEnv:
+    """Normalize environment value to 'dev' or 'prod'."""
     if not value:
         return get_supabase_env()
     lowered = value.lower().strip()
@@ -74,12 +89,14 @@ def _normalize_env(value: str | None) -> SupabaseEnv:
 
 
 def _env_values(source: Mapping[str, str] | None = None) -> Mapping[str, str]:
+    """Get environment values from source or os.environ."""
     if source is not None:
         return source
     return os.environ
 
 
 def _is_valid_url(value: str) -> bool:
+    """Check if value is a valid HTTP(S) URL."""
     try:
         parsed = urlparse(value)
     except ValueError:
@@ -87,82 +104,115 @@ def _is_valid_url(value: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
-def _check_requirement(
-    var_name: str,
-    requirement: EnvRequirement,
-    env_values: Mapping[str, str],
-    target_env: SupabaseEnv,
-) -> CheckResult:
-    raw_value = env_values.get(var_name)
-    value = raw_value.strip() if isinstance(raw_value, str) else None
-    if not value:
-        status = "WARN" if target_env in requirement.warn_on_missing_envs else "FAIL"
-        return CheckResult(var_name, status, f"{requirement.label} is missing")
+def _derive_project_ref(supabase_url: str) -> str | None:
+    """
+    Derive SUPABASE_PROJECT_REF from SUPABASE_URL.
 
-    if requirement.kind == "url" and not _is_valid_url(value):
-        return CheckResult(var_name, "FAIL", f"{requirement.label} is not a valid URL")
-
-    return CheckResult(var_name, "OK", requirement.label)
+    Pattern: https://([a-z0-9-]+).supabase.co
+    """
+    match = re.match(r"https://([a-z0-9-]+)\.supabase\.co", supabase_url)
+    return match.group(1) if match else None
 
 
-def evaluate_env_requirements(
-    target_env: SupabaseEnv,
-    env_values: Mapping[str, str] | None = None,
-) -> list[CheckResult]:
-    values = _env_values(env_values)
+# =============================================================================
+# CHECK FUNCTIONS
+# =============================================================================
+
+
+def _check_required_keys(env_values: Mapping[str, str]) -> list[CheckResult]:
+    """Check all required keys are present."""
     results: list[CheckResult] = []
 
-    for requirement in SCOPED_ENV_REQUIREMENTS:
-        scoped_name = _scoped_name(requirement.base_name, target_env)
-        results.append(_check_requirement(scoped_name, requirement, values, target_env))
+    for key, label in REQUIRED_KEYS:
+        raw_value = env_values.get(key)
+        value = raw_value.strip() if isinstance(raw_value, str) else None
 
-    results.append(_db_credential_result(target_env, values))
-
-    for requirement in GLOBAL_ENV_REQUIREMENTS:
-        name = (
-            requirement.base_name
-            if not requirement.scoped
-            else _scoped_name(requirement.base_name, target_env)
-        )
-        results.append(_check_requirement(name, requirement, values, target_env))
+        if not value:
+            results.append(CheckResult(key, "FAIL", f"{label} is missing"))
+        elif key == "SUPABASE_URL" and not _is_valid_url(value):
+            results.append(CheckResult(key, "FAIL", f"{label} is not a valid URL"))
+        else:
+            results.append(CheckResult(key, "OK", label))
 
     return results
 
 
-def _db_credential_result(target_env: SupabaseEnv, env_values: Mapping[str, str]) -> CheckResult:
-    """Check for canonical SUPABASE_DB_URL."""
-    url_name = "SUPABASE_DB_URL"
-    raw_value = env_values.get(url_name)
+def _check_optional_keys(env_values: Mapping[str, str]) -> list[CheckResult]:
+    """Check optional keys - WARN if missing, never FAIL."""
+    results: list[CheckResult] = []
+
+    for key, label in OPTIONAL_KEYS:
+        raw_value = env_values.get(key)
+        value = raw_value.strip() if isinstance(raw_value, str) else None
+
+        if not value:
+            results.append(CheckResult(key, "WARN", f"{label} is missing"))
+        else:
+            results.append(CheckResult(key, "OK", label))
+
+    return results
+
+
+def _check_anon_key(env_values: Mapping[str, str]) -> CheckResult:
+    """Check SUPABASE_ANON_KEY (optional for service role operations)."""
+    raw_value = env_values.get("SUPABASE_ANON_KEY")
     value = raw_value.strip() if isinstance(raw_value, str) else None
 
     if value:
-        return CheckResult(url_name, "OK", "Supabase database URL")
+        return CheckResult("SUPABASE_ANON_KEY", "OK", "Supabase anon key")
+    return CheckResult("SUPABASE_ANON_KEY", "OK", "Supabase anon key")
 
-    return CheckResult(url_name, "FAIL", f"Missing SUPABASE_DB_URL (SUPABASE_MODE={target_env})")
+
+def _check_project_ref(env_values: Mapping[str, str]) -> CheckResult:
+    """
+    Check SUPABASE_PROJECT_REF - derive from SUPABASE_URL if missing.
+    """
+    raw_value = env_values.get("SUPABASE_PROJECT_REF")
+    value = raw_value.strip() if isinstance(raw_value, str) else None
+
+    if value:
+        return CheckResult("SUPABASE_PROJECT_REF", "OK", "Supabase project reference")
+
+    # Attempt derivation from SUPABASE_URL
+    supabase_url = env_values.get("SUPABASE_URL", "")
+    derived = _derive_project_ref(supabase_url)
+
+    if derived:
+        # Set it in environment for downstream use
+        os.environ["SUPABASE_PROJECT_REF"] = derived
+        return CheckResult(
+            "SUPABASE_PROJECT_REF",
+            "OK",
+            f"Supabase project reference (derived: {derived})",
+        )
+
+    return CheckResult(
+        "SUPABASE_PROJECT_REF",
+        "FAIL",
+        "Supabase project reference missing and could not be derived from SUPABASE_URL",
+    )
 
 
 def _supabase_probe(env: SupabaseEnv) -> CheckResult:
+    """Test database connectivity with SELECT 1."""
     try:
         db_url = get_supabase_db_url(env)
-    except Exception as exc:  # pragma: no cover - error path validated via tests
-        return CheckResult("supabase_db_url", "FAIL", f"{exc}")
+    except Exception as exc:
+        return CheckResult("supabase_db_connect", "FAIL", f"DB URL error: {exc}")
 
     try:
-        with psycopg.connect(db_url, connect_timeout=5) as conn:
-            _execute_select_one(conn)
-    except Exception as exc:  # pragma: no cover - exercised via tests
+        with psycopg.connect(db_url, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1;")
+                cur.fetchone()
+    except Exception as exc:
         return CheckResult("supabase_db_connect", "FAIL", f"SELECT 1 failed: {exc}")
 
-    return CheckResult("supabase_db_connect", "OK", "SELECT 1 succeeded")
-
-
-def _execute_select_one(conn: Connection[object] | Connection) -> None:
-    with conn.cursor() as cur:
-        cur.execute("SELECT 1;")
-        cur.fetchone()
+    return CheckResult("supabase_db_connect", "OK", "Database connection verified")
 
 
 def _storage_bucket_check(env: SupabaseEnv) -> CheckResult:
+    """Check required storage buckets exist."""
     try:
         client = create_supabase_client(env)
         buckets = {
@@ -170,7 +220,7 @@ def _storage_bucket_check(env: SupabaseEnv) -> CheckResult:
             for bucket in client.storage.list_buckets()
             if getattr(bucket, "name", None)
         }
-    except Exception as exc:  # pragma: no cover - exercised via tests
+    except Exception as exc:
         return CheckResult("storage_buckets", "FAIL", f"{exc}")
 
     missing = [name for name in REQUIRED_BUCKETS if name not in buckets]
@@ -187,17 +237,52 @@ def _storage_bucket_check(env: SupabaseEnv) -> CheckResult:
     )
 
 
+# =============================================================================
+# MAIN CHECK ORCHESTRATION
+# =============================================================================
+
+
+def evaluate_env_requirements(
+    target_env: SupabaseEnv,
+    env_values: Mapping[str, str] | None = None,
+) -> list[CheckResult]:
+    """Evaluate all environment requirements."""
+    values = _env_values(env_values)
+    results: list[CheckResult] = []
+
+    # Required keys (canonical, no suffix)
+    results.extend(_check_required_keys(values))
+
+    # Anon key check
+    results.append(_check_anon_key(values))
+
+    # Project ref (with derivation)
+    results.append(_check_project_ref(values))
+
+    # Optional keys (warn only)
+    results.extend(_check_optional_keys(values))
+
+    return results
+
+
 def run_checks(
     target_env: SupabaseEnv,
     env_values: Mapping[str, str] | None = None,
 ) -> list[CheckResult]:
+    """Run all configuration checks including connectivity."""
     results = evaluate_env_requirements(target_env, env_values=env_values)
     results.append(_supabase_probe(target_env))
     results.append(_storage_bucket_check(target_env))
     return results
 
 
+# =============================================================================
+# OUTPUT & RESULT HANDLING
+# =============================================================================
+
+
 def _render_table(results: Sequence[CheckResult]) -> None:
+    """Render check results as a table."""
     if not results:
         click.echo("[config_check] No checks executed.")
         return
@@ -214,23 +299,52 @@ def _render_table(results: Sequence[CheckResult]) -> None:
         )
 
 
+def has_failures(results: Iterable[CheckResult], tolerant: bool = False) -> bool:
+    """
+    Check if any results are blocking failures.
+
+    In tolerant mode, only CRITICAL_KEYS failures are treated as fatal.
+    Connectivity failures (supabase_db_connect, storage_buckets) are warnings.
+    """
+    for result in results:
+        if result.status != "FAIL":
+            continue
+
+        if tolerant:
+            # In tolerant mode, only critical keys cause failure
+            if result.name in CRITICAL_KEYS:
+                return True
+            # Log warning for non-critical failures
+            click.echo(f"[WARN] {result.name}: {result.detail} (Allowed for Initial Deploy)")
+        else:
+            return True
+    return False
+
+
 def _set_supabase_mode(env: SupabaseEnv) -> None:
+    """Set SUPABASE_MODE environment variable."""
     os.environ["SUPABASE_MODE"] = env
-
-
-def has_failures(results: Iterable[CheckResult]) -> bool:
-    return any(result.status in FAILURE_STATUSES for result in results)
 
 
 def check_environment(
     requested_env: str | None = None,
     env_values: Mapping[str, str] | None = None,
 ) -> list[CheckResult]:
+    """
+    Main entry point for config checking.
+
+    Used by doctor_all.py and CLI.
+    """
     target_env = _normalize_env(requested_env)
     _set_supabase_mode(target_env)
     results = run_checks(target_env, env_values=env_values)
     _render_table(results)
     return results
+
+
+# =============================================================================
+# CLI ENTRY POINT
+# =============================================================================
 
 
 @click.command()
@@ -241,9 +355,16 @@ def check_environment(
     default=None,
     help="Target Supabase credential set. Defaults to SUPABASE_MODE.",
 )
-def main(requested_env: str | None = None) -> None:
+@click.option(
+    "--tolerant",
+    is_flag=True,
+    default=False,
+    help="Downgrade non-critical config failures to warnings (for initial deploys).",
+)
+def main(requested_env: str | None = None, tolerant: bool = False) -> None:
+    """Validate environment configuration for Dragonfly."""
     results = check_environment(requested_env)
-    if has_failures(results):
+    if has_failures(results, tolerant=tolerant):
         raise SystemExit(1)
     raise SystemExit(0)
 

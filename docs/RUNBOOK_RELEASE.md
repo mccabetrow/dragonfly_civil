@@ -71,9 +71,12 @@ The **B3 (Build-Before-Break) Protocol** ensures code correctness is verified be
 │    └─ Scale Railway workers to 0                                │
 │    └─ Reason: Prevent in-flight jobs during migration           │
 │                                                                 │
-│  PHASE 1: GATE (Hard Fail)                                      │
-│    └─ pytest -m "not integration"                               │
-│    └─ Tests: RPC-CONTRACT, WORKER-CONTRACT, UNIT-TESTS          │
+│  PHASE 1: GATE (via gate_preflight.ps1)                         │
+│    └─ Contract tests: pytest -m "contract"                      │
+│    └─ Security tests: pytest -m "security" (skip if Initial)    │
+│    └─ Perf tests: pytest -m "performance" (skip if Initial)     │
+│    └─ Unit tests: pytest -m "not integration and not security   │
+│                           and not contract and not performance" │
 │    └─ If ANY fail → ABORT immediately                           │
 │                                                                 │
 │  PHASE 2: GATE (Soft Fail)                                      │
@@ -100,6 +103,27 @@ The **B3 (Build-Before-Break) Protocol** ensures code correctness is verified be
 │    └─ Verify critical paths work end-to-end                     │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Initial Deploy Mode
+
+For **first-time deployments** or after applying Zero-Trust hardening when workers aren't live:
+
+```powershell
+$env:SUPABASE_MODE = "prod"
+.\scripts\gate_preflight.ps1 -InitialDeploy
+```
+
+**What `-InitialDeploy` relaxes:**
+
+- Skips security tests (require hardening already applied)
+- Skips performance tests (require data)
+- Relaxes RLS/Worker health checks (warns instead of fails)
+
+**What it still enforces:**
+
+- DB connectivity (hard requirement)
+- Contract verification (hard requirement)
+- Unit tests (always)
 
 ---
 
@@ -253,4 +277,11 @@ The `verify_db_state.sql` script validates these during deployment.
 
 ## Version
 
-Last updated: 2025-01-13
+Last updated: 2025-12-27
+
+### Changelog
+
+| Date       | Change                                                                             |
+| ---------- | ---------------------------------------------------------------------------------- |
+| 2025-12-27 | Updated B3 Protocol with `-InitialDeploy` flag and correct test marker segregation |
+| 2025-01-13 | Initial runbook creation                                                           |

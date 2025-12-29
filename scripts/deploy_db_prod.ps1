@@ -239,6 +239,33 @@ else {
 }
 
 # ----------------------------------------------------------------------------
+# STEP 3.6: Refresh PostgREST Schema Cache
+# ----------------------------------------------------------------------------
+Write-Host ""
+Write-Host "Refreshing PostgREST schema cache..." -ForegroundColor White
+
+if ($DryRun) {
+    Write-Host "[DRY RUN] Would run: python -m tools.pgrst_reload" -ForegroundColor Yellow
+}
+else {
+    try {
+        & $pythonExe -m tools.pgrst_reload
+        $exitCode = $LASTEXITCODE
+        
+        if ($exitCode -ne 0) {
+            Write-Warn "PostgREST schema cache reload failed (exit code $exitCode)"
+            Write-Host "Migrations were applied, but REST API may need manual refresh." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "[OK] PostgREST schema cache refreshed" -ForegroundColor Green
+        }
+    }
+    catch {
+        Write-Warn "Failed to refresh schema cache: $_"
+    }
+}
+
+# ----------------------------------------------------------------------------
 # STEP 4: Contract Truth Verification
 # ----------------------------------------------------------------------------
 Write-Step 4 "CONTRACT TRUTH VERIFICATION"

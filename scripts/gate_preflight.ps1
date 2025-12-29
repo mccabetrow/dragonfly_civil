@@ -23,7 +23,9 @@
       - Contract tests: pytest -m "contract" (Always run)
       - Security tests: pytest -m "security" (Skip if InitialDeploy)
       - Unit tests: pytest -m "not integration and not security and not contract" (Always run)
-      - Integration tests: pytest -m "integration" (Soft fail)
+      - Integration tests:
+        * InitialDeploy: pytest -m "integration_infra" only (Soft fail, schema SKIPPED)
+        * Normal: pytest -m "integration_infra or integration_schema or integration" (Soft fail)
 
 .PARAMETER InitialDeploy
     First-time deployment mode. Relaxes health checks that depend on 
@@ -50,47 +52,35 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+# Set UTF-8 encoding for all Python calls (Windows PS 5.1 compatibility)
+$env:PYTHONUTF8 = "1"
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+    # Set code page to UTF-8 (65001) for better emoji handling
+    $null = cmd /c chcp 65001
+}
+catch {
+    # Ignore encoding errors - PS5.1 may not support all encoding settings
+}
+
+# Import dual-mode status helper (uses ASCII on PS5, emoji on PS7+)
+. "$PSScriptRoot\Write-Status.ps1"
+
 # ============================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS (Write-Status, Write-StepPass/Fail/Warn imported above)
 # ============================================================================
 
+# Alias Write-Banner to Write-StatusBanner for backward compatibility
 function Write-Banner {
     param([string]$Message, [string]$Color = "Cyan")
-    Write-Host ""
-    Write-Host ("=" * 70) -ForegroundColor $Color
-    Write-Host "  $Message" -ForegroundColor $Color
-    Write-Host ("=" * 70) -ForegroundColor $Color
-    Write-Host ""
-}
-
-function Write-StepStart {
-    param([string]$Step, [string]$Description)
-    Write-Host "[$Step] $Description" -ForegroundColor Yellow
-    Write-Host ("-" * 50) -ForegroundColor DarkGray
-}
-
-function Write-StepPass {
-    param([string]$Step)
-    Write-Host "✅ [$Step] PASSED" -ForegroundColor Green
-    Write-Host ""
-}
-
-function Write-StepWarn {
-    param([string]$Step, [string]$Reason)
-    Write-Host "⚠️ [$Step] WARNING: $Reason" -ForegroundColor Yellow
-    Write-Host ""
-}
-
-function Write-StepFail {
-    param([string]$Step, [string]$Reason)
-    Write-Host "❌ [$Step] FAILED: $Reason" -ForegroundColor Red
-    Write-Host ""
+    Write-StatusBanner -Message $Message -Color $Color
 }
 
 function Invoke-CriticalFailure {
     Write-Host ""
     Write-Host ("=" * 70) -ForegroundColor Red
-    Write-Host "  ❌ CRITICAL FAILURE: DO NOT DEPLOY" -ForegroundColor Red
+    Write-Status -Level FAIL -Message "CRITICAL FAILURE: DO NOT DEPLOY"
     Write-Host ("=" * 70) -ForegroundColor Red
     Write-Host ""
     Write-Host "Phase 1 (Hard Gate) failed. Fix before proceeding to production." -ForegroundColor Yellow
@@ -112,7 +102,7 @@ $integrationWarning = $false
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     Write-Host ""
     Write-Host ("=" * 70) -ForegroundColor Yellow
-    Write-Host "  ⚠️  WARNING: PowerShell $($PSVersionTable.PSVersion) detected" -ForegroundColor Yellow
+    Write-Status -Level WARN -Message "PowerShell $($PSVersionTable.PSVersion) detected"
     Write-Host "  Recommended: PowerShell 7+ for reliable API testing" -ForegroundColor Yellow
     Write-Host "  Install: winget install Microsoft.PowerShell" -ForegroundColor Cyan
     Write-Host ("=" * 70) -ForegroundColor Yellow
@@ -184,8 +174,6 @@ if ($SkipDbTest) {
 else {
     $dbConnTestPath = Join-Path $RepoRoot "tools\test_db_connection.py"
     if (Test-Path $dbConnTestPath) {
-        # Set PYTHONUTF8 to handle emoji output on Windows
-        $env:PYTHONUTF8 = "1"
         $result = & "$RepoRoot\.venv\Scripts\python.exe" -m tools.test_db_connection 2>&1
         $exitCode = $LASTEXITCODE
 
@@ -366,7 +354,7 @@ if ($exitCode -ne 0) {
 
 Write-StepPass "UNIT-TESTS"
 
-Write-Host "✅ Phase 1 Complete - Code correctness verified" -ForegroundColor Green
+Write-Status -Level OK -Message "Phase 1 Complete - Code correctness verified"
 Write-Host ""
 
 # ============================================================================
@@ -407,38 +395,79 @@ else {
 }
 
 # ----------------------------------------------------------------------------
-# STEP 2.2: Integration Tests (PostgREST, Pooler, Realtime)
+# STEP 2.2: Integration Tests (Segregated by Infra vs Schema)
 # ----------------------------------------------------------------------------
-Write-StepStart "INTEGRATION" "Running integration tests (PostgREST, Pooler, Realtime)"
+if ($InitialDeploy) {
+    # ========================================================================
+    # INITIAL DEPLOY MODE: Infra Only (Tolerant)
+    # ========================================================================
+    Write-StepStart "INTEGRATION-INFRA" "Running infrastructure tests (Tolerant Mode)"
+    Write-Host "  Initial Deploy: Running integration_infra only, schema tests SKIPPED" -ForegroundColor Yellow
 
-# Temporarily relax error handling for soft gate (integration failures are warnings)
-$ErrorActionPreference = "Continue"
-# Integration tests may take longer due to retry logic when infra is degraded
-$result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest -m "integration" -q 2>&1
-$exitCode = $LASTEXITCODE
-$ErrorActionPreference = "Stop"
+    $ErrorActionPreference = "Continue"
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest -m "integration_infra" -q 2>&1
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
 
-if ($Verbose) {
-    $result | ForEach-Object { Write-Host $_ }
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        $result | Select-Object -Last 8 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-StepWarn "INTEGRATION-INFRA" "Infra tests failed (Tolerated for Initial Deploy)"
+        Write-Host ""
+        Write-Status -Level WARN -Message "Infrastructure tests failed (tolerated for initial deploy)"
+        Write-Host "    External infrastructure may be partially available." -ForegroundColor Yellow
+        Write-Host "    This is expected for first-time deployments." -ForegroundColor Yellow
+        Write-Host ""
+        $integrationWarning = $true
+    }
+    else {
+        Write-StepPass "INTEGRATION-INFRA"
+    }
+
+    Write-Host ""
+    Write-Status -Level INFO -Message "Skipping schema integration tests for Initial Deploy"
+    Write-Host "    Schema tests require tables/RPCs that may not exist yet." -ForegroundColor DarkGray
+    Write-Host ""
+
 }
 else {
-    # Show just the summary lines
-    $result | Select-Object -Last 5 | ForEach-Object { Write-Host $_ }
-}
+    # ========================================================================
+    # NORMAL MODE: Full Integration Suite (Strict)
+    # ========================================================================
+    Write-StepStart "INTEGRATION" "Running full integration tests (Infra + Schema)"
 
-if ($exitCode -ne 0) {
-    Write-StepWarn "INTEGRATION" "Integration tests failed (external infra likely degraded)"
-    Write-Host ""
-    Write-Host "⚠️  WARNING: Integration tests failed." -ForegroundColor Yellow
-    Write-Host "    External infrastructure (PostgREST, Pooler, Realtime) may be degraded." -ForegroundColor Yellow
-    Write-Host "    Phase 1 passed, so code correctness is verified." -ForegroundColor Yellow
-    Write-Host "    Proceeding with caution..." -ForegroundColor Yellow
-    Write-Host ""
-    $integrationWarning = $true
-}
-else {
-    Write-StepPass "INTEGRATION"
-    Write-Host "✅ Integration Suite Passed" -ForegroundColor Green
+    $ErrorActionPreference = "Continue"
+    # Run all integration tests: infra, schema, and legacy integration marker
+    $result = & "$RepoRoot\.venv\Scripts\python.exe" -m pytest -m "integration_infra or integration_schema or integration" -q 2>&1
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+
+    if ($Verbose) {
+        $result | ForEach-Object { Write-Host $_ }
+    }
+    else {
+        $result | Select-Object -Last 8 | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($exitCode -ne 0) {
+        Write-StepWarn "INTEGRATION" "Integration tests failed (external infra likely degraded)"
+        Write-Host ""
+        Write-Status -Level WARN -Message "Integration tests failed."
+        Write-Host "    External infrastructure (PostgREST, Pooler, Realtime) may be degraded." -ForegroundColor Yellow
+        Write-Host "    Phase 1 passed, so code correctness is verified." -ForegroundColor Yellow
+        Write-Host "    Proceeding with caution..." -ForegroundColor Yellow
+        Write-Host ""
+        $integrationWarning = $true
+    }
+    else {
+        Write-StepPass "INTEGRATION"
+        Write-Status -Level OK -Message "Integration Suite Passed"
+    }
 }
 
 # ============================================================================
@@ -449,12 +478,12 @@ $duration = ($endTime - $startTime).TotalSeconds
 
 Write-Host ""
 Write-Host ("=" * 70) -ForegroundColor Green
-Write-Host "  ✅ PREFLIGHT COMPLETE (Ready for Prod)" -ForegroundColor Green
+Write-Status -Level OK -Message "PREFLIGHT COMPLETE (Ready for Prod)"
 Write-Host ("=" * 70) -ForegroundColor Green
 Write-Host ""
 
 if ($integrationWarning) {
-    Write-Host "⚠️  Note: Integration tests had failures. Monitor closely after deploy." -ForegroundColor Yellow
+    Write-Status -Level WARN -Message "Note: Integration tests had failures. Monitor closely after deploy."
     Write-Host ""
 }
 
