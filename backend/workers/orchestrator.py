@@ -3,17 +3,20 @@
 Dragonfly Engine - Golden Path Orchestrator
 
 The "Brain" worker that manages state transitions through the Golden Path
-pipeline. Monitors validated batches in intake.simplicity_batches and
-orchestrates the downstream job flow:
+pipeline. Monitors batches in intake.simplicity_batches and orchestrates
+the downstream job flow:
 
 Pipeline Flow:
+    intake.simplicity_batches (status='uploaded')
+        → process_batch() via IngestionService → 'completed'/'failed'
+
     intake.simplicity_batches (status='validated')
         → ENTITY_RESOLVE (entity_resolve)
         → JUDGMENT_CREATE (judgment_create)
         → ENRICHMENT_REQUEST (enrichment_request)
 
 Architecture:
-    - Poll-based: Checks intake.simplicity_batches for validated batches
+    - Poll-based: Checks for 'uploaded' and 'validated' batches
     - Event-driven: Can also respond to database triggers (future)
     - Idempotent: Safe to run multiple instances (uses FOR UPDATE SKIP LOCKED)
     - Transactional: All state changes are atomic
@@ -32,6 +35,7 @@ Environment:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import sys
@@ -104,6 +108,62 @@ def get_db_connection() -> psycopg.Connection:
     """Get a database connection using environment configuration."""
     dsn = get_supabase_db_url()
     return psycopg.connect(dsn, row_factory=dict_row)
+
+
+def find_uploaded_batches(conn: psycopg.Connection, limit: int = 5) -> List[Dict[str, Any]]:
+    """
+    Find batches that have been uploaded but not yet processed.
+
+    Returns batches from intake.simplicity_batches where status = 'uploaded'.
+    Uses FOR UPDATE SKIP LOCKED for safe concurrent access.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                b.id AS batch_id,
+                b.filename,
+                b.source_reference,
+                b.row_count_total,
+                b.created_at,
+                b.status
+            FROM intake.simplicity_batches b
+            WHERE b.status = 'uploaded'
+            ORDER BY b.created_at ASC
+            LIMIT %s
+            FOR UPDATE SKIP LOCKED
+            """,
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+async def process_uploaded_batch(batch_id: UUID) -> bool:
+    """
+    Process an uploaded batch using the IngestionService.
+
+    This triggers the full ingestion pipeline:
+    - Parse CSV
+    - Validate rows
+    - Dedupe against existing judgments
+    - Insert to public.judgments
+
+    Returns True if processing completed (success or failure),
+    False if an error occurred.
+    """
+    from backend.services.ingestion_service import BatchProcessResult, process_batch
+
+    try:
+        logger.info(f"Processing uploaded batch: {batch_id}")
+        result: BatchProcessResult = await process_batch(batch_id)
+        logger.info(
+            f"Batch {batch_id} processed: {result.status} "
+            f"({result.rows_inserted} inserted, {result.rows_failed} failed)"
+        )
+        return True
+    except Exception as e:
+        logger.exception(f"Failed to process batch {batch_id}: {e}")
+        return False
 
 
 def find_batches_ready_for_orchestration(
@@ -269,9 +329,7 @@ def get_validated_rows_for_batch(conn: psycopg.Connection, batch_id: UUID) -> Li
                 id=(
                     UUID(str(r["id"]))
                     if isinstance(r["id"], str)
-                    else UUID(int=r["id"])
-                    if r["id"]
-                    else uuid4()
+                    else UUID(int=r["id"]) if r["id"] else uuid4()
                 ),
                 batch_id=UUID(str(r["batch_id"])),
                 row_index=r["row_index"],
@@ -592,8 +650,51 @@ def process_one_batch(conn: psycopg.Connection) -> bool:
 # =============================================================================
 
 
+def process_uploaded_batches_sync() -> bool:
+    """
+    Find and process any uploaded batches.
+
+    This is the synchronous entry point that runs the async process_batch.
+    Returns True if any work was done.
+    """
+    with get_db_connection() as conn:
+        # Find uploaded batches
+        uploaded = find_uploaded_batches(conn, limit=1)
+
+        if not uploaded:
+            return False
+
+        batch_info = uploaded[0]
+        batch_id = UUID(str(batch_info["batch_id"]))
+        filename = batch_info.get("filename", "unknown")
+
+        logger.info(f"Found uploaded batch: {batch_id} ({filename})")
+
+        # Release the lock before async processing
+        conn.commit()
+
+    # Run the async processing
+    try:
+        did_process = asyncio.run(process_uploaded_batch(batch_id))
+        return did_process
+    except Exception as e:
+        logger.exception(f"Error processing uploaded batch {batch_id}: {e}")
+        return False
+
+
 def run_once() -> bool:
-    """Run a single orchestration tick. Returns True if work was done."""
+    """
+    Run a single orchestration tick. Returns True if work was done.
+
+    Priority:
+    1. Process uploaded batches (CSV → judgments via IngestionService)
+    2. Advance validated batches through the pipeline (future entity resolution)
+    """
+    # First, check for uploaded batches that need processing
+    if process_uploaded_batches_sync():
+        return True
+
+    # Then, check for validated batches ready for orchestration
     with get_db_connection() as conn:
         return process_one_batch(conn)
 
