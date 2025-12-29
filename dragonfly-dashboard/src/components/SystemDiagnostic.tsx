@@ -1,6 +1,6 @@
 import { type FC, useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { apiClient, API_BASE_URL, type HealthCheckResult } from '../lib/apiClient';
+import { apiClient, API_BASE_URL, type HealthCheckResult, type HealthErrorCategory } from '../lib/apiClient';
 import { cn } from '../lib/design-tokens';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -16,6 +16,9 @@ interface HealthState {
   environment?: string;
   error?: string;
   systemStatus: SystemStatus;
+  category: HealthErrorCategory;
+  endpoint?: string;
+  checkedAt?: Date;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -46,6 +49,48 @@ function maskUrl(url: string): string {
   }
 }
 
+function formatCategory(category: HealthErrorCategory | undefined): string {
+  switch (category) {
+    case 'none':
+      return 'None';
+    case 'auth':
+      return 'Auth (401/403)';
+    case 'cors':
+      return 'CORS / Browser blocked';
+    case 'timeout':
+      return 'Timeout';
+    case 'network':
+      return 'Network';
+    case 'server':
+      return 'Server 5xx';
+    case 'unknown':
+    default:
+      return 'Unknown';
+  }
+}
+
+function deriveSystemStatus(result: HealthCheckResult): SystemStatus {
+  if (result.ok) {
+    return 'healthy';
+  }
+
+  if (
+    result.category === 'server' ||
+    result.category === 'auth' ||
+    result.category === 'network' ||
+    result.category === 'timeout' ||
+    result.category === 'cors'
+  ) {
+    return 'critical';
+  }
+
+  if (result.status >= 400) {
+    return 'degraded';
+  }
+
+  return 'critical';
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -62,10 +107,11 @@ function maskUrl(url: string): string {
  * Polls /api/health every 60 seconds. Hovering shows the masked API URL and HTTP status.
  */
 const SystemDiagnostic: FC = () => {
-  const [health, setHealth] = useState<HealthState>({ 
-    loading: true, 
-    ok: false, 
-    systemStatus: 'loading' 
+  const [health, setHealth] = useState<HealthState>({
+    loading: true,
+    ok: false,
+    systemStatus: 'loading',
+    category: 'unknown',
   });
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -73,16 +119,7 @@ const SystemDiagnostic: FC = () => {
   const checkHealth = useCallback(async () => {
     try {
       const result: HealthCheckResult = await apiClient.checkHealth();
-      // Determine system status based on response time or other factors
-      let systemStatus: SystemStatus = 'healthy';
-      if (!result.ok) {
-        systemStatus = 'critical';
-      } else if (result.status && result.status >= 500) {
-        systemStatus = 'critical';
-      } else if (result.status && result.status >= 400) {
-        systemStatus = 'degraded';
-      }
-      
+      const systemStatus = deriveSystemStatus(result);
       setHealth({
         loading: false,
         ok: result.ok,
@@ -90,6 +127,9 @@ const SystemDiagnostic: FC = () => {
         environment: result.environment,
         error: result.ok ? undefined : (result.error ?? 'Health check failed'),
         systemStatus,
+        category: result.category,
+        endpoint: result.endpoint,
+        checkedAt: new Date(result.checkedAt),
       });
     } catch (err) {
       setHealth({
@@ -99,6 +139,9 @@ const SystemDiagnostic: FC = () => {
         environment: undefined,
         error: err instanceof Error ? err.message : 'Unknown error',
         systemStatus: 'critical',
+        category: 'unknown',
+        endpoint: undefined,
+        checkedAt: new Date(),
       });
     }
   }, []);
@@ -276,6 +319,11 @@ const SystemDiagnostic: FC = () => {
               <p className="mt-0.5 break-all font-mono text-slate-400">
                 {maskUrl(API_BASE_URL)}
               </p>
+              {health.endpoint && (
+                <p className="mt-0.5 text-[10px] text-slate-500/80">
+                  Path: <span className="font-mono text-slate-300">{health.endpoint}</span>
+                </p>
+              )}
             </div>
             <div className="flex items-center justify-between">
               <div>
@@ -288,10 +336,28 @@ const SystemDiagnostic: FC = () => {
               </div>
               <div className="text-right">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Error Category
+                </p>
+                <p className="mt-0.5 font-mono text-slate-300">
+                  {formatCategory(health.category)}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                   Environment
                 </p>
                 <p className="mt-0.5 font-mono">
                   {health.environment ?? '—'}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Last Checked
+                </p>
+                <p className="mt-0.5 font-mono">
+                  {health.checkedAt ? health.checkedAt.toLocaleTimeString() : '—'}
                 </p>
               </div>
             </div>

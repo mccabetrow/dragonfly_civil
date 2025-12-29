@@ -255,6 +255,6 @@ export const api = {
 
 // Re-export error types for type checking
 export { AuthError, ApiError, NotFoundError } from './apiClient';
-export type { HealthCheckResult } from './apiClient';
+export type { HealthCheckResult, HealthErrorCategory } from './apiClient';
 
 export default api;

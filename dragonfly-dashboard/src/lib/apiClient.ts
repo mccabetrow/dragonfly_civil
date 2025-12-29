@@ -185,12 +185,27 @@ async function doFetch<T>(
 // PUBLIC API CLIENT
 // ═══════════════════════════════════════════════════════════════════════════
 
+export type HealthErrorCategory =
+  | 'none'
+  | 'cors'
+  | 'auth'
+  | 'timeout'
+  | 'network'
+  | 'server'
+  | 'unknown';
+
 export interface HealthCheckResult {
   ok: boolean;
   status: number;
   environment?: string;
   /** Detailed error message when ok=false */
   error?: string;
+  /** Endpoint that responded (/api/health or /health) */
+  endpoint: string;
+  /** High-level error category for UI messaging */
+  category: HealthErrorCategory;
+  /** Unix timestamp (ms) when the check completed */
+  checkedAt: number;
 }
 
 /**
@@ -202,6 +217,43 @@ export interface HealthCheckResult {
  * - Map status codes to typed errors (AuthError, NotFoundError, ApiError)
  * - Wrap network failures in a clear Error message
  */
+const HEALTH_ENDPOINTS = ['/api/health', '/health'];
+const HEALTH_TIMEOUT_MS = 7000;
+
+function categorizeStatus(status: number): HealthErrorCategory {
+  if (status === 401 || status === 403) {
+    return 'auth';
+  }
+  if (status >= 500) {
+    return 'server';
+  }
+  if (status === 0) {
+    return 'network';
+  }
+  return 'unknown';
+}
+
+function categorizeError(error: unknown): HealthErrorCategory {
+  if (typeof DOMException !== 'undefined' && error instanceof DOMException && error.name === 'AbortError') {
+    return 'timeout';
+  }
+  if (error instanceof TypeError) {
+    // Browser fetch throws TypeError on CORS / network failures
+    return 'cors';
+  }
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  if (message.includes('cors')) {
+    return 'cors';
+  }
+  if (message.includes('timeout')) {
+    return 'timeout';
+  }
+  if (message.includes('network')) {
+    return 'network';
+  }
+  return 'unknown';
+}
+
 export const apiClient = {
   /**
    * GET request returning typed JSON.
@@ -284,27 +336,37 @@ export const apiClient = {
    * - ANY HTTP 200 = healthy (regardless of JSON body)
    */
   async checkHealth(): Promise<HealthCheckResult> {
-    const endpoints = ['/api/health', '/health'];
+    let lastResult: HealthCheckResult | null = null;
 
-    for (const endpoint of endpoints) {
+    for (const endpoint of HEALTH_ENDPOINTS) {
+      const url = apiUrl(endpoint);
+      console.log(`[Dragonfly] Health check: ${url}`);
+
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS) : undefined;
+
       try {
-        const url = apiUrl(endpoint);
-        console.log(`[Dragonfly] Health check: ${url}`);
-
         const response = await fetch(url, {
           method: 'GET',
           headers: getDefaultHeaders(),
+          mode: 'cors',
+          credentials: 'omit',
+          signal: controller?.signal,
         });
 
-        // ANY 200-level response = healthy
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+
         if (response.ok) {
-          // Try to parse JSON for extra info, but don't require it
           let environment: string | undefined;
           try {
             const data = await response.json();
-            environment = data?.environment;
-          } catch {
-            // Response wasn't JSON - that's fine, still healthy
+            if (data && typeof data === 'object') {
+              environment = (data as { environment?: string }).environment;
+            }
+          } catch (parseErr) {
+            console.warn('[Dragonfly] Health response JSON parse failed (tolerated):', parseErr);
           }
 
           console.log(`[Dragonfly] Health OK from ${endpoint}`);
@@ -313,25 +375,68 @@ export const apiClient = {
             status: response.status,
             environment,
             error: undefined,
+            endpoint,
+            category: 'none',
+            checkedAt: Date.now(),
           };
         }
 
-        // Non-2xx - try next endpoint
-        console.warn(`[Dragonfly] ${endpoint} returned ${response.status}, trying next...`);
+        const category = categorizeStatus(response.status);
+        const description =
+          category === 'auth'
+            ? 'API key missing or rejected (401/403).'
+            : `Health endpoint responded with HTTP ${response.status}.`;
+
+        console.warn(`[Dragonfly] ${endpoint} returned ${response.status}`);
+
+        const result: HealthCheckResult = {
+          ok: false,
+          status: response.status,
+          environment: undefined,
+          error: description,
+          endpoint,
+          category,
+          checkedAt: Date.now(),
+        };
+
+        lastResult = result;
+
+        // Auth failures won't be resolved by trying alternate endpoints
+        if (category === 'auth') {
+          return result;
+        }
       } catch (err) {
-        // Network error - try next endpoint
-        console.warn(`[Dragonfly] ${endpoint} failed:`, err);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+
+        const category = categorizeError(err);
+        const message = err instanceof Error ? err.message : 'Health request failed.';
+        console.warn(`[Dragonfly] ${endpoint} failed:`, message);
+
+        lastResult = {
+          ok: false,
+          status: 0,
+          environment: undefined,
+          error: message,
+          endpoint,
+          category,
+          checkedAt: Date.now(),
+        };
       }
     }
 
-    // All endpoints failed
-    console.error('[Dragonfly] All health endpoints failed');
-    return {
-      ok: false,
-      status: 0,
-      environment: undefined,
-      error: 'All health endpoints unreachable – check Railway deployment.',
-    };
+    return (
+      lastResult ?? {
+        ok: false,
+        status: 0,
+        environment: undefined,
+        error: 'All health endpoints unreachable – check Railway deployment.',
+        endpoint: HEALTH_ENDPOINTS[0],
+        category: 'unknown',
+        checkedAt: Date.now(),
+      }
+    );
   },
 };
 
