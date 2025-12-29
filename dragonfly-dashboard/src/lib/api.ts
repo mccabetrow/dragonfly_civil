@@ -207,6 +207,114 @@ export async function getBatches(
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// BATCH STATUS POLLING
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Batch status response from polling endpoint.
+ */
+export interface BatchStatusResult {
+  batchId: string;
+  filename: string;
+  status: 'uploaded' | 'staging' | 'transforming' | 'upserting' | 'completed' | 'failed';
+  rowCountTotal: number;
+  rowCountInserted: number;
+  rowCountInvalid: number;
+  rowCountValid: number;
+  errorSummary: string | null;
+  errors: BatchRowError[];
+}
+
+export interface BatchRowError {
+  rowIndex: number;
+  errorCode: string;
+  errorMessage: string;
+  rawData: Record<string, unknown>;
+}
+
+export interface BatchStatusSuccess {
+  ok: true;
+  data: BatchStatusResult;
+}
+
+export interface BatchStatusError {
+  ok: false;
+  error: string;
+  code: 'network' | 'auth' | 'not_found' | 'server';
+}
+
+export type BatchStatusResponse = BatchStatusSuccess | BatchStatusError;
+
+/**
+ * Get batch status by ID.
+ *
+ * Used for polling during processing. Returns current status and counts.
+ *
+ * @param batchId - UUID of the batch to check
+ * @returns Normalized response with batch status
+ *
+ * @example
+ *   // Poll every 2 seconds until complete or failed
+ *   const result = await api.getBatchStatus(batchId);
+ *   if (result.ok && result.data.status === 'completed') {
+ *     showSuccess(`✅ ${result.data.rowCountInserted} rows inserted`);
+ *   }
+ */
+export async function getBatchStatus(batchId: string): Promise<BatchStatusResponse> {
+  try {
+    interface StatusResponse {
+      id: string;
+      filename: string;
+      status: string;
+      row_count_total: number;
+      row_count_inserted: number;
+      row_count_invalid: number;
+      row_count_valid: number;
+      error_summary: string | null;
+      errors?: Array<{
+        row_index: number;
+        error_code: string;
+        error_message: string;
+        raw_data: Record<string, unknown>;
+      }>;
+    }
+
+    const data = await apiClient.get<StatusResponse>(`/api/v1/intake/batches/${batchId}`);
+
+    return {
+      ok: true,
+      data: {
+        batchId: data.id,
+        filename: data.filename,
+        status: data.status as BatchStatusResult['status'],
+        rowCountTotal: data.row_count_total,
+        rowCountInserted: data.row_count_inserted,
+        rowCountInvalid: data.row_count_invalid,
+        rowCountValid: data.row_count_valid,
+        errorSummary: data.error_summary,
+        errors: (data.errors ?? []).map((e) => ({
+          rowIndex: e.row_index,
+          errorCode: e.error_code,
+          errorMessage: e.error_message,
+          rawData: e.raw_data,
+        })),
+      },
+    };
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return { ok: false, error: 'Authentication failed', code: 'auth' };
+    }
+    if (err instanceof NotFoundError) {
+      return { ok: false, error: 'Batch not found', code: 'not_found' };
+    }
+    if (err instanceof ApiError) {
+      return { ok: false, error: err.message, code: 'server' };
+    }
+    return { ok: false, error: 'Connection failed', code: 'network' };
+  }
+}
+
 /**
  * Get intake system state (for status indicators).
  */
@@ -250,6 +358,7 @@ export const api = {
   checkBackendHealth,
   uploadBatch,
   getBatches,
+  getBatchStatus,
   getIntakeState,
 } as const;
 

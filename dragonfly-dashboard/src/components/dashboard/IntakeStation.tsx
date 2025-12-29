@@ -1,23 +1,22 @@
 /**
- * IntakeStation Component - Hedge Fund Mode File Dropzone
+ * IntakeStation Component - Polling-Based File Intake
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * A polished, dark-mode drag-and-drop file upload component for CSV intake.
- * Designed for the Dragonfly "Go-Live" dashboard with billion-dollar aesthetics.
+ * A deterministic, polling-based CSV upload component for the Dragonfly intake pipeline.
  *
- * Features:
- *   - Animated dropzone with glow effects
- *   - Real-time progress bar during upload
- *   - Green checkmark on success with batch ID
- *   - Error state with user-friendly messages
- *   - Data source selector (Simplicity, JBI, FOIL, Manual)
- *   - Graceful empty/loading states
+ * States:
+ *   1. Idle     - Simple drag & drop zone
+ *   2. Uploading - Progress bar (fake progress during upload)
+ *   3. Processing - Polls /api/v1/intake/batches/{id} every 2s until complete/failed
+ *   4. Result   - Shows batch summary with rows counts and first 5 errors
+ *
+ * CRITICAL: Does not assume success. Relies 100% on backend polling response.
  *
  * Usage:
- *   <IntakeStation onUploadComplete={(batchId) => refetch()} />
+ *   <IntakeStation onUploadComplete={(batchId, result) => refetch()} />
  */
 
-import { type FC, useCallback, useRef, useState } from 'react';
+import { type FC, useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Upload,
@@ -26,9 +25,17 @@ import {
   XCircle,
   Loader2,
   AlertTriangle,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import { cn } from '../../lib/design-tokens';
-import { api, type DataSourceType, type BatchUploadResponse } from '../../lib/api';
+import {
+  api,
+  type DataSourceType,
+  type BatchUploadResponse,
+  type BatchStatusResult,
+  type BatchRowError,
+} from '../../lib/api';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -36,10 +43,10 @@ import { api, type DataSourceType, type BatchUploadResponse } from '../../lib/ap
 
 export interface IntakeStationProps {
   /**
-   * Called when a batch is successfully uploaded.
+   * Called when a batch is successfully completed (not just uploaded).
    * Use this to invalidate cache or refetch batch history.
    */
-  onUploadComplete?: (batchId: string) => void;
+  onUploadComplete?: (batchId: string, result: BatchStatusResult) => void;
 
   /**
    * Optional className for the container.
@@ -52,7 +59,19 @@ export interface IntakeStationProps {
   disabled?: boolean;
 }
 
+/**
+ * Component state machine.
+ * Transitions: idle → uploading → processing → (success | error)
+ */
 type UploadState = 'idle' | 'uploading' | 'processing' | 'success' | 'error';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const POLL_INTERVAL_MS = 2000;
+const MAX_POLL_ATTEMPTS = 60; // 2 minutes max
+const MAX_ERRORS_TO_SHOW = 5;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA SOURCES
@@ -99,6 +118,160 @@ const DataSourceSelector: FC<DataSourceSelectorProps> = ({ value, onChange }) =>
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ERROR TABLE COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface ErrorTableProps {
+  errors: BatchRowError[];
+  totalErrors: number;
+}
+
+const ErrorTable: FC<ErrorTableProps> = ({ errors, totalErrors }) => (
+  <div className="mt-4 w-full max-w-lg">
+    <div className="flex items-center justify-between mb-2">
+      <span className="text-xs text-red-400 font-mono uppercase tracking-wider">
+        Errors ({totalErrors} total)
+      </span>
+      {totalErrors > errors.length && (
+        <span className="text-xs text-slate-500">
+          Showing first {errors.length}
+        </span>
+      )}
+    </div>
+    <div className="bg-slate-900/80 rounded-lg border border-red-500/20 overflow-hidden">
+      <table className="w-full text-xs font-mono">
+        <thead>
+          <tr className="bg-slate-800/50 text-slate-400">
+            <th className="px-3 py-2 text-left">Row</th>
+            <th className="px-3 py-2 text-left">Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {errors.map((err, idx) => (
+            <tr
+              key={idx}
+              className="border-t border-slate-800 hover:bg-slate-800/30"
+            >
+              <td className="px-3 py-2 text-slate-500">{err.rowIndex + 1}</td>
+              <td className="px-3 py-2 text-red-400 truncate max-w-xs" title={err.errorMessage}>
+                {err.errorMessage}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESULT SUMMARY COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface ResultSummaryProps {
+  result: BatchStatusResult;
+  onReset: () => void;
+}
+
+const ResultSummary: FC<ResultSummaryProps> = ({ result, onReset }) => {
+  const isSuccess = result.status === 'completed' && result.rowCountInvalid === 0;
+  const isPartial = result.status === 'completed' && result.rowCountInvalid > 0;
+  const isFailed = result.status === 'failed';
+
+  return (
+    <motion.div
+      key="result"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0 }}
+      className="flex flex-col items-center text-center w-full"
+    >
+      {/* Icon */}
+      <motion.div
+        className={cn(
+          'flex h-16 w-16 items-center justify-center rounded-xl mb-4',
+          isSuccess && 'bg-emerald-500/20',
+          isPartial && 'bg-amber-500/20',
+          isFailed && 'bg-red-500/20'
+        )}
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+      >
+        {isSuccess && <CheckCircle2 className="h-8 w-8 text-emerald-400" />}
+        {isPartial && <AlertCircle className="h-8 w-8 text-amber-400" />}
+        {isFailed && <XCircle className="h-8 w-8 text-red-400" />}
+      </motion.div>
+
+      {/* Title */}
+      <h3
+        className={cn(
+          'text-lg font-semibold mb-2 font-mono',
+          isSuccess && 'text-emerald-400',
+          isPartial && 'text-amber-400',
+          isFailed && 'text-red-400'
+        )}
+      >
+        {isSuccess && '✅ Batch Complete'}
+        {isPartial && '⚠️ Batch Complete with Errors'}
+        {isFailed && '❌ Batch Failed'}
+      </h3>
+
+      {/* Batch ID */}
+      <p className="text-sm text-slate-400 mb-2 font-mono">
+        Batch: <span className="text-white font-bold">{result.batchId.slice(0, 8)}</span>
+        {result.filename && (
+          <span className="text-slate-600"> • {result.filename}</span>
+        )}
+      </p>
+
+      {/* Row Counts */}
+      <div className="flex items-center gap-4 text-sm font-mono mb-4">
+        <span className="text-slate-400">
+          Rows: <span className="text-white font-bold">{result.rowCountTotal}</span>
+        </span>
+        <span className="text-slate-600">|</span>
+        <span className="text-emerald-400">
+          Success: <span className="font-bold">{result.rowCountInserted}</span>
+        </span>
+        <span className="text-slate-600">|</span>
+        <span className={result.rowCountInvalid > 0 ? 'text-red-400' : 'text-slate-400'}>
+          Errors: <span className="font-bold">{result.rowCountInvalid}</span>
+        </span>
+      </div>
+
+      {/* Error Summary */}
+      {result.errorSummary && (
+        <p className="text-sm text-red-400 mb-4 max-w-md">
+          {result.errorSummary}
+        </p>
+      )}
+
+      {/* Error Table */}
+      {result.errors.length > 0 && (
+        <ErrorTable
+          errors={result.errors.slice(0, MAX_ERRORS_TO_SHOW)}
+          totalErrors={result.rowCountInvalid}
+        />
+      )}
+
+      {/* Reset Button */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onReset();
+        }}
+        className="mt-6 px-4 py-2 rounded-md bg-slate-800 text-slate-300 text-sm font-mono hover:bg-slate-700 transition-colors flex items-center gap-2"
+      >
+        <RefreshCw className="h-4 w-4" />
+        Upload Another
+      </button>
+    </motion.div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -112,54 +285,148 @@ export const IntakeStation: FC<IntakeStationProps> = ({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [batchId, setBatchId] = useState<string | null>(null);
+  const [batchResult, setBatchResult] = useState<BatchStatusResult | null>(null);
   const [source, setSource] = useState<DataSourceType>('simplicity');
   const [isDragOver, setIsDragOver] = useState(false);
+  const [pollCount, setPollCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
 
   // Reset to idle state
   const reset = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
     setState('idle');
     setProgress(0);
     setError(null);
     setBatchId(null);
+    setBatchResult(null);
+    setPollCount(0);
   }, []);
 
-  // Upload handler
-  const handleUpload = useCallback(async (file: File) => {
-    if (disabled) return;
+  // Poll for batch status
+  const pollBatchStatus = useCallback(
+    async (id: string) => {
+      const result = await api.getBatchStatus(id);
 
-    setState('uploading');
-    setProgress(10);
-    setError(null);
-    setBatchId(null);
+      if (!result.ok) {
+        // Network error during polling - retry unless max attempts
+        setPollCount((prev) => {
+          if (prev >= MAX_POLL_ATTEMPTS) {
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+            setState('error');
+            setError(`Polling timeout after ${MAX_POLL_ATTEMPTS * 2} seconds`);
+          }
+          return prev + 1;
+        });
+        return;
+      }
 
-    // Simulate progress during upload
-    const progressInterval = setInterval(() => {
-      setProgress((prev) => Math.min(prev + 10, 80));
-    }, 200);
+      const data = result.data;
 
-    try {
-      const result: BatchUploadResponse = await api.uploadBatch(file, source);
+      // Check if processing is complete
+      if (data.status === 'completed' || data.status === 'failed') {
+        // Stop polling
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
 
-      clearInterval(progressInterval);
+        setBatchResult(data);
 
-      if (result.ok) {
-        setState('success');
-        setProgress(100);
-        setBatchId(result.data.batchId);
-        onUploadComplete?.(result.data.batchId);
+        if (data.status === 'completed') {
+          setState('success');
+          onUploadComplete?.(id, data);
+        } else {
+          setState('error');
+          setError(data.errorSummary || 'Batch processing failed');
+        }
       } else {
+        // Still processing - update progress based on status
+        const progressMap: Record<string, number> = {
+          uploaded: 30,
+          staging: 50,
+          transforming: 70,
+          upserting: 90,
+        };
+        setProgress(progressMap[data.status] ?? 50);
+        setPollCount((prev) => prev + 1);
+      }
+    },
+    [onUploadComplete]
+  );
+
+  // Start polling for a batch
+  const startPolling = useCallback(
+    (id: string) => {
+      setState('processing');
+      setProgress(25);
+      setPollCount(0);
+
+      // Initial poll immediately
+      pollBatchStatus(id);
+
+      // Then poll every 2 seconds
+      pollIntervalRef.current = setInterval(() => {
+        pollBatchStatus(id);
+      }, POLL_INTERVAL_MS);
+    },
+    [pollBatchStatus]
+  );
+
+  // Upload handler
+  const handleUpload = useCallback(
+    async (file: File) => {
+      if (disabled) return;
+
+      setState('uploading');
+      setProgress(10);
+      setError(null);
+      setBatchId(null);
+      setBatchResult(null);
+
+      // Fake progress during upload
+      const progressInterval = setInterval(() => {
+        setProgress((prev) => Math.min(prev + 5, 20));
+      }, 200);
+
+      try {
+        const result: BatchUploadResponse = await api.uploadBatch(file, source);
+
+        clearInterval(progressInterval);
+
+        if (result.ok) {
+          // Upload successful - now start polling for processing status
+          setBatchId(result.data.batchId);
+          startPolling(result.data.batchId);
+        } else {
+          setState('error');
+          setProgress(0);
+          setError(result.error);
+        }
+      } catch (err) {
+        clearInterval(progressInterval);
         setState('error');
         setProgress(0);
-        setError(result.error);
+        setError(err instanceof Error ? err.message : 'Upload failed');
       }
-    } catch (err) {
-      clearInterval(progressInterval);
-      setState('error');
-      setProgress(0);
-      setError(err instanceof Error ? err.message : 'Upload failed');
-    }
-  }, [disabled, source, onUploadComplete]);
+    },
+    [disabled, source, startPolling]
+  );
 
   // Drag handlers
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -210,15 +477,15 @@ export const IntakeStation: FC<IntakeStationProps> = ({
   }, [handleUpload]);
 
   const handleClick = useCallback(() => {
-    if (!disabled && (state === 'idle' || state === 'error')) {
+    if (!disabled && state === 'idle') {
       inputRef.current?.click();
     }
   }, [disabled, state]);
 
   // Derived states
-  const isUploading = state === 'uploading' || state === 'processing';
-  const isSuccess = state === 'success';
-  const isError = state === 'error';
+  const isProcessing = state === 'uploading' || state === 'processing';
+  const isResult = state === 'success' || (state === 'error' && batchResult !== null);
+  const isUploadError = state === 'error' && batchResult === null;
   const isIdle = state === 'idle';
 
   return (
@@ -233,14 +500,14 @@ export const IntakeStation: FC<IntakeStationProps> = ({
         className={cn(
           'relative rounded-xl border-2 border-dashed transition-all duration-300',
           'flex flex-col items-center justify-center py-12 px-6',
-          disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+          disabled ? 'cursor-not-allowed opacity-50' : isIdle ? 'cursor-pointer' : 'cursor-default',
           // Drag over glow effect
           isDragOver && !disabled && 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_40px_rgba(16,185,129,0.3)]',
           // Normal states
           !isDragOver && isIdle && 'border-slate-700 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900/80',
-          isUploading && 'border-blue-500/50 bg-blue-500/5',
-          isSuccess && 'border-emerald-500/50 bg-emerald-500/5',
-          isError && 'border-red-500/50 bg-red-500/5'
+          isProcessing && 'border-blue-500/50 bg-blue-500/5',
+          state === 'success' && 'border-emerald-500/50 bg-emerald-500/5',
+          state === 'error' && 'border-red-500/50 bg-red-500/5'
         )}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
@@ -337,10 +604,10 @@ export const IntakeStation: FC<IntakeStationProps> = ({
             </motion.div>
           )}
 
-          {/* Uploading State */}
-          {isUploading && (
+          {/* Processing State (Uploading + Polling) */}
+          {isProcessing && (
             <motion.div
-              key="uploading"
+              key="processing"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -352,6 +619,13 @@ export const IntakeStation: FC<IntakeStationProps> = ({
               <h3 className="text-lg font-semibold text-white mb-2 font-mono">
                 {state === 'uploading' ? 'Uploading...' : 'Processing...'}
               </h3>
+
+              {/* Status text */}
+              {state === 'processing' && batchId && (
+                <p className="text-sm text-slate-400 mb-2 font-mono">
+                  Batch {batchId.slice(0, 8)} • Poll #{pollCount}
+                </p>
+              )}
 
               {/* Progress Bar */}
               <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-2">
@@ -366,46 +640,13 @@ export const IntakeStation: FC<IntakeStationProps> = ({
             </motion.div>
           )}
 
-          {/* Success State */}
-          {isSuccess && batchId && (
-            <motion.div
-              key="success"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0 }}
-              className="flex flex-col items-center text-center"
-            >
-              <motion.div
-                className="flex h-16 w-16 items-center justify-center rounded-xl bg-emerald-500/20 mb-4"
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: 'spring', stiffness: 400, damping: 15 }}
-              >
-                <CheckCircle2 className="h-8 w-8 text-emerald-400" />
-              </motion.div>
-              <h3 className="text-lg font-semibold text-emerald-400 mb-2 font-mono">
-                ✅ Sent to Processing
-              </h3>
-              <p className="text-sm text-slate-400 mb-4 font-mono">
-                Batch <span className="text-white font-bold">{batchId.slice(0, 8)}</span> queued for intake
-              </p>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  reset();
-                }}
-                className="px-4 py-2 rounded-md bg-slate-800 text-slate-300 text-sm font-mono hover:bg-slate-700 transition-colors"
-              >
-                Upload Another
-              </button>
-            </motion.div>
-          )}
+          {/* Result State (Success or Failed with result) */}
+          {isResult && batchResult && <ResultSummary result={batchResult} onReset={reset} />}
 
-          {/* Error State */}
-          {isError && (
+          {/* Upload Error State (no batch result) */}
+          {isUploadError && (
             <motion.div
-              key="error"
+              key="upload-error"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -414,12 +655,8 @@ export const IntakeStation: FC<IntakeStationProps> = ({
               <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-red-500/20 mb-4">
                 <XCircle className="h-8 w-8 text-red-400" />
               </div>
-              <h3 className="text-lg font-semibold text-red-400 mb-2 font-mono">
-                Upload Failed
-              </h3>
-              <p className="text-sm text-slate-400 mb-4 max-w-sm">
-                {error || 'An unknown error occurred'}
-              </p>
+              <h3 className="text-lg font-semibold text-red-400 mb-2 font-mono">Upload Failed</h3>
+              <p className="text-sm text-slate-400 mb-4 max-w-sm">{error || 'An unknown error occurred'}</p>
               <button
                 type="button"
                 onClick={(e) => {
