@@ -4,10 +4,11 @@
  *
  * SINGLE SOURCE OF TRUTH for all environment variables in the Vite frontend.
  *
+ * ⚠️  WHAT YOU SET IS WHAT YOU GET — No _PROD suffixes, no magic overrides.
+ *
  * Features:
- * - Prefers *_PROD suffixed vars when import.meta.env.PROD is true
  * - Trims all whitespace/newlines to prevent auth failures
- * - Validates required vars and throws clear errors
+ * - Validates required vars and throws clear errors (Fail Fast)
  * - Debug logging in dev mode only (never logs secrets in prod)
  *
  * Required Vercel Environment Variables:
@@ -17,7 +18,7 @@
  *   VITE_SUPABASE_ANON_KEY     - Supabase anon/public key (NOT service_role!)
  *
  * Optional:
- *   VITE_IS_DEMO               - "true" to enable demo mode (locks mutations)
+ *   VITE_DEMO_MODE             - "true" to enable demo mode (locks mutations)
  */
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -48,35 +49,19 @@ function sanitize(value: string | undefined): string | undefined {
 
 /**
  * Sanitize a URL value.
- * - Same as sanitize() plus removes trailing slashes and /api suffix
+ * - Same as sanitize() plus removes trailing slashes
  */
 function sanitizeUrl(value: string | undefined): string | undefined {
   const cleaned = sanitize(value);
   if (!cleaned) return undefined;
-  return cleaned.replace(/\/+$/, '').replace(/\/api$/, '');
+  return cleaned.replace(/\/+$/, '');
 }
 
 /**
- * Get an env var, preferring *_PROD suffix in production mode.
- *
- * Example: getEnv('VITE_API_BASE_URL')
- * - In prod: tries VITE_API_BASE_URL_PROD first, falls back to VITE_API_BASE_URL
- * - In dev: uses VITE_API_BASE_URL directly
+ * Get an env var directly. No _PROD overrides — what you set is what you get.
  */
 function getEnv(key: string, isUrl = false): string | undefined {
-  let value: string | undefined;
-
-  if (isProd) {
-    // Try *_PROD variant first
-    const prodKey = `${key}_PROD`;
-    value = (import.meta.env as Record<string, string | undefined>)[prodKey];
-    if (!value) {
-      value = (import.meta.env as Record<string, string | undefined>)[key];
-    }
-  } else {
-    value = (import.meta.env as Record<string, string | undefined>)[key];
-  }
-
+  const value = (import.meta.env as Record<string, string | undefined>)[key];
   return isUrl ? sanitizeUrl(value) : sanitize(value);
 }
 
@@ -161,9 +146,11 @@ export const supabaseAnonKey: string = (() => {
 /**
  * Demo mode flag.
  * When true, mutations are locked and demo data is shown.
+ * Uses VITE_DEMO_MODE (VITE_IS_DEMO is deprecated).
  */
 export const isDemoMode: boolean = (() => {
-  const raw = getEnv('VITE_IS_DEMO') ?? '';
+  // Prefer VITE_DEMO_MODE, fallback to VITE_IS_DEMO for backward compat
+  const raw = getEnv('VITE_DEMO_MODE') ?? getEnv('VITE_IS_DEMO') ?? '';
   return ['true', '1', 'yes', 'on'].includes(raw.toLowerCase());
 })();
 

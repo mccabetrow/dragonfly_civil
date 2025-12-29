@@ -4,33 +4,32 @@ Dragonfly Dad Demo Ingest Tool
 
 Creates synthetic demo data for the "Dad Demo" - a visual, impressive
 demonstration for non-technical audiences. Generates realistic-looking
-judgment data and inserts it into the intake pipeline.
+judgment data and inserts directly into public.judgments.
 
 Data Format:
-    - file_number: IDX-2025-[RANDOM]
-    - defendant: Demo Corp [RANDOM] LLC
-    - amount: Random float between $5k and $150k
+    - case_number: 2024-CV-[5-digit random]
+    - defendant_name: Realistic company names (e.g., "Apex Construction LLC")
+    - judgment_amount: Random between $5k and $150k
 
 Usage:
     python -m tools.dad_demo_ingest --count 50
     python -m tools.dad_demo_ingest --env prod --count 100
 
 Output:
-    ✅ Batch [ID] created.
+    ✅ Batch [ID] Ready for Orchestration
     💰 Total Value Ingested: $X,XXX,XXX.XX
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import random
 import sys
-from datetime import datetime, timezone
+from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List
-from uuid import UUID, uuid4
+from typing import Any
+from uuid import uuid4
 
 import psycopg
 from psycopg.rows import dict_row
@@ -47,54 +46,64 @@ from src.supabase_client import get_supabase_db_url, get_supabase_env
 # Corporation suffixes for defendant names
 CORP_SUFFIXES = [
     "LLC",
-    "Inc",
-    "Corp",
+    "Inc.",
+    "Corp.",
     "Holdings",
     "Enterprises",
     "Group",
     "Partners",
-    "Solutions",
+    "Services",
     "Industries",
     "Ventures",
+    "Co.",
 ]
 
-# Industry words for company names
-INDUSTRY_WORDS = [
-    "Capital",
-    "Financial",
-    "Property",
-    "Real Estate",
-    "Consulting",
-    "Tech",
-    "Digital",
-    "Global",
-    "Premier",
-    "Elite",
-    "Strategic",
-    "Dynamic",
-    "Apex",
-    "Summit",
-    "Horizon",
-    "Phoenix",
-    "Atlas",
-    "Titan",
-    "Vertex",
-    "Nexus",
+# Realistic company name bases
+COMPANY_NAMES = [
+    "Apex Construction",
+    "Smith Logistics",
+    "Western Property",
+    "Pacific Development",
+    "Metro Builders",
+    "Valley Transport",
+    "Southwest Contractors",
+    "Desert Properties",
+    "Mountain View Homes",
+    "Sunrise Real Estate",
+    "Canyon Materials",
+    "Heritage Development",
+    "Premier Roofing",
+    "Atlas Moving",
+    "Phoenix Renovations",
+    "Summit Electric",
+    "Titan Plumbing",
+    "Horizon Landscaping",
+    "Liberty Construction",
+    "Eagle Transport",
+]
+
+# Arizona courts for realism
+COURTS = [
+    "Maricopa County Superior Court",
+    "Pima County Superior Court",
+    "Pinal County Superior Court",
+    "Yavapai County Superior Court",
+    "Mohave County Superior Court",
 ]
 
 
-def generate_file_number(index: int) -> str:
-    """Generate file number: IDX-2025-[RANDOM]"""
+def generate_case_number() -> str:
+    """Generate case number: 2024-CV-[5-digit random]"""
+    year = random.choice([2023, 2024, 2025])
     random_part = random.randint(10000, 99999)
-    return f"IDX-2025-{random_part}"
+    return f"{year}-CV-{random_part}"
 
 
 def generate_defendant_name() -> str:
-    """Generate defendant: Demo Corp [RANDOM] LLC"""
-    industry = random.choice(INDUSTRY_WORDS)
+    """Generate realistic defendant: e.g., 'Apex Construction LLC'"""
+    company = random.choice(COMPANY_NAMES)
     suffix = random.choice(CORP_SUFFIXES)
-    number = random.randint(100, 999)
-    return f"Demo {industry} {number} {suffix}"
+    return f"{company} {suffix}"
 
 
 def generate_amount() -> Decimal:
@@ -103,32 +112,37 @@ def generate_amount() -> Decimal:
     return Decimal(str(round(amount, 2)))
 
 
-def generate_demo_row(index: int) -> Dict[str, Any]:
-    """
-    Generate a single synthetic demo row.
+def generate_entry_date() -> date:
+    """Generate random entry date within past 2 years"""
+    days_ago = random.randint(30, 730)
+    return date.today() - timedelta(days=days_ago)
 
-    Returns a dict matching the JSONB raw_data format for simplicity_raw_rows.
-    """
-    file_number = generate_file_number(index)
-    defendant = generate_defendant_name()
-    amount = generate_amount()
 
-    # Format as raw CSV data (JSONB)
+def generate_judgment_row() -> dict[str, Any]:
+    """
+    Generate a single synthetic judgment row matching public.judgments schema.
+    """
+    court = random.choice(COURTS)
+    county = court.split(" County")[0]  # Extract county name
+
     return {
-        "File Number": file_number,
-        "Defendant Name": defendant,
-        "Judgment Amount": str(amount),
-        "Plaintiff Name": "Arizona Demo Collections LLC",
-        "Entry Date": datetime.now(timezone.utc).strftime("%m/%d/%Y"),
-        "Court": "Maricopa County Superior Court",
-        "County": "Maricopa",
-        "Case Status": "Active",
+        "case_number": generate_case_number(),
+        "plaintiff_name": "Arizona Demo Collections LLC",
+        "defendant_name": generate_defendant_name(),
+        "judgment_amount": float(generate_amount()),
+        "entry_date": generate_entry_date(),
+        "judgment_date": generate_entry_date(),
+        "court": court,
+        "county": county,
+        "status": "active",
+        "enforcement_stage": "pre_enforcement",
+        "source_file": "dad_demo_ingest",
     }
 
 
-def generate_demo_rows(count: int) -> List[Dict[str, Any]]:
-    """Generate a list of synthetic demo rows."""
-    return [generate_demo_row(i) for i in range(count)]
+def generate_judgment_rows(count: int) -> list[dict[str, Any]]:
+    """Generate a list of synthetic judgment rows."""
+    return [generate_judgment_row() for _ in range(count)]
 
 
 # =============================================================================
@@ -142,101 +156,66 @@ def get_db_connection() -> psycopg.Connection[Any]:
     return psycopg.connect(dsn, row_factory=dict_row)
 
 
-def create_demo_batch(conn: psycopg.Connection[Any], row_count: int) -> UUID:
-    """
-    Create a batch record in intake.simplicity_batches.
-
-    Sets status to 'validated' so orchestrator picks it up immediately.
-    """
-    batch_id = uuid4()
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename = f"dad_demo_{timestamp}.csv"
-    source_reference = f"dad-demo-{batch_id.hex[:12]}"
-
-    # Generate a unique file hash for idempotency
-    hash_input = f"{batch_id}-{timestamp}-{row_count}".encode()
-    file_hash = hashlib.sha256(hash_input).hexdigest()
-
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO intake.simplicity_batches (
-                id,
-                filename,
-                source_reference,
-                file_hash,
-                row_count_total,
-                row_count_staged,
-                row_count_valid,
-                row_count_invalid,
-                status,
-                created_at,
-                staged_at,
-                transformed_at
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                NOW(), NOW(), NOW()
-            )
-            RETURNING id
-            """,
-            (
-                str(batch_id),
-                filename,
-                source_reference,
-                file_hash,
-                row_count,
-                row_count,
-                row_count,
-                0,
-                "completed",  # Use 'completed' status for demo (skips orchestrator)
-            ),
-        )
-        result = cur.fetchone()
-        if result is None:
-            raise RuntimeError("Failed to create batch - no result returned")
-        # result is a dict due to dict_row factory
-        return UUID(str(result["id"]))  # type: ignore[index]
-
-
-def insert_raw_rows(
+def insert_judgments(
     conn: psycopg.Connection[Any],
-    batch_id: UUID,
-    rows: List[Dict[str, Any]],
+    rows: list[dict[str, Any]],
 ) -> int:
     """
-    Bulk insert rows into intake.simplicity_raw_rows.
+    Insert judgments into public.judgments.
 
+    Uses ON CONFLICT to handle duplicate case_numbers gracefully.
     Returns the count of rows inserted.
     """
-    import json
+    inserted = 0
 
     with conn.cursor() as cur:
-        # Use executemany for bulk insert
-        insert_data = [(str(batch_id), idx, json.dumps(row)) for idx, row in enumerate(rows)]
+        for row in rows:
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO public.judgments (
+                        case_number,
+                        plaintiff_name,
+                        defendant_name,
+                        judgment_amount,
+                        entry_date,
+                        judgment_date,
+                        court,
+                        county,
+                        status,
+                        enforcement_stage,
+                        source_file
+                    ) VALUES (
+                        %(case_number)s,
+                        %(plaintiff_name)s,
+                        %(defendant_name)s,
+                        %(judgment_amount)s,
+                        %(entry_date)s,
+                        %(judgment_date)s,
+                        %(court)s,
+                        %(county)s,
+                        %(status)s,
+                        %(enforcement_stage)s,
+                        %(source_file)s
+                    )
+                    ON CONFLICT (case_number) DO NOTHING
+                    """,
+                    row,
+                )
+                if cur.rowcount > 0:
+                    inserted += 1
+            except Exception as e:
+                print(f"   ⚠️ Skipped row: {e}")
 
-        cur.executemany(
-            """
-            INSERT INTO intake.simplicity_raw_rows (
-                batch_id,
-                row_index,
-                raw_data
-            ) VALUES (%s, %s, %s)
-            """,
-            insert_data,
-        )
-
-    return len(rows)
+    return inserted
 
 
-def calculate_total_value(rows: List[Dict[str, Any]]) -> Decimal:
+def calculate_total_value(rows: list[dict[str, Any]]) -> Decimal:
     """Calculate the total judgment value from all rows."""
     total = Decimal("0")
     for row in rows:
-        amount_str = row.get("Judgment Amount", "0")
-        try:
-            total += Decimal(amount_str)
-        except Exception:
-            pass
+        amount = row.get("judgment_amount", 0)
+        total += Decimal(str(amount))
     return total
 
 
@@ -245,7 +224,7 @@ def calculate_total_value(rows: List[Dict[str, Any]]) -> Decimal:
 # =============================================================================
 
 
-def run_dad_demo_ingest(row_count: int) -> UUID:
+def run_dad_demo_ingest(row_count: int) -> str:
     """
     Run the Dad Demo ingest process.
 
@@ -253,32 +232,29 @@ def run_dad_demo_ingest(row_count: int) -> UUID:
         row_count: Number of synthetic rows to generate
 
     Returns:
-        The batch_id on success
+        A batch identifier string on success
     """
     env = get_supabase_env()
+    batch_id = uuid4().hex[:12]
+
     print("\n🐉 DRAGONFLY DAD DEMO INGEST")
     print(f"   Environment: {env}")
     print(f"   Generating {row_count} synthetic judgments...")
     print()
 
     # Generate synthetic data
-    rows = generate_demo_rows(row_count)
+    rows = generate_judgment_rows(row_count)
     total_value = calculate_total_value(rows)
 
     # Insert into database
     with get_db_connection() as conn:
-        # Create batch record
-        batch_id = create_demo_batch(conn, row_count)
-
-        # Insert raw rows
-        inserted = insert_raw_rows(conn, batch_id, rows)
-
+        inserted = insert_judgments(conn, rows)
         conn.commit()
 
         # Output success
-        print(f"✅ Batch {batch_id} created.")
-        print(f"   Rows inserted: {inserted}")
-        print("   Status: completed")
+        print(f"✅ Batch [{batch_id}] Ready for Orchestration")
+        print(f"   Rows inserted: {inserted}/{row_count}")
+        print("   Target: public.judgments")
         print()
         print(f"💰 Total Value Ingested: ${total_value:,.2f}")
         print()
@@ -316,6 +292,9 @@ def main() -> None:
         sys.exit(0)
     except Exception as e:
         print(f"❌ Dad Demo Ingest Failed: {e}")
+        import traceback
+
+        traceback.print_exc()
         sys.exit(1)
 
 

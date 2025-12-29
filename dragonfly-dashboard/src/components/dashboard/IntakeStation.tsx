@@ -352,7 +352,7 @@ export const IntakeStation: FC<IntakeStationProps> = ({
               <h3 className="text-lg font-semibold text-white mb-2 font-mono">
                 {state === 'uploading' ? 'Uploading...' : 'Processing...'}
               </h3>
-              
+
               {/* Progress Bar */}
               <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-2">
                 <motion.div
