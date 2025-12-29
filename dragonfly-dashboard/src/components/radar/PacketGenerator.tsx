@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import { Card, Title, Text, Select, SelectItem, Button } from '@tremor/react';
 import { FileText, Download, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { apiBaseUrl } from '../../config';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -50,10 +51,8 @@ const PACKET_TYPES: { value: PacketType; label: string; description: string }[] 
   },
 ];
 
-function getApiBaseUrl(): string {
-  const envUrl = import.meta.env.VITE_API_BASE_URL;
-  return envUrl || '';
-}
+// Use centralized config
+const getApiBaseUrl = (): string => apiBaseUrl;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPONENT

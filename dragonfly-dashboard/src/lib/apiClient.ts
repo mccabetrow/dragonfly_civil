@@ -5,64 +5,17 @@
  * Unified, TypeScript-safe API client for all Dragonfly dashboard requests.
  * All data fetching flows through this client for consistent auth and error handling.
  *
- * Environment Variables (required):
- *   VITE_API_BASE_URL       - Backend API base URL (e.g., https://api.dragonfly.railway.app)
- *   VITE_DRAGONFLY_API_KEY  - API key for X-DRAGONFLY-API-KEY header
- *
- * Both must be set in Vercel environment variables for production.
+ * Configuration is centralized in src/config/runtime.ts
  */
 
-// ═══════════════════════════════════════════════════════════════════════════
-// CONFIG & VALIDATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Sanitize and normalize the base URL.
- * - Trims whitespace and newlines
- * - Removes trailing slashes
- * - Removes trailing /api or /api/ (we add it ourselves)
- *
- * Option A: Base URL is root domain (e.g., https://...railway.app)
- *           Code appends /api/... paths.
- */
-function sanitizeBaseUrl(value: string | undefined): string {
-  if (!value) return '';
-  let cleaned = value.trim().replace(/[\r\n]+/g, '');
-  // Remove trailing slashes
-  cleaned = cleaned.replace(/\/+$/, '');
-  // Remove trailing /api (we append paths ourselves)
-  cleaned = cleaned.replace(/\/api$/, '');
-  return cleaned;
-}
-
-/**
- * Sanitize non-URL environment variable.
- */
-function sanitizeEnvVar(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const cleaned = value.trim().replace(/[\r\n]+/g, '');
-  return cleaned || undefined;
-}
-
-// Sanitize base URL - default to empty string (implies relative path/proxy)
-const BASE_URL = sanitizeBaseUrl(import.meta.env.VITE_API_BASE_URL);
-const _API_KEY = sanitizeEnvVar(import.meta.env.VITE_DRAGONFLY_API_KEY);
+import { apiBaseUrl, dragonflyApiKey } from '../config';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DEBUG: Log config on page load so we can verify Vercel injection
+// CONFIG (from centralized runtime config)
 // ═══════════════════════════════════════════════════════════════════════════
-console.log('[Dragonfly] API Target:', BASE_URL || '(relative)');
-console.log('[Dragonfly] API Key:', _API_KEY ? '***' + _API_KEY.slice(-8) : '(missing)');
 
-// API key is strictly required
-if (!_API_KEY) {
-  const errorMsg = '[apiClient] Missing required environment variable: VITE_DRAGONFLY_API_KEY. ' +
-    'Set VITE_DRAGONFLY_API_KEY in Vercel.';
-  console.error(errorMsg);
-  throw new Error(errorMsg);
-}
-
-const API_KEY: string = _API_KEY;
+const BASE_URL: string = apiBaseUrl;
+const API_KEY: string = dragonflyApiKey;
 
 // Export validated config for external use
 export const API_BASE_URL: string = BASE_URL;

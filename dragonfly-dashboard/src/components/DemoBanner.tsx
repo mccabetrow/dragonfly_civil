@@ -1,15 +1,8 @@
 import React from 'react';
-
-const isDemoEnvironment = (() => {
-  const raw = String(import.meta.env.VITE_IS_DEMO ?? '').trim().toLowerCase();
-  if (!raw) {
-    return false;
-  }
-  return ['true', '1', 'yes', 'on'].includes(raw);
-})();
+import { isDemoMode } from '../config';
 
 const DemoBanner: React.FC = () => {
-  if (!isDemoEnvironment) {
+  if (!isDemoMode) {
     return null;
   }
 

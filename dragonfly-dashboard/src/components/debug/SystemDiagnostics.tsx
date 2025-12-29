@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/design-tokens';
 import { useToast } from '../ui/Toast';
+import { apiBaseUrl, dragonflyApiKey } from '../../config';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -59,11 +60,11 @@ interface EnvValidation {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONSTANTS
+// CONSTANTS (from centralized config)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const VITE_API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
-const VITE_DRAGONFLY_API_KEY = import.meta.env.VITE_DRAGONFLY_API_KEY as string | undefined;
+const VITE_API_BASE_URL = apiBaseUrl;
+const VITE_DRAGONFLY_API_KEY = dragonflyApiKey;
 
 /**
  * Critical endpoints to test - covers health, auth, and key services

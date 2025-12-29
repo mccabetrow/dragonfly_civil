@@ -15,6 +15,7 @@
  */
 
 import { apiClient } from '../lib/apiClient';
+import { isDev } from '../config';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -85,7 +86,7 @@ export async function logUiAction(params: LogUiActionParams): Promise<void> {
     });
 
     // Log success in development only
-    if (import.meta.env.DEV) {
+    if (isDev) {
       console.debug(`[Telemetry] Logged: ${eventName}`, context);
     }
   } catch (err) {

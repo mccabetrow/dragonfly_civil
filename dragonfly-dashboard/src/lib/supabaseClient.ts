@@ -1,10 +1,10 @@
 import { createClient, type SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
+import { supabaseUrl, supabaseAnonKey, isDemoMode } from '../config';
 
 let cachedClient: SupabaseClient | null = null;
 
-// Demo mode check - reads VITE_IS_DEMO env var
-const rawDemo = String(import.meta.env.VITE_IS_DEMO ?? '').trim().toLowerCase();
-export const IS_DEMO_MODE = ['true', '1', 'yes', 'on'].includes(rawDemo);
+// Demo mode - from centralized config
+export const IS_DEMO_MODE = isDemoMode;
 
 // Result type for demo-safe operations
 export type DemoSafeResult<T> =
@@ -55,29 +55,8 @@ export async function demoSafeRpc<T>(
 }
 
 function buildClient(): SupabaseClient {
-  // Sanitize env vars - remove hidden whitespace/newlines that break auth
-  const rawUrl = import.meta.env.VITE_SUPABASE_URL;
-  const rawAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-  const url = rawUrl?.trim().replace(/[\r\n\t]/g, '').replace(/\/+$/, '');
-  const anonKey = rawAnonKey?.trim().replace(/[\r\n\t]/g, '');
-
-  // Debug logging for Realtime auth troubleshooting
-  console.log('[Dragonfly Supabase] URL:', url || '(missing)');
-  console.log('[Dragonfly Supabase] Anon Key:', anonKey ? `***${anonKey.slice(-8)}` : '(missing)');
-
-  if (!url || !anonKey) {
-    const errorMsg = 'Supabase credentials are missing. Populate VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel.';
-    console.error('[Dragonfly Supabase]', errorMsg);
-    throw new Error(errorMsg);
-  }
-
-  // Validate anon key is not service role (common mistake)
-  if (anonKey.includes('"role":"service_role"') || anonKey.includes('service_role')) {
-    console.warn('[Dragonfly Supabase] WARNING: Key appears to be service_role! Use anon key for frontend.');
-  }
-
-  return createClient(url, anonKey);
+  // Config is already validated and sanitized in @/config/runtime
+  return createClient(supabaseUrl, supabaseAnonKey);
 }
 
 export function getSupabaseClient(): SupabaseClient {

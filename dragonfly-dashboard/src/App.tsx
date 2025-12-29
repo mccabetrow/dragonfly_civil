@@ -25,6 +25,7 @@ import CeoOverviewPage from './pages/CeoOverviewPage';
 import OpsCommandCenter from './pages/ops/OpsCommandCenter';
 import PortfolioPage from './pages/finance/Portfolio';
 import PortfolioExplorerPage from './pages/PortfolioExplorerPage';
+import ConfigDebug from './pages/debug/ConfigDebug';
 
 const App: React.FC = () => {
   return (
@@ -55,6 +56,7 @@ const App: React.FC = () => {
               <Route path="/settings/ingestion" element={<DataIngestionPage />} />
               <Route path="/settings/integrity" element={<DataIntegrityPage />} />
               <Route path="/help" element={<HelpPageNew />} />
+              <Route path="/debug/config" element={<ConfigDebug />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
           </Routes>

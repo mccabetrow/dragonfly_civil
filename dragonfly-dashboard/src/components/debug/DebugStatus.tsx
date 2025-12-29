@@ -2,8 +2,8 @@
  * DebugStatus - Temporary debug component for Vercel env var verification
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Displays the VITE_API_BASE_URL on screen for debugging.
- * Always visible - remove this component after debugging is complete.
+ * Displays the API base URL on screen for debugging.
+ * Only visible in development mode.
  *
  * Add to App.tsx or a layout component:
  *   import { DebugStatus } from '@/components/debug/DebugStatus';
@@ -11,8 +11,11 @@
  *   <DebugStatus />
  */
 
+import { apiBaseUrl, isDev } from '../../config';
+
 export function DebugStatus() {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '(undefined)';
+  // Only show in development
+  if (!isDev) return null;
 
   return (
     <div
@@ -27,7 +30,7 @@ export function DebugStatus() {
         fontSize: '10px',
       }}
     >
-      Target: {baseUrl}
+      Target: {apiBaseUrl || '(undefined)'}
     </div>
   );
 }
