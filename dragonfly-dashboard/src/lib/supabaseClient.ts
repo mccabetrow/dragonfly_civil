@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
-import { supabaseUrl, supabaseAnonKey, isDemoMode } from '../config';
+import { supabaseUrl, supabaseAnonKey, isDemoMode, isDev } from '../config';
 
 let cachedClient: SupabaseClient | null = null;
 
@@ -55,8 +55,35 @@ export async function demoSafeRpc<T>(
 }
 
 function buildClient(): SupabaseClient {
-  // Config is already validated and sanitized in @/config/runtime
-  return createClient(supabaseUrl, supabaseAnonKey);
+  // Config is already validated and sanitized in config/runtime
+  // - URL is validated to be *.supabase.co (not pooler)
+  // - Anon key is validated to not be service_role
+
+  if (isDev) {
+    console.log('[Supabase] Initializing client:', {
+      url: supabaseUrl,
+      keyPreview: `***${supabaseAnonKey.slice(-8)}`,
+    });
+  }
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+    realtime: {
+      params: {
+        eventsPerSecond: 10,
+      },
+      // Graceful degradation - log errors but don't throw
+      log_level: isDev ? 'info' : 'warn',
+    },
+    global: {
+      headers: {
+        'X-Client-Info': 'dragonfly-dashboard',
+      },
+    },
+  });
 }
 
 export function getSupabaseClient(): SupabaseClient {

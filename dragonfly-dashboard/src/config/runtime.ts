@@ -114,8 +114,31 @@ export const dragonflyApiKey: string = requireEnv('VITE_DRAGONFLY_API_KEY');
 /**
  * Supabase project URL.
  * Example: https://iaketsyhmqbwaabgykux.supabase.co
+ *
+ * IMPORTANT: Must be the REST API URL (*.supabase.co), NOT the pooler host.
  */
-export const supabaseUrl: string = requireEnv('VITE_SUPABASE_URL', true);
+export const supabaseUrl: string = (() => {
+  const url = requireEnv('VITE_SUPABASE_URL', true);
+
+  // Validate it's the correct Supabase URL format (not pooler)
+  if (url.includes('pooler.supabase.com')) {
+    const errorMsg =
+      '[config/runtime] ERROR: VITE_SUPABASE_URL is a pooler URL. ' +
+      'Use the REST API URL: https://<ref>.supabase.co (not pooler.supabase.com)';
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  }
+
+  // Validate it ends with supabase.co
+  if (!url.includes('.supabase.co')) {
+    console.warn(
+      '[config/runtime] WARNING: VITE_SUPABASE_URL may be incorrect. ' +
+      'Expected format: https://<ref>.supabase.co'
+    );
+  }
+
+  return url;
+})();
 
 /**
  * Supabase anon/public key (safe for frontend).
