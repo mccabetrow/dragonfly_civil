@@ -269,7 +269,9 @@ def get_validated_rows_for_batch(conn: psycopg.Connection, batch_id: UUID) -> Li
                 id=(
                     UUID(str(r["id"]))
                     if isinstance(r["id"], str)
-                    else UUID(int=r["id"]) if r["id"] else uuid4()
+                    else UUID(int=r["id"])
+                    if r["id"]
+                    else uuid4()
                 ),
                 batch_id=UUID(str(r["batch_id"])),
                 row_index=r["row_index"],

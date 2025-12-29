@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Apply the title default trigger to judgments.cases."""
+
 import os
 import sys
 

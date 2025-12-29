@@ -358,7 +358,9 @@ def print_results(filepath: Path, issues: List[LintIssue]) -> None:
         icon = (
             "❌"
             if issue.severity == Severity.ERROR
-            else "⚠️" if issue.severity == Severity.WARNING else "ℹ️"
+            else "⚠️"
+            if issue.severity == Severity.WARNING
+            else "ℹ️"
         )
         print(f"\n  {icon} Line {issue.line_num}: [{issue.key}]")
         print(f"     {issue.message}")

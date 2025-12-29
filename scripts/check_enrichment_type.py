@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check if enrichment schema and types exist."""
+
 import os
 import sys
 

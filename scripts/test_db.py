@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Quick database connection test, bypassing settings cache."""
+
 import psycopg
 
 # Direct connection string - dev project

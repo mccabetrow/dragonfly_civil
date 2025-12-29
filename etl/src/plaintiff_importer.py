@@ -73,9 +73,7 @@ def _ensure_required_table(
     host: str,
     dbname: str,
 ) -> bool:
-    query = (
-        "select 1 " "from information_schema.tables " "where table_schema = %s and table_name = %s"
-    )
+    query = "select 1 from information_schema.tables where table_schema = %s and table_name = %s"
     with conn.cursor() as cur:
         cur.execute(query, (schema, table))
         exists = cur.fetchone()

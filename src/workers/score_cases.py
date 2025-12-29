@@ -281,7 +281,7 @@ def _print_table(results: List[dict]) -> None:
 
 @app.command()
 def main(
-    limit: Optional[int] = typer.Option(None, "--limit", help="Maximum cases to evaluate")
+    limit: Optional[int] = typer.Option(None, "--limit", help="Maximum cases to evaluate"),
 ) -> None:
     with postgrest() as client:
         cases = _fetch_cases(client, limit)

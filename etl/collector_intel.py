@@ -564,7 +564,7 @@ def _render(score: CollectorScore) -> None:
 
 @app.command("plaintiff")
 def cli_score_plaintiff(
-    plaintiff_id: str = typer.Argument(..., help="Target plaintiff UUID")
+    plaintiff_id: str = typer.Argument(..., help="Target plaintiff UUID"),
 ) -> None:
     engine = CollectorIntelEngine()
     try:

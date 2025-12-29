@@ -121,8 +121,7 @@ def _format_missing_headers_message(missing: set[str], raw_headers: Sequence[str
     provided = ", ".join(raw_headers) if raw_headers else "<none>"
     missing_list = ", ".join(sorted(missing))
     return (
-        f"CSV is missing required logical column(s): {missing_list}. "
-        f"Provided headers: {provided}"
+        f"CSV is missing required logical column(s): {missing_list}. Provided headers: {provided}"
     )
 
 

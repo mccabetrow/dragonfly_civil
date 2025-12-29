@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check tables in enrichment schema."""
+
 import os
 import sys
 
