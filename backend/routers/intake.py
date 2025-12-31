@@ -7,8 +7,8 @@ Handles CSV uploads, batch management, and error reporting.
 Endpoints:
     POST /api/v1/intake/upload - Upload CSV and start processing
     GET  /api/v1/intake/batches - List all batches with stats
-    GET  /api/v1/intake/batch/{id} - Get batch details
-    GET  /api/v1/intake/batch/{id}/errors - Get error log for batch
+    GET  /api/v1/intake/batches/{id} - Get batch details
+    GET  /api/v1/intake/batches/{id}/errors - Get error log for batch
 """
 
 from __future__ import annotations
@@ -57,6 +57,9 @@ class BatchSummary(BaseModel):
     total_rows: int
     valid_rows: int
     error_rows: int
+    plaintiffs_inserted: int = 0
+    plaintiffs_duplicate: int = 0
+    plaintiffs_failed: int = 0
     success_rate: float
     duration_seconds: Optional[float] = None
     health_status: str
@@ -85,6 +88,9 @@ class BatchDetailResponse(BaseModel):
     error_rows: int
     duplicate_rows: int
     skipped_rows: int
+    plaintiffs_inserted: int = 0
+    plaintiffs_duplicate: int = 0
+    plaintiffs_failed: int = 0
     success_rate: float
     duration_seconds: Optional[float] = None
     health_status: str
@@ -516,6 +522,9 @@ async def list_batches(
                     row_count_raw AS total_rows,
                     row_count_valid AS valid_rows,
                     row_count_invalid AS error_rows,
+                    plaintiff_inserted,
+                    plaintiff_duplicate,
+                    plaintiff_failed,
                     status,
                     created_at,
                     completed_at,
@@ -569,6 +578,9 @@ async def list_batches(
                         total_rows=total_rows,
                         valid_rows=valid_rows,
                         error_rows=error_rows,
+                        plaintiffs_inserted=row.get("plaintiff_inserted") or 0,
+                        plaintiffs_duplicate=row.get("plaintiff_duplicate") or 0,
+                        plaintiffs_failed=row.get("plaintiff_failed") or 0,
                         success_rate=success_rate,
                         duration_seconds=duration_seconds,
                         health_status=health_status,
@@ -596,7 +608,7 @@ async def list_batches(
 
 
 @router.get(
-    "/batch/{batch_id}",
+    "/batches/{batch_id}",
     response_model=BatchDetailResponse,
     responses={
         404: {"model": ErrorResponse, "description": "Batch not found"},
@@ -638,6 +650,9 @@ async def get_batch(
             error_rows=row["error_rows"] or 0,
             duplicate_rows=stats.get("duplicates", 0),
             skipped_rows=stats.get("skipped", 0),
+            plaintiffs_inserted=row.get("plaintiff_inserted", 0) or 0,
+            plaintiffs_duplicate=row.get("plaintiff_duplicate", 0) or 0,
+            plaintiffs_failed=row.get("plaintiff_failed", 0) or 0,
             success_rate=float(row["success_rate"] or 0),
             duration_seconds=(float(row["duration_seconds"]) if row["duration_seconds"] else None),
             health_status=row["health_status"],
@@ -652,7 +667,7 @@ async def get_batch(
 
 
 @router.get(
-    "/batch/{batch_id}/errors",
+    "/batches/{batch_id}/errors",
     response_model=ErrorLogResponse,
     responses={
         404: {"model": ErrorResponse, "description": "Batch not found"},
