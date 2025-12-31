@@ -1,16 +1,20 @@
 /**
- * IntakeStation Component - Polling-Based File Intake
+ * IntakeStation Component - World-Class File Intake
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * A deterministic, polling-based CSV upload component for the Dragonfly intake pipeline.
+ * A hedge-fund grade CSV upload component for the Dragonfly intake pipeline.
+ *
+ * Features:
+ *   - Polling-based status updates (2s interval)
+ *   - Error budget enforcement with rejection display
+ *   - Processing metrics (parse time, DB time, throughput)
+ *   - Recent errors table with download capability
+ *   - Financial terminal aesthetic
  *
  * States:
- *   1. Idle     - Simple drag & drop zone
- *   2. Uploading - Progress bar (fake progress during upload)
- *   3. Processing - Polls /api/v1/intake/batches/{id} every 2s until complete/failed
- *   4. Result   - Shows batch summary with rows counts and first 5 errors
- *
- * CRITICAL: Does not assume success. Relies 100% on backend polling response.
+ *   🟢 Success: "Batch Complete. 5,000 Rows Ingested."
+ *   🟡 Partial: "Batch Complete with Warnings. 4,950 Ingested, 50 Errors."
+ *   🔴 Failed: "Batch Rejected. Error Rate 15% > 10% Budget."
  *
  * Usage:
  *   <IntakeStation onUploadComplete={(batchId, result) => refetch()} />
@@ -27,6 +31,12 @@ import {
   AlertTriangle,
   RefreshCw,
   AlertCircle,
+  Clock,
+  Database,
+  Zap,
+  Download,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { cn } from '../../lib/design-tokens';
 import {
@@ -61,9 +71,9 @@ export interface IntakeStationProps {
 
 /**
  * Component state machine.
- * Transitions: idle → uploading → processing → (success | error)
+ * Transitions: idle → uploading → processing → (success | partial | error)
  */
-type UploadState = 'idle' | 'uploading' | 'processing' | 'success' | 'error';
+type UploadState = 'idle' | 'uploading' | 'processing' | 'success' | 'partial' | 'error';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -83,6 +93,41 @@ const DATA_SOURCES: { value: DataSourceType; label: string; description: string 
   { value: 'foil', label: 'FOIL', description: 'Court data dumps (large files)' },
   { value: 'manual', label: 'Manual', description: 'Generic CSV uploads' },
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function formatDuration(ms: number | null): string {
+  if (ms === null) return '--';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
+function formatThroughput(rows: number, totalMs: number | null): string {
+  if (!totalMs || totalMs === 0) return '--';
+  const rowsPerSec = (rows / totalMs) * 1000;
+  return `${rowsPerSec.toFixed(0)} rows/s`;
+}
+
+function downloadErrorsCsv(errors: BatchRowError[], filename: string): void {
+  const headers = ['Row', 'Error Code', 'Error Message'];
+  const rows = errors.map((e) => [
+    (e.rowIndex + 1).toString(),
+    e.errorCode,
+    `"${e.errorMessage.replace(/"/g, '""')}"`,
+  ]);
+
+  const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `errors_${filename.replace('.csv', '')}_${Date.now()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA SOURCE SELECTOR
@@ -118,54 +163,137 @@ const DataSourceSelector: FC<DataSourceSelectorProps> = ({ value, onChange }) =>
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PROCESSING METRICS COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface ProcessingMetricsProps {
+  result: BatchStatusResult;
+}
+
+const ProcessingMetrics: FC<ProcessingMetricsProps> = ({ result }) => {
+  const totalMs =
+    (result.parseDurationMs ?? 0) + (result.dbDurationMs ?? 0) || null;
+
+  return (
+    <div className="mt-4 w-full max-w-lg">
+      <div className="flex items-center gap-2 mb-2">
+        <Zap className="h-3 w-3 text-amber-400" />
+        <span className="text-xs text-slate-400 font-mono uppercase tracking-wider">
+          Processing Metrics
+        </span>
+      </div>
+      <div className="bg-slate-900/80 rounded-lg border border-slate-700/50 p-3">
+        <div className="grid grid-cols-3 gap-4 text-center">
+          {/* Parse Time */}
+          <div className="flex flex-col items-center">
+            <Clock className="h-4 w-4 text-blue-400 mb-1" />
+            <span className="text-xs text-slate-500 font-mono">Parse</span>
+            <span className="text-sm font-bold text-white font-mono">
+              {formatDuration(result.parseDurationMs)}
+            </span>
+          </div>
+          {/* DB Time */}
+          <div className="flex flex-col items-center">
+            <Database className="h-4 w-4 text-emerald-400 mb-1" />
+            <span className="text-xs text-slate-500 font-mono">DB</span>
+            <span className="text-sm font-bold text-white font-mono">
+              {formatDuration(result.dbDurationMs)}
+            </span>
+          </div>
+          {/* Throughput */}
+          <div className="flex flex-col items-center">
+            <Zap className="h-4 w-4 text-amber-400 mb-1" />
+            <span className="text-xs text-slate-500 font-mono">Throughput</span>
+            <span className="text-sm font-bold text-white font-mono">
+              {formatThroughput(result.rowCountTotal, totalMs)}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ERROR TABLE COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface ErrorTableProps {
   errors: BatchRowError[];
   totalErrors: number;
+  filename: string;
 }
 
-const ErrorTable: FC<ErrorTableProps> = ({ errors, totalErrors }) => (
-  <div className="mt-4 w-full max-w-lg">
-    <div className="flex items-center justify-between mb-2">
-      <span className="text-xs text-red-400 font-mono uppercase tracking-wider">
-        Errors ({totalErrors} total)
-      </span>
-      {totalErrors > errors.length && (
-        <span className="text-xs text-slate-500">
-          Showing first {errors.length}
+const ErrorTable: FC<ErrorTableProps> = ({ errors, totalErrors, filename }) => {
+  const [expanded, setExpanded] = useState(false);
+  const displayErrors = expanded ? errors : errors.slice(0, MAX_ERRORS_TO_SHOW);
+
+  return (
+    <div className="mt-4 w-full max-w-lg">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs text-red-400 font-mono uppercase tracking-wider">
+          Recent Errors ({totalErrors} total)
         </span>
-      )}
-    </div>
-    <div className="bg-slate-900/80 rounded-lg border border-red-500/20 overflow-hidden">
-      <table className="w-full text-xs font-mono">
-        <thead>
-          <tr className="bg-slate-800/50 text-slate-400">
-            <th className="px-3 py-2 text-left">Row</th>
-            <th className="px-3 py-2 text-left">Error</th>
-          </tr>
-        </thead>
-        <tbody>
-          {errors.map((err, idx) => (
-            <tr
-              key={idx}
-              className="border-t border-slate-800 hover:bg-slate-800/30"
-            >
-              <td className="px-3 py-2 text-slate-500">{err.rowIndex + 1}</td>
-              <td className="px-3 py-2 text-red-400 truncate max-w-xs" title={err.errorMessage}>
-                {err.errorMessage}
-              </td>
+        <button
+          type="button"
+          onClick={() => downloadErrorsCsv(errors, filename)}
+          className="flex items-center gap-1 px-2 py-1 rounded text-xs font-mono text-slate-400 hover:text-white hover:bg-slate-800 transition-all"
+        >
+          <Download className="h-3 w-3" />
+          Download All
+        </button>
+      </div>
+      <div className="bg-slate-900/80 rounded-lg border border-red-500/20 overflow-hidden">
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="bg-slate-800/50 text-slate-400">
+              <th className="px-3 py-2 text-left w-16">Row</th>
+              <th className="px-3 py-2 text-left w-32">Code</th>
+              <th className="px-3 py-2 text-left">Message</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {displayErrors.map((err, idx) => (
+              <tr
+                key={idx}
+                className="border-t border-slate-800 hover:bg-slate-800/30"
+              >
+                <td className="px-3 py-2 text-slate-500">{err.rowIndex + 1}</td>
+                <td className="px-3 py-2 text-amber-400">{err.errorCode}</td>
+                <td
+                  className="px-3 py-2 text-red-400 truncate max-w-xs"
+                  title={err.errorMessage}
+                >
+                  {err.errorMessage}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {totalErrors > MAX_ERRORS_TO_SHOW && (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="w-full py-2 text-xs font-mono text-slate-500 hover:text-white hover:bg-slate-800/50 transition-all flex items-center justify-center gap-1"
+          >
+            {expanded ? (
+              <>
+                <ChevronUp className="h-3 w-3" /> Show Less
+              </>
+            ) : (
+              <>
+                <ChevronDown className="h-3 w-3" /> Show All {totalErrors} Errors
+              </>
+            )}
+          </button>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
-// RESULT SUMMARY COMPONENT
+// RESULT SUMMARY COMPONENT (WORLD-CLASS)
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface ResultSummaryProps {
@@ -174,9 +302,18 @@ interface ResultSummaryProps {
 }
 
 const ResultSummary: FC<ResultSummaryProps> = ({ result, onReset }) => {
-  const isSuccess = result.status === 'completed' && result.rowCountInvalid === 0;
-  const isPartial = result.status === 'completed' && result.rowCountInvalid > 0;
+  // Determine result type
+  const isSuccess =
+    result.status === 'completed' && result.rowCountInvalid === 0;
+  const isPartial =
+    result.status === 'completed' && result.rowCountInvalid > 0;
   const isFailed = result.status === 'failed';
+
+  // Calculate error rate
+  const errorRate =
+    result.rowCountTotal > 0
+      ? ((result.rowCountInvalid / result.rowCountTotal) * 100).toFixed(1)
+      : '0';
 
   return (
     <motion.div
@@ -203,7 +340,7 @@ const ResultSummary: FC<ResultSummaryProps> = ({ result, onReset }) => {
         {isFailed && <XCircle className="h-8 w-8 text-red-400" />}
       </motion.div>
 
-      {/* Title */}
+      {/* Title - World Class Messaging */}
       <h3
         className={cn(
           'text-lg font-semibold mb-2 font-mono',
@@ -212,12 +349,29 @@ const ResultSummary: FC<ResultSummaryProps> = ({ result, onReset }) => {
           isFailed && 'text-red-400'
         )}
       >
-        {isSuccess && '✅ Batch Complete'}
-        {isPartial && '⚠️ Batch Complete with Errors'}
-        {isFailed && '❌ Batch Failed'}
+        {isSuccess && `🟢 Batch Complete. ${result.rowCountInserted.toLocaleString()} Rows Ingested.`}
+        {isPartial &&
+          `🟡 Batch Complete with Warnings. ${result.rowCountInserted.toLocaleString()} Ingested, ${result.rowCountInvalid.toLocaleString()} Errors.`}
+        {isFailed && '🔴 Batch Rejected.'}
       </h3>
 
-      {/* Batch ID */}
+      {/* Rejection Reason (Failed Only) */}
+      {isFailed && result.rejectionReason && (
+        <div className="mb-4 px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/30">
+          <p className="text-sm text-red-400 font-mono">{result.rejectionReason}</p>
+        </div>
+      )}
+
+      {/* Error Budget Violation (Failed Only) */}
+      {isFailed && !result.rejectionReason && result.errorSummary && (
+        <div className="mb-4 px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/30">
+          <p className="text-sm text-red-400 font-mono">
+            Error Rate {errorRate}% {'>'} {result.errorThresholdPercent}% Budget
+          </p>
+        </div>
+      )}
+
+      {/* Batch ID & Filename */}
       <p className="text-sm text-slate-400 mb-2 font-mono">
         Batch: <span className="text-white font-bold">{result.batchId.slice(0, 8)}</span>
         {result.filename && (
@@ -225,33 +379,37 @@ const ResultSummary: FC<ResultSummaryProps> = ({ result, onReset }) => {
         )}
       </p>
 
-      {/* Row Counts */}
-      <div className="flex items-center gap-4 text-sm font-mono mb-4">
-        <span className="text-slate-400">
-          Rows: <span className="text-white font-bold">{result.rowCountTotal}</span>
+      {/* Row Counts - Terminal Style */}
+      <div className="flex flex-wrap items-center justify-center gap-3 text-sm font-mono mb-4">
+        <span className="px-2 py-1 rounded bg-slate-800 text-slate-300">
+          Total: <span className="font-bold">{result.rowCountTotal.toLocaleString()}</span>
         </span>
-        <span className="text-slate-600">|</span>
-        <span className="text-emerald-400">
-          Success: <span className="font-bold">{result.rowCountInserted}</span>
+        <span className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400">
+          Inserted: <span className="font-bold">{result.rowCountInserted.toLocaleString()}</span>
         </span>
-        <span className="text-slate-600">|</span>
-        <span className={result.rowCountInvalid > 0 ? 'text-red-400' : 'text-slate-400'}>
-          Errors: <span className="font-bold">{result.rowCountInvalid}</span>
-        </span>
+        {result.rowCountDuplicate > 0 && (
+          <span className="px-2 py-1 rounded bg-blue-500/20 text-blue-400">
+            Dupes: <span className="font-bold">{result.rowCountDuplicate.toLocaleString()}</span>
+          </span>
+        )}
+        {result.rowCountInvalid > 0 && (
+          <span className="px-2 py-1 rounded bg-red-500/20 text-red-400">
+            Errors: <span className="font-bold">{result.rowCountInvalid.toLocaleString()}</span>
+          </span>
+        )}
       </div>
 
-      {/* Error Summary */}
-      {result.errorSummary && (
-        <p className="text-sm text-red-400 mb-4 max-w-md">
-          {result.errorSummary}
-        </p>
+      {/* Processing Metrics */}
+      {(result.parseDurationMs !== null || result.dbDurationMs !== null) && (
+        <ProcessingMetrics result={result} />
       )}
 
       {/* Error Table */}
       {result.errors.length > 0 && (
         <ErrorTable
-          errors={result.errors.slice(0, MAX_ERRORS_TO_SHOW)}
+          errors={result.errors}
           totalErrors={result.rowCountInvalid}
+          filename={result.filename || 'batch'}
         />
       )}
 
@@ -289,6 +447,7 @@ export const IntakeStation: FC<IntakeStationProps> = ({
   const [source, setSource] = useState<DataSourceType>('simplicity');
   const [isDragOver, setIsDragOver] = useState(false);
   const [pollCount, setPollCount] = useState(0);
+  const [currentStatus, setCurrentStatus] = useState<string>('');
   const inputRef = useRef<HTMLInputElement>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -313,6 +472,7 @@ export const IntakeStation: FC<IntakeStationProps> = ({
     setBatchId(null);
     setBatchResult(null);
     setPollCount(0);
+    setCurrentStatus('');
   }, []);
 
   // Poll for batch status
@@ -337,6 +497,7 @@ export const IntakeStation: FC<IntakeStationProps> = ({
       }
 
       const data = result.data;
+      setCurrentStatus(data.status);
 
       // Check if processing is complete
       if (data.status === 'completed' || data.status === 'failed') {
@@ -349,19 +510,26 @@ export const IntakeStation: FC<IntakeStationProps> = ({
         setBatchResult(data);
 
         if (data.status === 'completed') {
-          setState('success');
+          // Determine success vs partial
+          if (data.rowCountInvalid === 0) {
+            setState('success');
+          } else {
+            setState('partial');
+          }
           onUploadComplete?.(id, data);
         } else {
           setState('error');
-          setError(data.errorSummary || 'Batch processing failed');
+          setError(data.rejectionReason || data.errorSummary || 'Batch processing failed');
         }
       } else {
         // Still processing - update progress based on status
         const progressMap: Record<string, number> = {
-          uploaded: 30,
-          staging: 50,
-          transforming: 70,
-          upserting: 90,
+          uploaded: 20,
+          staging: 35,
+          validating: 50,
+          transforming: 65,
+          inserting: 80,
+          upserting: 85,
         };
         setProgress(progressMap[data.status] ?? 50);
         setPollCount((prev) => prev + 1);
@@ -374,7 +542,7 @@ export const IntakeStation: FC<IntakeStationProps> = ({
   const startPolling = useCallback(
     (id: string) => {
       setState('processing');
-      setProgress(25);
+      setProgress(15);
       setPollCount(0);
 
       // Initial poll immediately
@@ -394,14 +562,14 @@ export const IntakeStation: FC<IntakeStationProps> = ({
       if (disabled) return;
 
       setState('uploading');
-      setProgress(10);
+      setProgress(5);
       setError(null);
       setBatchId(null);
       setBatchResult(null);
 
       // Fake progress during upload
       const progressInterval = setInterval(() => {
-        setProgress((prev) => Math.min(prev + 5, 20));
+        setProgress((prev) => Math.min(prev + 2, 12));
       }, 200);
 
       try {
@@ -429,17 +597,23 @@ export const IntakeStation: FC<IntakeStationProps> = ({
   );
 
   // Drag handlers
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!disabled) setIsDragOver(true);
-  }, [disabled]);
+  const handleDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!disabled) setIsDragOver(true);
+    },
+    [disabled]
+  );
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!disabled) setIsDragOver(true);
-  }, [disabled]);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!disabled) setIsDragOver(true);
+    },
+    [disabled]
+  );
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -450,31 +624,37 @@ export const IntakeStation: FC<IntakeStationProps> = ({
     }
   }, []);
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(false);
 
-    if (disabled) return;
+      if (disabled) return;
 
-    const files = Array.from(e.dataTransfer.files);
-    const csvFile = files.find((f) => f.name.toLowerCase().endsWith('.csv'));
+      const files = Array.from(e.dataTransfer.files);
+      const csvFile = files.find((f) => f.name.toLowerCase().endsWith('.csv'));
 
-    if (csvFile) {
-      await handleUpload(csvFile);
-    } else {
-      setState('error');
-      setError('❌ CSV Parse Failed: Please drop a .csv file');
-    }
-  }, [disabled, handleUpload]);
+      if (csvFile) {
+        await handleUpload(csvFile);
+      } else {
+        setState('error');
+        setError('❌ CSV Parse Failed: Please drop a .csv file');
+      }
+    },
+    [disabled, handleUpload]
+  );
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      await handleUpload(file);
-    }
-    e.target.value = '';
-  }, [handleUpload]);
+  const handleFileSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        await handleUpload(file);
+      }
+      e.target.value = '';
+    },
+    [handleUpload]
+  );
 
   const handleClick = useCallback(() => {
     if (!disabled && state === 'idle') {
@@ -484,7 +664,10 @@ export const IntakeStation: FC<IntakeStationProps> = ({
 
   // Derived states
   const isProcessing = state === 'uploading' || state === 'processing';
-  const isResult = state === 'success' || (state === 'error' && batchResult !== null);
+  const isResult =
+    state === 'success' ||
+    state === 'partial' ||
+    (state === 'error' && batchResult !== null);
   const isUploadError = state === 'error' && batchResult === null;
   const isIdle = state === 'idle';
 
@@ -500,13 +683,22 @@ export const IntakeStation: FC<IntakeStationProps> = ({
         className={cn(
           'relative rounded-xl border-2 border-dashed transition-all duration-300',
           'flex flex-col items-center justify-center py-12 px-6',
-          disabled ? 'cursor-not-allowed opacity-50' : isIdle ? 'cursor-pointer' : 'cursor-default',
+          disabled
+            ? 'cursor-not-allowed opacity-50'
+            : isIdle
+            ? 'cursor-pointer'
+            : 'cursor-default',
           // Drag over glow effect
-          isDragOver && !disabled && 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_40px_rgba(16,185,129,0.3)]',
+          isDragOver &&
+            !disabled &&
+            'border-emerald-400 bg-emerald-500/10 shadow-[0_0_40px_rgba(16,185,129,0.3)]',
           // Normal states
-          !isDragOver && isIdle && 'border-slate-700 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900/80',
+          !isDragOver &&
+            isIdle &&
+            'border-slate-700 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900/80',
           isProcessing && 'border-blue-500/50 bg-blue-500/5',
           state === 'success' && 'border-emerald-500/50 bg-emerald-500/5',
+          state === 'partial' && 'border-amber-500/50 bg-amber-500/5',
           state === 'error' && 'border-red-500/50 bg-red-500/5'
         )}
         onDragEnter={handleDragEnter}
@@ -542,9 +734,7 @@ export const IntakeStation: FC<IntakeStationProps> = ({
               <h3 className="text-lg font-semibold text-amber-400 mb-1 font-mono">
                 Backend Disconnected
               </h3>
-              <p className="text-sm text-slate-500">
-                Check Railway deployment status
-              </p>
+              <p className="text-sm text-slate-500">Check Railway deployment status</p>
             </motion.div>
           )}
 
@@ -598,9 +788,7 @@ export const IntakeStation: FC<IntakeStationProps> = ({
               >
                 <FileUp className="h-10 w-10 text-emerald-400" />
               </motion.div>
-              <h3 className="text-xl font-bold text-emerald-400 font-mono">
-                Release to Upload
-              </h3>
+              <h3 className="text-xl font-bold text-emerald-400 font-mono">Release to Upload</h3>
             </motion.div>
           )}
 
@@ -620,17 +808,24 @@ export const IntakeStation: FC<IntakeStationProps> = ({
                 {state === 'uploading' ? 'Uploading...' : 'Processing...'}
               </h3>
 
-              {/* Status text */}
+              {/* Status text with current stage */}
               {state === 'processing' && batchId && (
-                <p className="text-sm text-slate-400 mb-2 font-mono">
-                  Batch {batchId.slice(0, 8)} • Poll #{pollCount}
-                </p>
+                <div className="flex flex-col items-center gap-1 mb-2">
+                  <p className="text-sm text-slate-400 font-mono">
+                    Batch {batchId.slice(0, 8)} • Poll #{pollCount}
+                  </p>
+                  {currentStatus && (
+                    <span className="px-2 py-1 rounded bg-blue-500/20 text-blue-400 text-xs font-mono uppercase">
+                      {currentStatus}
+                    </span>
+                  )}
+                </div>
               )}
 
               {/* Progress Bar */}
               <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-2">
                 <motion.div
-                  className="h-full bg-blue-500"
+                  className="h-full bg-gradient-to-r from-blue-500 to-emerald-500"
                   initial={{ width: '0%' }}
                   animate={{ width: `${progress}%` }}
                   transition={{ duration: 0.3 }}
@@ -640,7 +835,7 @@ export const IntakeStation: FC<IntakeStationProps> = ({
             </motion.div>
           )}
 
-          {/* Result State (Success or Failed with result) */}
+          {/* Result State (Success, Partial, or Failed with result) */}
           {isResult && batchResult && <ResultSummary result={batchResult} onReset={reset} />}
 
           {/* Upload Error State (no batch result) */}
@@ -656,7 +851,9 @@ export const IntakeStation: FC<IntakeStationProps> = ({
                 <XCircle className="h-8 w-8 text-red-400" />
               </div>
               <h3 className="text-lg font-semibold text-red-400 mb-2 font-mono">Upload Failed</h3>
-              <p className="text-sm text-slate-400 mb-4 max-w-sm">{error || 'An unknown error occurred'}</p>
+              <p className="text-sm text-slate-400 mb-4 max-w-sm">
+                {error || 'An unknown error occurred'}
+              </p>
               <button
                 type="button"
                 onClick={(e) => {

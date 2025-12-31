@@ -660,6 +660,203 @@
         "panel": "dedicated"
       },
       "detail": "⚠️ Run all 5 production gate checks against prod (strict mode)"
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🚀 DAD DEMO AUTOMATION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // Log Streaming Tasks (Individual Services)
+    // ───────────────────────────────────────────────────────────────────────────
+
+    {
+      "label": "🔭 Logs: dragonfly-api",
+      "type": "shell",
+      "command": "railway",
+      "args": ["logs", "-f", "--service", "dragonfly-api"],
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "logs"
+      },
+      "detail": "📡 Stream live logs from dragonfly-api"
+    },
+    {
+      "label": "🔭 Logs: worker-ingest",
+      "type": "shell",
+      "command": "railway",
+      "args": ["logs", "-f", "--service", "dragonfly-worker-ingest"],
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "logs"
+      },
+      "detail": "📡 Stream live logs from dragonfly-worker-ingest"
+    },
+    {
+      "label": "🔭 Logs: worker-enforcement",
+      "type": "shell",
+      "command": "railway",
+      "args": ["logs", "-f", "--service", "dragonfly-worker-enforcement"],
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "logs"
+      },
+      "detail": "📡 Stream live logs from dragonfly-worker-enforcement"
+    },
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // Compound Task: Monitor All Services
+    // ───────────────────────────────────────────────────────────────────────────
+
+    {
+      "label": "🔭 Monitor All Services",
+      "dependsOn": [
+        "🔭 Logs: dragonfly-api",
+        "🔭 Logs: worker-ingest",
+        "🔭 Logs: worker-enforcement"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "logs"
+      },
+      "detail": "📡 Stream logs from API + Ingest + Enforcement in parallel"
+    },
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // Schema Cache Reload (PGRST002 Fix)
+    // ───────────────────────────────────────────────────────────────────────────
+
+    {
+      "label": "🔄 PostgREST: Reload Schema",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "tools.reload_postgrest"],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "demo"
+      },
+      "detail": "🔄 Fix PGRST002 errors by reloading PostgREST schema cache"
+    },
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // Demo Run Tasks
+    // ───────────────────────────────────────────────────────────────────────────
+
+    {
+      "label": "🚀 Dad Demo: Full Run",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/auto_dad_demo.ps1"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "demo"
+      },
+      "detail": "🎯 One-click Dad Demo: Reset → Browser → Ingest → Orchestrate"
+    },
+    {
+      "label": "🚀 Dad Demo: Reset Only",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "tools.reset_demo_state", "--force", "--env", "dev"],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "demo"
+      },
+      "detail": "⚠️ Truncate intake tables for fresh demo"
+    },
+    {
+      "label": "🚀 Dad Demo: Stream Railway Logs",
+      "type": "shell",
+      "command": "railway",
+      "args": ["logs", "-f"],
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "demo"
+      },
+      "detail": "📡 Stream live Railway backend logs (legacy single-stream)"
+    },
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // 🚀 COMPOUND TASK: One-Click Launch
+    // ───────────────────────────────────────────────────────────────────────────
+
+    {
+      "label": "🚀 Launch Dad Demo",
+      "dependsOn": ["🔭 Monitor All Services", "🚀 Dad Demo: Full Run"],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "detail": "🎯 One keystroke: Logs (3 services) + Reset + Browser + Ingest + Orchestrate"
+    },
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // 🚀 GO-LIVE SEQUENCE
+    // ───────────────────────────────────────────────────────────────────────────
+
+    {
+      "label": "🚀 Execute Go-Live Sequence",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/go_live_master.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true,
+        "clear": true
+      },
+      "detail": "⚠️ Full Go-Live: Preflight → Migration → Acceptance (with confirmation gates)"
     }
   ],
   "inputs": [

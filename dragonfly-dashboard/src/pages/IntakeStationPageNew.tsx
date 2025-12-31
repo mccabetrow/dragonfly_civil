@@ -283,12 +283,22 @@ const DataSourceSelector: FC<DataSourceSelectorProps> = ({ value, onChange }) =>
 
 interface AnimatedDropzoneProps {
   onUploadComplete: () => void;
+  onError?: (error: string | null, errorCode: string | null) => void;
 }
 
-const AnimatedDropzone: FC<AnimatedDropzoneProps> = ({ onUploadComplete }) => {
+const AnimatedDropzone: FC<AnimatedDropzoneProps> = ({ onUploadComplete, onError }) => {
   const { state, uploadFile, reset, source, setSource } = useUploadIntake();
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Notify parent of error state changes
+  useEffect(() => {
+    if (state.status === 'error' && onError) {
+      onError(state.error, state.errorCode);
+    } else if (state.status !== 'error' && onError) {
+      onError(null, null);
+    }
+  }, [state.status, state.error, state.errorCode, onError]);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -495,19 +505,36 @@ const AnimatedDropzone: FC<AnimatedDropzoneProps> = ({ onUploadComplete }) => {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
-            className="flex flex-col items-center text-center"
+            className="flex flex-col items-center text-center w-full"
           >
             <motion.div
-              className="flex h-16 w-16 items-center justify-center rounded-xl bg-emerald-500/20 mb-4"
+              className={cn(
+                'flex h-16 w-16 items-center justify-center rounded-xl mb-4',
+                state.result.errorRows > 0 ? 'bg-amber-500/20' : 'bg-emerald-500/20'
+              )}
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ type: 'spring', stiffness: 400, damping: 15 }}
             >
-              <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+              {state.result.errorRows > 0 ? (
+                <AlertCircle className="h-8 w-8 text-amber-400" />
+              ) : (
+                <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+              )}
             </motion.div>
-            <h3 className="text-lg font-semibold text-emerald-400 mb-2 font-mono">
-              Upload Complete
+            <h3 className={cn(
+              'text-lg font-semibold mb-2 font-mono',
+              state.result.errorRows > 0 ? 'text-amber-400' : 'text-emerald-400'
+            )}>
+              {state.result.errorRows > 0 ? '⚠️ Partial Success' : '✅ Upload Complete'}
             </h3>
+            
+            {/* Batch ID */}
+            <p className="text-sm text-slate-400 mb-3 font-mono">
+              Batch: <span className="text-white font-bold">{state.result.batchId.slice(0, 8)}</span>
+              <span className="text-slate-600"> • {state.result.filename}</span>
+            </p>
+
             <div className="grid grid-cols-3 gap-4 mb-4">
               <div className="text-center">
                 <p className="text-2xl font-bold text-white font-mono">{state.result.totalRows}</p>
@@ -533,8 +560,9 @@ const AnimatedDropzone: FC<AnimatedDropzoneProps> = ({ onUploadComplete }) => {
                 e.stopPropagation();
                 handleReset();
               }}
-              className="px-4 py-2 rounded-md bg-slate-800 text-slate-300 text-sm font-mono hover:bg-slate-700 transition-colors"
+              className="px-4 py-2 rounded-md bg-slate-800 text-slate-300 text-sm font-mono hover:bg-slate-700 transition-colors flex items-center gap-2"
             >
+              <RefreshCw className="h-4 w-4" />
               Upload Another
             </button>
           </motion.div>
@@ -848,6 +876,52 @@ const DegradedBanner: FC<DegradedBannerProps> = ({ visible }) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// API ERROR BANNER
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface ErrorBannerProps {
+  error: string | null;
+  errorCode: string | null;
+  onDismiss: () => void;
+}
+
+const ErrorBanner: FC<ErrorBannerProps> = ({ error, errorCode, onDismiss }) => {
+  if (!error) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10, height: 0 }}
+      animate={{ opacity: 1, y: 0, height: 'auto' }}
+      exit={{ opacity: 0, y: -10, height: 0 }}
+      className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-center gap-3"
+    >
+      <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-red-300 truncate">
+          Upload Error
+        </p>
+        <p className="text-xs text-red-400/80 truncate">
+          {error}
+          {errorCode && (
+            <span className="ml-2 px-1.5 py-0.5 bg-red-900/50 rounded text-[10px] font-mono">
+              {errorCode}
+            </span>
+          )}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="text-red-400 hover:text-red-300 transition-colors p-1"
+        aria-label="Dismiss error"
+      >
+        <XCircle className="h-4 w-4" />
+      </button>
+    </motion.div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -867,6 +941,20 @@ const IntakeStationPage: FC = () => {
   
   const [previousBatches, setPreviousBatches] = useState<IntakeBatchSummary[]>([]);
   const [realtimeFlash, setRealtimeFlash] = useState(false);
+  
+  // Upload error state for banner display
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadErrorCode, setUploadErrorCode] = useState<string | null>(null);
+
+  const handleUploadError = useCallback((error: string | null, errorCode: string | null) => {
+    setUploadError(error);
+    setUploadErrorCode(errorCode);
+  }, []);
+
+  const dismissError = useCallback(() => {
+    setUploadError(null);
+    setUploadErrorCode(null);
+  }, []);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // REALTIME SUBSCRIPTION - Auto-refetch when jobs complete (SECONDARY)
@@ -942,6 +1030,15 @@ const IntakeStationPage: FC = () => {
         <DegradedBanner visible={isDegraded} />
       </AnimatePresence>
 
+      {/* Upload Error Banner - shown when upload fails */}
+      <AnimatePresence>
+        <ErrorBanner 
+          error={uploadError} 
+          errorCode={uploadErrorCode} 
+          onDismiss={dismissError} 
+        />
+      </AnimatePresence>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -1010,7 +1107,10 @@ const IntakeStationPage: FC = () => {
           <h2 className="text-sm font-semibold text-slate-400 font-mono uppercase tracking-wider mb-3">
             Upload
           </h2>
-          <AnimatedDropzone onUploadComplete={handleUploadComplete} />
+          <AnimatedDropzone 
+            onUploadComplete={handleUploadComplete} 
+            onError={handleUploadError}
+          />
         </div>
 
         {/* Quick Stats */}

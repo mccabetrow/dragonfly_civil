@@ -172,7 +172,7 @@ def check_quoted_value(key: str, value: str, line_num: int) -> Optional[LintIssu
 
 def check_url_format(key: str, value: str, line_num: int) -> Optional[LintIssue]:
     """Check URL values for common issues."""
-    url_keys = {"SUPABASE_URL", "PROD_API_URL", "NEXT_PUBLIC_APP_URL"}
+    url_keys = {"SUPABASE_URL", "PROD_API_URL", "VERCEL_APP_URL"}
 
     if key in url_keys and value:
         # Check for trailing slash (often causes issues)
@@ -358,9 +358,7 @@ def print_results(filepath: Path, issues: List[LintIssue]) -> None:
         icon = (
             "❌"
             if issue.severity == Severity.ERROR
-            else "⚠️"
-            if issue.severity == Severity.WARNING
-            else "ℹ️"
+            else "⚠️" if issue.severity == Severity.WARNING else "ℹ️"
         )
         print(f"\n  {icon} Line {issue.line_num}: [{issue.key}]")
         print(f"     {issue.message}")

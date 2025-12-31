@@ -266,12 +266,12 @@ class SimplicityMapper:
         # Plaintiff name
         plaintiff_name = self._clean_string(get_mapped("plaintiff_name"))
         if not plaintiff_name:
-            warnings.append("Missing plaintiff_name")
+            errors.append("Missing required field: plaintiff_name")
 
         # Defendant name
         defendant_name = self._clean_string(get_mapped("defendant_name"))
         if not defendant_name:
-            warnings.append("Missing defendant_name")
+            errors.append("Missing required field: defendant_name")
 
         # Judgment amount
         judgment_amount: Optional[Decimal] = None

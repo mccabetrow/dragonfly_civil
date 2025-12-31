@@ -17,9 +17,11 @@
     VERCEL ENVIRONMENT VARIABLES
     ========================================
     
-    NEXT_PUBLIC_API_URL=https://dragonflycivil-production-d57a.up.railway.app/api
-    NEXT_PUBLIC_API_KEY=df_prod_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-    ...
+    VITE_API_BASE_URL=https://dragonflycivil-production-d57a.up.railway.app
+    VITE_DRAGONFLY_API_KEY=df_prod_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    VITE_SUPABASE_URL=https://PROJECT.supabase.co
+    VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6...
+    VITE_DEMO_MODE=false
 
 .NOTES
     Author: Dragonfly Civil Engineering Team

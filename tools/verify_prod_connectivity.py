@@ -17,7 +17,7 @@ Usage:
 Environment Variables:
     PROD_API_URL: Railway backend URL (defaults to known prod URL)
     DRAGONFLY_API_KEY: API key for authenticated endpoints
-    NEXT_PUBLIC_APP_URL: Vercel frontend URL for CORS testing
+    VERCEL_APP_URL: Vercel frontend URL for CORS testing
 """
 
 from __future__ import annotations
@@ -359,7 +359,7 @@ def run_all_checks() -> Tuple[List[CheckResult], int]:
     api_key = os.environ.get("DRAGONFLY_API_KEY", "")
 
     # Vercel URL for CORS testing
-    vercel_url = os.environ.get("NEXT_PUBLIC_APP_URL", "")
+    vercel_url = os.environ.get("VERCEL_APP_URL", "")
     if not vercel_url:
         # Use default Vercel URLs
         vercel_urls = DEFAULT_VERCEL_URLS

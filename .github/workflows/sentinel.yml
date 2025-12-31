@@ -1,0 +1,90 @@
+name: Sentinel Health Check
+
+# Run every 5 minutes to detect production issues
+on:
+  schedule:
+    # Every 5 minutes
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - dev
+          - prod
+
+env:
+  SUPABASE_MODE: ${{ github.event.inputs.environment || 'prod' }}
+
+jobs:
+  sentinel:
+    name: Sentinel Health Check
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'prod' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-sentinel-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Sentinel
+        id: sentinel
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_MODE: ${{ env.SUPABASE_MODE }}
+        run: |
+          # Run sentinel and capture output
+          python -m backend.workers.sentinel --json > sentinel_output.json 2>&1 || true
+
+          # Display output
+          cat sentinel_output.json
+
+          # Check if critical alerts exist
+          CRITICAL_COUNT=$(cat sentinel_output.json | python -c "import sys, json; data = json.load(sys.stdin); print(data.get('metrics', {}).get('critical_alerts', 0))" 2>/dev/null || echo "0")
+
+          echo "critical_alerts=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+
+          # Fail workflow if critical alerts detected
+          if [ "$CRITICAL_COUNT" -gt "0" ]; then
+            echo "::error::CRITICAL alerts detected: $CRITICAL_COUNT"
+            exit 1
+          fi
+
+      - name: Upload Sentinel Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-report-${{ github.run_id }}
+          path: sentinel_output.json
+          retention-days: 7
+
+      # Optional: Send to Discord/Slack on failure
+      # - name: Notify on Failure
+      #   if: failure()
+      #   uses: sarisia/actions-status-discord@v1
+      #   with:
+      #     webhook: ${{ secrets.DISCORD_WEBHOOK }}
+      #     title: "🚨 Sentinel CRITICAL Alert"
+      #     description: "Production health check failed. See workflow for details."
+      #     color: 0xFF0000

@@ -195,6 +195,24 @@ class TestSimplicityMapper:
         assert not rows[2].is_valid()
         assert any("amount" in e.lower() for e in rows[2].errors)
 
+    def test_transform_dataframe_missing_plaintiff(self, mapper: SimplicityMapper) -> None:
+        """Rows without plaintiffs should fail validation."""
+        df = pd.DataFrame(
+            {
+                "Case Number": ["CIV-2024-401"],
+                "Plaintiff": [""],
+                "Defendant": ["Test Defendant"],
+                "Judgment Amount": ["1200"],
+            }
+        )
+
+        mapping = mapper.detect_column_mapping(df)
+        rows = mapper.transform_dataframe(df, mapping)
+
+        assert len(rows) == 1
+        assert not rows[0].is_valid()
+        assert any("plaintiff" in err.lower() for err in rows[0].errors)
+
 
 class TestCurrencyParsing:
     """Tests for currency parsing logic."""
@@ -395,6 +413,96 @@ class TestSimplicityPipelineIntegration:
             result2 = process_simplicity_batch(conn, sample_df, "test_dup_2.csv", source_ref)
             assert result2.duplicate_rows == len(sample_df)
             assert "Duplicate batch" in (result2.error_summary or "")
+
+    def test_insert_or_get_plaintiff_idempotent(self, db_url: str) -> None:
+        """Calling insert_or_get_plaintiff twice should reuse the same row."""
+        import psycopg
+
+        unique_name = f"Smoke Plaintiff {uuid.uuid4().hex[:8]} LLC"
+
+        with psycopg.connect(db_url) as conn:
+            inserted_id: int | None = None
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM public.insert_or_get_plaintiff(%s, %s, NULL, NULL, NULL)",
+                        (unique_name, "pytest"),
+                    )
+                    first_id, first_inserted = cur.fetchone()
+                    inserted_id = first_id
+
+                    cur.execute(
+                        "SELECT * FROM public.insert_or_get_plaintiff(%s, %s, NULL, NULL, NULL)",
+                        (unique_name.replace(" LLC", ""), "pytest"),
+                    )
+                    second_id, second_inserted = cur.fetchone()
+
+                assert first_inserted is True
+                assert second_inserted is False
+                assert first_id == second_id
+            finally:
+                if inserted_id is not None:
+                    with conn.cursor() as cur:
+                        cur.execute("DELETE FROM public.plaintiffs WHERE id = %s", (inserted_id,))
+                    conn.commit()
+
+    def test_insert_or_get_judgment_idempotent(self, db_url: str) -> None:
+        """insert_or_get_judgment should dedupe by case number + normalized defendant."""
+        import psycopg
+
+        case_number = f"CIV-{uuid.uuid4().hex[:8]}"
+
+        with psycopg.connect(db_url) as conn:
+            inserted_id: int | None = None
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT * FROM public.insert_or_get_judgment(
+                            %s, %s, %s, %s, %s, %s, %s, %s, NULL
+                        )
+                        """,
+                        (
+                            case_number,
+                            "Test Plaintiff",
+                            "John Doe LLC",
+                            1250.00,
+                            date(2024, 1, 15),
+                            "Kings",
+                            "Kings",
+                            "pytest",
+                        ),
+                    )
+                    first_id, first_inserted = cur.fetchone()
+                    inserted_id = first_id
+
+                    cur.execute(
+                        """
+                        SELECT * FROM public.insert_or_get_judgment(
+                            %s, %s, %s, %s, %s, %s, %s, %s, NULL
+                        )
+                        """,
+                        (
+                            case_number,
+                            "Test Plaintiff",
+                            "John Doe",  # Missing LLC should hit same dedupe key
+                            1250.00,
+                            date(2024, 1, 15),
+                            "Kings",
+                            "Kings",
+                            "pytest",
+                        ),
+                    )
+                    second_id, second_inserted = cur.fetchone()
+
+                assert first_inserted is True
+                assert second_inserted is False
+                assert first_id == second_id
+            finally:
+                if inserted_id is not None:
+                    with conn.cursor() as cur:
+                        cur.execute("DELETE FROM public.judgments WHERE id = %s", (inserted_id,))
+                    conn.commit()
 
 
 # =============================================================================

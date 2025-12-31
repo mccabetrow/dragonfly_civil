@@ -148,15 +148,15 @@ if (-not $SkipConnectivity) {
     # Set connectivity environment variables
     if ($Env -eq "prod") {
         $env:PROD_API_URL = "https://dragonflycivil-production-d57a.up.railway.app"
-        $env:NEXT_PUBLIC_APP_URL = "https://dragonfly-dashboard.vercel.app"
+        $env:VERCEL_APP_URL = "https://dragonfly-dashboard.vercel.app"
     }
     else {
         # For dev, use local or staging
         if (-not $env:PROD_API_URL) {
             $env:PROD_API_URL = "http://127.0.0.1:8000"
         }
-        if (-not $env:NEXT_PUBLIC_APP_URL) {
-            $env:NEXT_PUBLIC_APP_URL = "http://localhost:5173"
+        if (-not $env:VERCEL_APP_URL) {
+            $env:VERCEL_APP_URL = "http://localhost:5173"
         }
     }
 

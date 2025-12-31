@@ -146,11 +146,21 @@ export const supabaseAnonKey: string = (() => {
 /**
  * Demo mode flag.
  * When true, mutations are locked and demo data is shown.
- * Uses VITE_DEMO_MODE (VITE_IS_DEMO is deprecated).
+ * Canonical variable: VITE_DEMO_MODE
  */
 export const isDemoMode: boolean = (() => {
-  // Prefer VITE_DEMO_MODE, fallback to VITE_IS_DEMO for backward compat
-  const raw = getEnv('VITE_DEMO_MODE') ?? getEnv('VITE_IS_DEMO') ?? '';
+  const canonical = getEnv('VITE_DEMO_MODE');
+  const deprecated = getEnv('VITE_IS_DEMO');
+  
+  // Warn if deprecated var is used
+  if (!canonical && deprecated) {
+    console.warn(
+      '[config/runtime] DEPRECATION WARNING: VITE_IS_DEMO is deprecated. ' +
+      'Use VITE_DEMO_MODE instead. This fallback will be removed in a future release.'
+    );
+  }
+  
+  const raw = canonical ?? deprecated ?? '';
   return ['true', '1', 'yes', 'on'].includes(raw.toLowerCase());
 })();
 

@@ -63,25 +63,25 @@
 
 In Vercel Project Settings → Environment Variables, add:
 
-| Variable                      | Value                                     | Environment |
-| ----------------------------- | ----------------------------------------- | ----------- |
-| `VITE_SUPABASE_URL`           | `https://xxx.supabase.co`                 | Production  |
-| `VITE_SUPABASE_ANON_KEY`      | `eyJ...` (anon key)                       | Production  |
-| `VITE_SUPABASE_ENV`           | `prod`                                    | Production  |
-| `VITE_SUPABASE_URL_PROD`      | `https://xxx.supabase.co`                 | Production  |
-| `VITE_SUPABASE_ANON_KEY_PROD` | `eyJ...` (prod anon key)                  | Production  |
-| `VITE_API_BASE_URL`           | `https://your-railway-app.up.railway.app` | Production  |
+| Variable                 | Value                                     | Environment |
+| ------------------------ | ----------------------------------------- | ----------- |
+| `VITE_API_BASE_URL`      | `https://your-railway-app.up.railway.app` | Production  |
+| `VITE_DRAGONFLY_API_KEY` | `df_prod_xxxxxxxx-xxxx...`                | Production  |
+| `VITE_SUPABASE_URL`      | `https://xxx.supabase.co`                 | Production  |
+| `VITE_SUPABASE_ANON_KEY` | `eyJ...` (anon key)                       | Production  |
+| `VITE_DEMO_MODE`         | `false` (or omit)                         | Production  |
 
 ```
+[ ] VITE_API_BASE_URL added (Railway backend URL)
+[ ] VITE_DRAGONFLY_API_KEY added (matches Railway DRAGONFLY_API_KEY)
 [ ] VITE_SUPABASE_URL added
 [ ] VITE_SUPABASE_ANON_KEY added
-[ ] VITE_SUPABASE_ENV set to "prod"
-[ ] VITE_SUPABASE_URL_PROD added (if using prod override)
-[ ] VITE_SUPABASE_ANON_KEY_PROD added (if using prod override)
-[ ] VITE_API_BASE_URL added (can be placeholder until Railway is up)
+[ ] VITE_DEMO_MODE omitted or set to "false"
 ```
 
 > ⚠️ **Never add service role keys or secrets to frontend env vars!**
+>
+> ⚠️ **Deprecated vars removed:** `VITE_SUPABASE_URL_PROD`, `VITE_SUPABASE_ANON_KEY_PROD`, `VITE_SUPABASE_ENV`, `VITE_IS_DEMO` are no longer used.
 
 ## A.4 Deploy
 

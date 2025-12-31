@@ -213,17 +213,27 @@ export async function getBatches(
 
 /**
  * Batch status response from polling endpoint.
+ * World-Class Ingestion: includes timing metrics, error budget, and rejection reason.
  */
 export interface BatchStatusResult {
   batchId: string;
   filename: string;
-  status: 'uploaded' | 'staging' | 'transforming' | 'upserting' | 'completed' | 'failed';
+  status: 'uploaded' | 'staging' | 'validating' | 'transforming' | 'inserting' | 'upserting' | 'completed' | 'failed';
   rowCountTotal: number;
   rowCountInserted: number;
   rowCountInvalid: number;
   rowCountValid: number;
+  rowCountDuplicate: number;
+  plaintiffsInserted: number;
+  plaintiffsDuplicate: number;
+  plaintiffsFailed: number;
   errorSummary: string | null;
   errors: BatchRowError[];
+  // World-Class Observability
+  parseDurationMs: number | null;
+  dbDurationMs: number | null;
+  errorThresholdPercent: number;
+  rejectionReason: string | null;
 }
 
 export interface BatchRowError {
@@ -271,7 +281,16 @@ export async function getBatchStatus(batchId: string): Promise<BatchStatusRespon
       row_count_inserted: number;
       row_count_invalid: number;
       row_count_valid: number;
+      row_count_duplicate?: number;
+      plaintiffs_inserted?: number;
+      plaintiffs_duplicate?: number;
+      plaintiffs_failed?: number;
       error_summary: string | null;
+      // World-Class fields
+      parse_duration_ms?: number | null;
+      db_duration_ms?: number | null;
+      error_threshold_percent?: number;
+      rejection_reason?: string | null;
       errors?: Array<{
         row_index: number;
         error_code: string;
@@ -292,7 +311,16 @@ export async function getBatchStatus(batchId: string): Promise<BatchStatusRespon
         rowCountInserted: data.row_count_inserted,
         rowCountInvalid: data.row_count_invalid,
         rowCountValid: data.row_count_valid,
+        rowCountDuplicate: data.row_count_duplicate ?? 0,
+        plaintiffsInserted: data.plaintiffs_inserted ?? 0,
+        plaintiffsDuplicate: data.plaintiffs_duplicate ?? 0,
+        plaintiffsFailed: data.plaintiffs_failed ?? 0,
         errorSummary: data.error_summary,
+        // World-Class observability
+        parseDurationMs: data.parse_duration_ms ?? null,
+        dbDurationMs: data.db_duration_ms ?? null,
+        errorThresholdPercent: data.error_threshold_percent ?? 10,
+        rejectionReason: data.rejection_reason ?? null,
         errors: (data.errors ?? []).map((e) => ({
           rowIndex: e.row_index,
           errorCode: e.error_code,
