@@ -435,7 +435,7 @@ async def upload_csv(
         return BatchCreateResponse(
             batch_id=str(batch_id),
             status="processing",
-            message=f"Processing started for {file.filename}. Check /intake/batch/{batch_id} for status.",
+            message=f"Processing started for {file.filename}. Check /intake/batches/{batch_id} for status.",
         )
 
     except HTTPException:
