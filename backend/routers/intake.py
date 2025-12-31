@@ -31,6 +31,32 @@ from ..services.intake_service import IntakeService
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# RLS Error Detection
+# ---------------------------------------------------------------------------
+
+
+def is_rls_violation(error: Exception) -> bool:
+    """Check if an exception is an RLS (Row Level Security) violation.
+
+    Returns True for errors like:
+    - 'new row violates row-level security policy'
+    - 'permission denied for table'
+    - PostgreSQL error code 42501 (insufficient_privilege)
+    """
+    error_str = str(error).lower()
+    rls_keywords = [
+        "row-level security",
+        "row level security",
+        "rls policy",
+        "permission denied",
+        "insufficient_privilege",
+        "42501",  # PostgreSQL error code
+    ]
+    return any(kw in error_str for kw in rls_keywords)
+
+
 router = APIRouter(prefix="/intake", tags=["Intake Fortress"])
 
 
@@ -419,8 +445,17 @@ async def upload_csv(
 
         except Exception as e:
             logger.error(f"Failed to create batch: {e}")
-            # Clean up temp file then let exception bubble up to outer handler
+            # Clean up temp file
             tmp_path.unlink(missing_ok=True)
+
+            # Check for RLS violation specifically
+            if is_rls_violation(e):
+                logger.error(f"RLS violation during batch creation: {e}")
+                raise HTTPException(
+                    status_code=403,
+                    detail="Permission denied: Row-level security policy violation. "
+                    "Ensure the API is using service_role credentials.",
+                )
             raise
 
         # Start background processing
@@ -607,6 +642,17 @@ async def list_batches(
         return degraded_response(error=str(e)[:200], data=data)
 
 
+# Support both /batch/{id} (legacy) and /batches/{id} (canonical)
+@router.get(
+    "/batch/{batch_id}",
+    response_model=BatchDetailResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "Batch not found"},
+    },
+    summary="Get batch details (legacy alias)",
+    description="Legacy alias for /batches/{batch_id}. Use /batches/{batch_id} for new integrations.",
+    include_in_schema=False,  # Hide from OpenAPI docs
+)
 @router.get(
     "/batches/{batch_id}",
     response_model=BatchDetailResponse,
@@ -666,6 +712,17 @@ async def get_batch(
         )
 
 
+# Support both /batch/{id}/errors (legacy) and /batches/{id}/errors (canonical)
+@router.get(
+    "/batch/{batch_id}/errors",
+    response_model=ErrorLogResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "Batch not found"},
+    },
+    summary="Get batch error log (legacy alias)",
+    description="Legacy alias for /batches/{batch_id}/errors.",
+    include_in_schema=False,
+)
 @router.get(
     "/batches/{batch_id}/errors",
     response_model=ErrorLogResponse,
@@ -822,7 +879,7 @@ async def get_simplicity_batch_progress(
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
-                SELECT 
+                SELECT
                     batch_id,
                     filename,
                     source_reference,
@@ -836,7 +893,7 @@ async def get_simplicity_batch_progress(
                     success_rate_pct,
                     error_summary,
                     created_at
-                FROM intake.view_batch_progress 
+                FROM intake.view_batch_progress
                 WHERE batch_id = %s
                 """,
                 (batch_id,),
