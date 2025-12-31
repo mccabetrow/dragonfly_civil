@@ -75,8 +75,8 @@ IF EXISTS (
 ) THEN DROP POLICY IF EXISTS service_row_errors_all ON intake.row_errors;
 CREATE POLICY service_row_errors_all ON intake.row_errors FOR ALL TO service_role USING (true) WITH CHECK (true);
 END IF;
-END $$;
 RAISE NOTICE 'RLS policies fixed for intake tables';
+END $$;
 -- ============================================================================
 -- SECTION 2: REPAIR SCHEMA DRIFT - public.judgments.dedupe_key
 -- ============================================================================
@@ -214,7 +214,8 @@ GRANT EXECUTE ON FUNCTION public.normalize_party_name(TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.normalize_party_name(TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.compute_judgment_dedupe_key(TEXT, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.compute_judgment_dedupe_key(TEXT, TEXT) TO authenticated;
-RAISE NOTICE 'Grants applied to intake schema and functions';
+DO $$ BEGIN RAISE NOTICE 'Grants applied to intake schema and functions';
+END $$;
 -- ============================================================================
 -- SECTION 4: VERIFICATION
 -- ============================================================================

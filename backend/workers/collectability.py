@@ -185,7 +185,8 @@ async def get_unscored_judgments(
         List of judgment dicts with id, judgment_amount, judgment_date
     """
     if batch_id:
-        # Fetch from specific batch
+        # Fetch from specific batch using source_file pattern
+        # Note: source_file may contain batch reference in filename
         rows = await conn.fetch(
             """
             SELECT
@@ -196,12 +197,12 @@ async def get_unscored_judgments(
                 j.collectability_score,
                 j.tier
             FROM public.judgments j
-            WHERE j.source_reference LIKE $1
+            WHERE j.source_file LIKE $1
               AND j.collectability_score IS NULL
             ORDER BY j.judgment_amount DESC NULLS LAST
             LIMIT $2
             """,
-            f"batch:{batch_id}%",
+            f"%{batch_id}%",
             limit,
         )
     else:
@@ -228,7 +229,7 @@ async def get_unscored_judgments(
 
 async def update_judgment_score(
     conn: Any,
-    judgment_id: UUID,
+    judgment_id: int,
     score: int,
     tier: str,
     reason: str,
@@ -238,25 +239,27 @@ async def update_judgment_score(
 
     Args:
         conn: asyncpg connection
-        judgment_id: UUID of the judgment
+        judgment_id: Judgment ID (bigint)
         score: Collectability score (0-100)
         tier: Tier classification (A, B, or C)
         reason: Human-readable reason for the score
     """
+    # Note: psycopg3 uses %s placeholders in order of appearance,
+    # so we pass args in the order they appear in the query
     await conn.execute(
         """
         UPDATE public.judgments
-        SET collectability_score = $2,
-            tier = $3,
-            tier_reason = $4,
+        SET collectability_score = %s,
+            tier = %s,
+            tier_reason = %s,
             tier_as_of = NOW(),
             updated_at = NOW()
-        WHERE id = $1
+        WHERE id = %s
         """,
-        str(judgment_id),
         score,
         tier,
         reason,
+        judgment_id,
     )
 
 
@@ -303,7 +306,7 @@ async def score_batch_judgments(
 
                 await update_judgment_score(
                     conn,
-                    UUID(str(j["id"])),
+                    int(j["id"]),
                     score,
                     tier,
                     reason,
@@ -363,7 +366,7 @@ async def score_all_unscored(limit: int = 500) -> dict[str, int]:
 
                 await update_judgment_score(
                     conn,
-                    UUID(str(j["id"])),
+                    int(j["id"]),
                     score,
                     tier,
                     reason,
@@ -471,6 +474,11 @@ async def worker_loop(poll_interval: int = 10) -> None:
 
 if __name__ == "__main__":
     import sys
+
+    from backend.asyncio_compat import ensure_selector_policy_on_windows
+
+    # Fix Windows asyncio compatibility with psycopg3
+    ensure_selector_policy_on_windows()
 
     logging.basicConfig(
         level=logging.INFO,
