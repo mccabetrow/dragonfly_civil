@@ -44,3 +44,4 @@ GRANT SELECT ON public.v_plaintiff_open_tasks TO anon,
 authenticated,
 service_role;
 COMMIT;
+

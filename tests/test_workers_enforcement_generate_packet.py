@@ -47,7 +47,9 @@ class TestGeneratePacketEndpoint:
         # Mock judgments table lookup
         judgments_response = MagicMock()
         judgments_response.data = [{"id": 123, "case_number": "2024-CV-001234"}]
-        client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = judgments_response
+        client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = (
+            judgments_response
+        )
 
         # Mock job_queue insert
         job_response = MagicMock()
@@ -68,7 +70,10 @@ class TestGeneratePacketEndpoint:
     @pytest.mark.asyncio
     async def test_generate_packet_queues_job(self, mock_supabase, mock_auth):
         """Verify that generate_packet creates a job in ops.job_queue."""
-        from backend.routers.enforcement import GeneratePacketRequest, generate_enforcement_packet
+        from backend.api.routers.enforcement import (
+            GeneratePacketRequest,
+            generate_enforcement_packet,
+        )
 
         with patch(
             "backend.routers.enforcement.get_supabase_client",
@@ -100,10 +105,15 @@ class TestGeneratePacketEndpoint:
         """Verify that generate_packet returns 404 for non-existent judgment."""
         from fastapi import HTTPException
 
-        from backend.routers.enforcement import GeneratePacketRequest, generate_enforcement_packet
+        from backend.api.routers.enforcement import (
+            GeneratePacketRequest,
+            generate_enforcement_packet,
+        )
 
         # Mock empty judgment result
-        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = (
+            []
+        )
 
         with patch(
             "backend.routers.enforcement.get_supabase_client",
@@ -133,7 +143,7 @@ class TestJobStatusEndpoint:
     @pytest.mark.asyncio
     async def test_job_status_returns_pending(self, mock_auth):
         """Verify job_status returns correct pending state."""
-        from backend.routers.enforcement import get_job_status
+        from backend.api.routers.enforcement import get_job_status
 
         mock_client = MagicMock()
         job_data = {
@@ -161,7 +171,7 @@ class TestJobStatusEndpoint:
     @pytest.mark.asyncio
     async def test_job_status_returns_completed_with_packet(self, mock_auth):
         """Verify job_status returns packet_id when job is completed."""
-        from backend.routers.enforcement import get_job_status
+        from backend.api.routers.enforcement import get_job_status
 
         mock_client = MagicMock()
 
@@ -203,10 +213,12 @@ class TestJobStatusEndpoint:
         """Verify job_status returns 404 for non-existent job."""
         from fastapi import HTTPException
 
-        from backend.routers.enforcement import get_job_status
+        from backend.api.routers.enforcement import get_job_status
 
         mock_client = MagicMock()
-        mock_client.schema.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_client.schema.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = (
+            []
+        )
 
         with patch(
             "backend.routers.enforcement.get_supabase_client",

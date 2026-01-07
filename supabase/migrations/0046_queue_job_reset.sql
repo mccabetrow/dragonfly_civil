@@ -58,3 +58,4 @@ revoke execute on function public.dequeue_job(text) from service_role;
 
 drop function if exists public.ack_job (text, bigint);
 drop function if exists public.dequeue_job (text);
+

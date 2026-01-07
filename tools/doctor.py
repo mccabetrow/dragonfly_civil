@@ -395,19 +395,78 @@ class DoctorDiagnostics:
             return CheckResult(False, f"Enum check failed: {e}")
 
     # =========================================================================
-    # CHECK 5: PostgREST Connectivity (with retry for schema cache)
+    # CHECK 5: PostgREST Connectivity (Canonical Health Check)
     # =========================================================================
     def check_postgrest_api(self) -> CheckResult:
         """
-        Verify PostgREST API is reachable and service role is valid.
+        Verify PostgREST API health using canonical health module.
 
-        Uses retry logic to handle PostgREST schema cache delays (PGRST002).
-        Returns WARNING (not FAIL) for transient PostgREST issues since
-        the primary database gate uses direct psycopg connections.
+        Uses backend.core.health for consistent status reporting across all tools.
+
+        Status Mapping:
+            HEALTHY     -> ✅ PASS
+            STALE_CACHE -> ⚠️ WARN "Schema Cache Stale (PGRST002) - Auto-healing recommended"
+            UNAVAILABLE -> ❌ FAIL
 
         Returns:
-            CheckResult with API response details
+            CheckResult with API health status
         """
+        try:
+            from backend.core.health import HealthStatus, check_postgrest_status
+
+            env = get_supabase_env()
+            result = check_postgrest_status(env=env, verbose=self.verbose)
+
+            if result.status == HealthStatus.HEALTHY:
+                return CheckResult(
+                    True,
+                    f"PostgREST API OK ({result.message})",
+                    {
+                        "status": result.status.value,
+                        "root_status": result.root_check.status_code,
+                        "data_status": result.data_check.status_code,
+                    },
+                )
+
+            elif result.status == HealthStatus.STALE_CACHE:
+                # WARN - not FAIL - because DataService has automatic failover
+                self.log(
+                    "PostgREST schema cache stale (PGRST002) - Auto-healing recommended",
+                    "warn",
+                )
+                return CheckResult(
+                    True,  # Pass with warning since DataService has failover
+                    "PostgREST STALE_CACHE (PGRST002) - DataService will auto-failover to DB",
+                    {
+                        "status": result.status.value,
+                        "warning": True,
+                        "message": result.message,
+                        "root_error": result.root_check.error_code,
+                        "data_error": result.data_check.error_code,
+                    },
+                )
+
+            else:  # UNAVAILABLE
+                return CheckResult(
+                    False,
+                    f"PostgREST UNAVAILABLE: {result.message}",
+                    {
+                        "status": result.status.value,
+                        "root_error": result.root_check.error_code,
+                        "data_error": result.data_check.error_code,
+                    },
+                )
+
+        except ImportError as e:
+            # Fallback if health module not available
+            self.log(f"Could not import health module: {e}", "warn")
+            return self._check_postgrest_api_legacy()
+
+        except Exception as e:
+            return CheckResult(False, f"PostgREST check failed: {e}")
+
+    def _check_postgrest_api_legacy(self) -> CheckResult:
+        """Legacy PostgREST check (fallback if health module unavailable)."""
         last_error = None
 
         for attempt in range(1, POSTGREST_MAX_RETRIES + 1):
@@ -426,61 +485,11 @@ class DoctorDiagnostics:
                 last_error = e
                 message = str(e)
 
-                # PGRST002 = schema cache stale; retry after delay
-                if "PGRST002" in message or "schema cache" in message.lower():
+                if "PGRST002" in message or "503" in message or "502" in message:
                     if attempt < POSTGREST_MAX_RETRIES:
-                        self.log(
-                            f"PostgREST schema cache stale (attempt {attempt}/{POSTGREST_MAX_RETRIES}), "
-                            f"retrying in {POSTGREST_RETRY_DELAY_SECONDS}s...",
-                            "warn",
-                        )
                         time.sleep(POSTGREST_RETRY_DELAY_SECONDS)
                         continue
-
-                # 503/502 = PostgREST temporarily unavailable; retry
-                if "503" in message or "502" in message:
-                    if attempt < POSTGREST_MAX_RETRIES:
-                        self.log(
-                            f"PostgREST unavailable (attempt {attempt}/{POSTGREST_MAX_RETRIES}), "
-                            f"retrying in {POSTGREST_RETRY_DELAY_SECONDS}s...",
-                            "warn",
-                        )
-                        time.sleep(POSTGREST_RETRY_DELAY_SECONDS)
-                        continue
-
-                # Auth errors are not retryable
-                if "401" in message or "403" in message:
-                    return CheckResult(False, f"Authentication failed: {e}")
-
-                # Other errors: break and report
                 break
-
-        # After all retries exhausted, check if it's a transient PostgREST issue
-        message = str(last_error) if last_error else "Unknown error"
-
-        # PGRST002 after retries = WARNING (DB gate is primary)
-        if "PGRST002" in message or "schema cache" in message.lower():
-            self.log(
-                f"PostgREST schema cache issue (WARNING only - DB gate passed): {last_error}",
-                "warn",
-            )
-            return CheckResult(
-                True,  # Pass with warning since DB gate is primary
-                "PostgREST schema cache stale (run: supabase db reload) - DB gate OK",
-                {"warning": True, "attempts": POSTGREST_MAX_RETRIES},
-            )
-
-        # 503/502 after retries = WARNING
-        if "503" in message or "502" in message:
-            self.log(
-                "PostgREST temporarily unavailable (WARNING only - DB gate passed)",
-                "warn",
-            )
-            return CheckResult(
-                True,  # Pass with warning since DB gate is primary
-                "PostgREST temporarily unavailable - DB gate OK",
-                {"warning": True, "attempts": POSTGREST_MAX_RETRIES},
-            )
 
         return CheckResult(False, f"PostgREST check failed: {last_error}")
 

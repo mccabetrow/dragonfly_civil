@@ -10,5 +10,7 @@ export {
   isDemoMode,
   isProd,
   isDev,
+  dashboardSource,
   type RuntimeConfig,
+  type DashboardSource,
 } from './runtime';

@@ -8,3 +8,4 @@ WHERE
 ALTER TABLE public.plaintiffs
 ALTER COLUMN source_system
 SET DEFAULT 'unknown';
+

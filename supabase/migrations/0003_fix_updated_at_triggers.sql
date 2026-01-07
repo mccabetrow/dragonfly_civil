@@ -62,3 +62,4 @@ begin
       for each row execute function public.set_updated_at();
   end if;
 end $$;
+

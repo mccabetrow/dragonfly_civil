@@ -38,3 +38,4 @@ DO $$ BEGIN IF EXISTS (
 EXECUTE 'GRANT SELECT ON TABLE public.v_collectability_snapshot TO service_role';
 END IF;
 END $$;
+

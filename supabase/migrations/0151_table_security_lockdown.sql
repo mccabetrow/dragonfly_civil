@@ -34,3 +34,4 @@ END LOOP;
 END $$;
 SELECT public.pgrst_reload();
 COMMIT;
+

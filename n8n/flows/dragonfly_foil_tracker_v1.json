@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Workflow guardrails\n- Watches v_enforcement_overview for rows flagged with needs_foil = true.\n- Queues foil_tracker jobs that prepare FOIL submissions and reminders.\n- Writes/refreshes plaintiff_tasks entries so intake teams can see upcoming FOIL deadlines.\n- Emits notify_ops RPC payloads on failure." 
+        "content": "## Workflow guardrails\n- Watches v_enforcement_overview for rows flagged with needs_foil = true.\n- Queues foil_tracker jobs that prepare FOIL submissions and reminders.\n- Writes/refreshes plaintiff_tasks entries so intake teams can see upcoming FOIL deadlines.\n- Emits notify_ops RPC payloads on failure."
       },
       "id": "notes_foil",
       "name": "Workflow Notes",

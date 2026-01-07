@@ -166,14 +166,14 @@ class TestMigrationStatusView:
 
             # Verify consistency
             if legacy_count > 0:
-                assert "legacy" in view_sources, (
-                    f"Legacy table has {legacy_count} rows but 'legacy' not in view sources"
-                )
+                assert (
+                    "legacy" in view_sources
+                ), f"Legacy table has {legacy_count} rows but 'legacy' not in view sources"
 
             if supabase_count > 0:
-                assert "supabase" in view_sources, (
-                    f"Supabase table has {supabase_count} rows but 'supabase' not in view sources"
-                )
+                assert (
+                    "supabase" in view_sources
+                ), f"Supabase table has {supabase_count} rows but 'supabase' not in view sources"
 
     def test_success_column_is_boolean(self):
         """The success column should be boolean."""
@@ -206,9 +206,9 @@ class TestMigrationStatusView:
                 """
             )
             result = cur.fetchone()
-            assert result and result[0], (
-                "authenticated role should have SELECT on v_migration_status"
-            )
+            assert (
+                result and result[0]
+            ), "authenticated role should have SELECT on v_migration_status"
 
     def test_service_role_has_select(self):
         """The service_role should have SELECT on the view."""

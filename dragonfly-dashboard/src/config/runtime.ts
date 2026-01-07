@@ -164,6 +164,33 @@ export const isDemoMode: boolean = (() => {
   return ['true', '1', 'yes', 'on'].includes(raw.toLowerCase());
 })();
 
+/**
+ * Dashboard data source.
+ * Options:
+ *   - 'postgrest': Use Supabase PostgREST directly (default, fastest)
+ *   - 'api': Use Railway API fallback (bypasses PostgREST, for PGRST002 incidents)
+ *   - 'auto': Try PostgREST first, fallback to API on error (recommended)
+ * 
+ * Canonical variable: VITE_DASHBOARD_SOURCE
+ */
+export type DashboardSource = 'postgrest' | 'api' | 'auto';
+
+export const dashboardSource: DashboardSource = (() => {
+  const raw = getEnv('VITE_DASHBOARD_SOURCE');
+  if (!raw) return 'auto'; // Default to auto-fallback
+  
+  const normalized = raw.toLowerCase() as DashboardSource;
+  if (['postgrest', 'api', 'auto'].includes(normalized)) {
+    return normalized;
+  }
+  
+  console.warn(
+    `[config/runtime] Invalid VITE_DASHBOARD_SOURCE: "${raw}". ` +
+    `Valid options: postgrest, api, auto. Using "auto".`
+  );
+  return 'auto';
+})();
+
 // ═══════════════════════════════════════════════════════════════════════════
 // DEBUG LOGGING (dev mode only)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -176,6 +203,7 @@ if (isDev) {
   console.log('  Supabase URL:', supabaseUrl);
   console.log('  Supabase Anon Key:', supabaseAnonKey ? `***${supabaseAnonKey.slice(-8)}` : '(missing)');
   console.log('  Demo Mode:', isDemoMode);
+  console.log('  Dashboard Source:', dashboardSource);
 }
 
 // Production logging - minimal, no secrets
@@ -199,6 +227,7 @@ export const runtimeConfig = {
   dragonflyApiKey,
   supabaseUrl,
   supabaseAnonKey,
+  dashboardSource,
 } as const;
 
 export type RuntimeConfig = typeof runtimeConfig;

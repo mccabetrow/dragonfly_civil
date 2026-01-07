@@ -1,14 +1,14 @@
 -- 0083_complete_plaintiff_call_task.sql
 -- Allow operators to record call outcomes and optional follow-up tasks via RPC.
 -- migrate:up
-CREATE OR REPLACE FUNCTION public.complete_plaintiff_call_task(
+create or replace function public.complete_plaintiff_call_task(
     _task_id uuid,
     _new_status text,
-    _notes text DEFAULT NULL,
-    _next_follow_up_at timestamptz DEFAULT NULL
-) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = public,
-pg_temp AS $$
+    _notes text default NULL,
+    _next_follow_up_at timestamptz default NULL
+) returns void language plpgsql security definer
+set search_path = public,
+pg_temp as $$
 DECLARE _normalized_status text;
 _task public.plaintiff_tasks %ROWTYPE;
 _status_history text;
@@ -74,18 +74,18 @@ VALUES (
 END IF;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.complete_plaintiff_call_task(
+revoke all on function public.complete_plaintiff_call_task(
     uuid, text, text, timestamptz
 )
-FROM public;
-GRANT EXECUTE ON FUNCTION public.complete_plaintiff_call_task(
+from public;
+grant execute on function public.complete_plaintiff_call_task(
     uuid, text, text, timestamptz
-) TO service_role;
+) to service_role;
 -- migrate:down
-REVOKE EXECUTE ON FUNCTION public.complete_plaintiff_call_task(
+revoke execute on function public.complete_plaintiff_call_task(
     uuid, text, text, timestamptz
 )
-FROM service_role;
-DROP FUNCTION IF EXISTS public.complete_plaintiff_call_task (
+from service_role;
+drop function if exists public.complete_plaintiff_call_task(
     uuid, text, text, timestamptz
 );

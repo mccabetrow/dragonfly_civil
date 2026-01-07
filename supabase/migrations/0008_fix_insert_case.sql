@@ -118,3 +118,4 @@ grant execute on function public.insert_case(
 ) to anon,
 authenticated,
 service_role;
+

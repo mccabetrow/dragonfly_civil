@@ -80,3 +80,4 @@ $$;
 
 drop view if exists public.foil_responses;
 drop table if exists judgments.foil_responses cascade;
+

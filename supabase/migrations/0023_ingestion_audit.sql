@@ -86,3 +86,4 @@ revoke all on ingestion.runs from public;
 revoke all on ingestion.runs from anon;
 revoke all on ingestion.runs from authenticated;
 grant select on ingestion.runs to service_role;
+

@@ -144,3 +144,4 @@ revoke all on public.foil_responses from public;
 revoke all on public.foil_responses from anon;
 revoke all on public.foil_responses from authenticated;
 grant select on public.foil_responses to service_role;
+

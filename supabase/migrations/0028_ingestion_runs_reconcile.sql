@@ -87,3 +87,4 @@ from ingestion.runs
 order by created_at desc;
 
 grant select on public.v_ingestion_runs to service_role;
+

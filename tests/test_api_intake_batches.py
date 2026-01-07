@@ -52,7 +52,7 @@ class TestListBatchesSQLConstruction:
 
         with patch("backend.routers.intake.get_pool", return_value=pool):
             with patch("backend.routers.intake.get_current_user"):
-                from backend.routers.intake import list_batches
+                from backend.api.routers.intake import list_batches
 
                 # Create mock auth context
                 mock_auth = MagicMock()
@@ -77,7 +77,7 @@ class TestListBatchesSQLConstruction:
 
         with patch("backend.routers.intake.get_pool", return_value=pool):
             with patch("backend.routers.intake.get_current_user"):
-                from backend.routers.intake import list_batches
+                from backend.api.routers.intake import list_batches
 
                 mock_auth = MagicMock()
                 mock_auth.user_id = "test-user"
@@ -107,7 +107,7 @@ class TestListBatchesSQLConstruction:
 
         with patch("backend.routers.intake.get_pool", return_value=pool):
             with patch("backend.routers.intake.get_current_user"):
-                from backend.routers.intake import list_batches
+                from backend.api.routers.intake import list_batches
 
                 mock_auth = MagicMock()
 
@@ -123,9 +123,9 @@ class TestListBatchesSQLConstruction:
                     query, params = data_queries[0]
                     placeholder_count = query.count("%s")
                     param_count = len(params) if params else 0
-                    assert placeholder_count == param_count, (
-                        f"Placeholder/param mismatch: {placeholder_count} placeholders, {param_count} params"
-                    )
+                    assert (
+                        placeholder_count == param_count
+                    ), f"Placeholder/param mismatch: {placeholder_count} placeholders, {param_count} params"
 
 
 class TestListBatchesEdgeCases:

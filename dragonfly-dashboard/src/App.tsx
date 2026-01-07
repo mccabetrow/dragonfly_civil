@@ -4,6 +4,7 @@ import AppShell from './layouts/AppShell';
 import { ToastProvider } from './components/ui/Toast';
 import { RefreshProvider } from './context/RefreshContext';
 import { RealtimeProvider } from './context/RealtimeContext';
+import { DataSourceProvider } from './context/DataSourceContext';
 import { RealtimeStatusBanner } from './components/RealtimeStatusBanner';
 import CommandPalette from './components/ui/CommandPalette';
 import SystemDiagnostics from './components/debug/SystemDiagnostics';
@@ -32,41 +33,43 @@ import ConfigDebug from './pages/debug/ConfigDebug';
 const App: React.FC = () => {
   return (
     <ToastProvider>
-      <RefreshProvider>
-        <RealtimeProvider>
-          <BrowserRouter>
-            <CommandPalette />
-            <SystemDiagnostics />
-            <DebugStatus />
-            <RealtimeStatusBanner />
-            <Routes>
-              <Route element={<AppShell />}>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<PortfolioDashboardPage />} />
-                <Route path="/ceo/overview" element={<CeoOverviewPage />} />
-                <Route path="/finance/portfolio" element={<PortfolioPage />} />
-                <Route path="/portfolio/explorer" element={<PortfolioExplorerPage />} />
-                <Route path="/overview" element={<ExecutiveDashboardPageNew />} />
-                <Route path="/ops" element={<OpsPage />} />
-                <Route path="/ops/intake" element={<OpsIntakePage />} />
-                <Route path="/ops/queue" element={<OpsQueuePage />} />
-                <Route path="/ops/console" element={<OpsCommandCenter />} />
-                <Route path="/intake" element={<IntakeStationPage />} />
-                <Route path="/radar" element={<EnforcementActionCenter />} />
-                <Route path="/enforcement/engine" element={<EnforcementEnginePage />} />
-                <Route path="/collectability" element={<CollectabilityPageNew />} />
-                <Route path="/cases" element={<CasesPageNew />} />
-                <Route path="/settings" element={<SettingsPageNew />} />
-                <Route path="/settings/ingestion" element={<DataIngestionPage />} />
-                <Route path="/settings/integrity" element={<DataIntegrityPage />} />
-                <Route path="/help" element={<HelpPageNew />} />
-                <Route path="/debug/config" element={<ConfigDebug />} />
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
-              </Route>
-            </Routes>
-          </BrowserRouter>
-        </RealtimeProvider>
-      </RefreshProvider>
+      <DataSourceProvider>
+        <RefreshProvider>
+          <RealtimeProvider>
+            <BrowserRouter>
+              <CommandPalette />
+              <SystemDiagnostics />
+              <DebugStatus />
+              <RealtimeStatusBanner />
+              <Routes>
+                <Route element={<AppShell />}>
+                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/dashboard" element={<PortfolioDashboardPage />} />
+                  <Route path="/ceo/overview" element={<CeoOverviewPage />} />
+                  <Route path="/finance/portfolio" element={<PortfolioPage />} />
+                  <Route path="/portfolio/explorer" element={<PortfolioExplorerPage />} />
+                  <Route path="/overview" element={<ExecutiveDashboardPageNew />} />
+                  <Route path="/ops" element={<OpsPage />} />
+                  <Route path="/ops/intake" element={<OpsIntakePage />} />
+                  <Route path="/ops/queue" element={<OpsQueuePage />} />
+                  <Route path="/ops/console" element={<OpsCommandCenter />} />
+                  <Route path="/intake" element={<IntakeStationPage />} />
+                  <Route path="/radar" element={<EnforcementActionCenter />} />
+                  <Route path="/enforcement/engine" element={<EnforcementEnginePage />} />
+                  <Route path="/collectability" element={<CollectabilityPageNew />} />
+                  <Route path="/cases" element={<CasesPageNew />} />
+                  <Route path="/settings" element={<SettingsPageNew />} />
+                  <Route path="/settings/ingestion" element={<DataIngestionPage />} />
+                  <Route path="/settings/integrity" element={<DataIntegrityPage />} />
+                  <Route path="/help" element={<HelpPageNew />} />
+                  <Route path="/debug/config" element={<ConfigDebug />} />
+                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                </Route>
+              </Routes>
+            </BrowserRouter>
+          </RealtimeProvider>
+        </RefreshProvider>
+      </DataSourceProvider>
     </ToastProvider>
   );
 };

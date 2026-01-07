@@ -58,3 +58,4 @@ with check (true);
 
 comment on policy rls_cases_block_public on judgments.cases is 'App clients must read via public views; writes go through RPCs.';
 comment on policy rls_entities_block_public on parties.entities is 'App clients must read via public views; writes go through RPCs.';
+

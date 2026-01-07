@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "security:scan": "node scripts/security-scan.mjs",
+    "security:scan:py": "python3 ../tools/scan_vercel_build.py",
+    "check-security": "npm run security:scan && npm run security:scan:py",
+    "prebuild": "npm run check-security",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest",

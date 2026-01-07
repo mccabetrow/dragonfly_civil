@@ -198,9 +198,9 @@ class TestColumnStructure:
         assert "offer_strategy" in columns, "v_radar should have 'offer_strategy' column"
 
         # Should NOT have summary-only columns
-        assert "category" not in columns, (
-            "v_radar should NOT have 'category' (that's a summary view)"
-        )
+        assert (
+            "category" not in columns
+        ), "v_radar should NOT have 'category' (that's a summary view)"
         assert "count" not in columns, "v_radar should NOT have 'count' (that's a summary view)"
 
     def test_v_enforcement_pipeline_status_is_aggregate(self, db_connection):
@@ -284,6 +284,6 @@ class TestPerformance:
         elapsed = time.time() - start
 
         # Aggregate view should be fast
-        assert elapsed < 2.0, (
-            f"v_enforcement_pipeline_status query took {elapsed:.2f}s (expected < 2s)"
-        )
+        assert (
+            elapsed < 2.0
+        ), f"v_enforcement_pipeline_status query took {elapsed:.2f}s (expected < 2s)"

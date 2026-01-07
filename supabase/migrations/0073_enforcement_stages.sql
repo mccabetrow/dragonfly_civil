@@ -240,3 +240,4 @@ DROP COLUMN IF EXISTS enforcement_stage_updated_at CASCADE,
 DROP COLUMN IF EXISTS enforcement_stage CASCADE;
 
 -- Purpose: track enforcement stages on judgments and provide overview/recent views for dashboards.
+

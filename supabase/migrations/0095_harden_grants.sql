@@ -56,3 +56,4 @@ FOREACH view_name IN ARRAY pipeline_views LOOP IF EXISTS (
 END IF;
 END LOOP;
 END $$;
+

@@ -484,3 +484,4 @@ DROP TABLE IF EXISTS public.plaintiffs;
 
 -- Purpose: seed plaintiff entities, contacts, status log, and judgment linkage.
 -- Dashboard: ensures v_plaintiffs_overview and v_judgment_pipeline exist with expected shapes.
+

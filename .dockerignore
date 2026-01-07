@@ -1,0 +1,107 @@
+# =============================================================================
+# Dragonfly Civil - Docker Build Ignore
+# =============================================================================
+# Exclude files that should not be in the Docker build context.
+# This speeds up builds and reduces image size.
+# =============================================================================
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python artifacts
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+*.egg
+.eggs
+dist
+build
+*.manifest
+*.spec
+
+# Virtual environments
+.venv
+venv
+ENV
+env
+
+# IDE and editor files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings
+
+# Testing and coverage
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.nox
+coverage.xml
+*.cover
+
+# Documentation
+docs/_build
+*.md
+!README.md
+
+# Local development files
+.env
+.env.*
+!.env.example
+*.local
+
+# Data directories (should be mounted, not baked in)
+data/
+data_in/
+data_out/
+data_error/
+data_processed/
+logs/
+tmp/
+
+# Archive and backup
+archive/
+*.bak
+*.backup
+*.old
+
+# Node.js (dashboard)
+dragonfly-dashboard/node_modules
+dragonfly-dashboard/.next
+dragonfly-dashboard/out
+dragonfly-dashboard/.turbo
+
+# Supabase local
+supabase/.branches
+supabase/.temp
+
+# Miscellaneous
+*.log
+*.tmp
+*.temp
+Thumbs.db
+.DS_Store
+
+# Test fixtures and samples (not needed in production)
+tests/
+integration/
+*.csv
+*.xlsx
+*.json
+!config/*.json
+!config/*.yaml
+
+# Docker files (prevent recursive context)
+Dockerfile*
+docker-compose*.yml
+.dockerignore

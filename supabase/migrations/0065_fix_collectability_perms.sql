@@ -12,3 +12,4 @@ grant select on public.v_collectability_snapshot to service_role;
 revoke select on public.v_collectability_snapshot from anon;
 revoke select on public.v_collectability_snapshot from authenticated;
 revoke select on public.v_collectability_snapshot from service_role;
+

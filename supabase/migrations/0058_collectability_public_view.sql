@@ -22,3 +22,4 @@ grant select on public.v_collectability_snapshot to service_role;
 
 drop view if exists public.v_collectability;
 drop view if exists public.v_collectability_snapshot;
+

@@ -130,3 +130,4 @@ COMMIT;
 BEGIN;
 DROP VIEW IF EXISTS public.v_metrics_enforcement;
 COMMIT;
+

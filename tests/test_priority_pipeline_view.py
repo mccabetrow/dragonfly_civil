@@ -148,9 +148,9 @@ def test_priority_pipeline_ranks_rows_by_tier_and_priority(db_url: str) -> None:
         )
 
         # Verify tier B row has a valid positive tier_rank (absolute value depends on existing data)
-        assert normal_row["tier_rank"] >= 1, (
-            f"Tier B row should have positive tier_rank, got {normal_row['tier_rank']}"
-        )
+        assert (
+            normal_row["tier_rank"] >= 1
+        ), f"Tier B row should have positive tier_rank, got {normal_row['tier_rank']}"
     finally:
         conn.rollback()
         conn.close()

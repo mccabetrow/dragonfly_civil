@@ -1,0 +1,26 @@
+# =============================================================================
+# SQLFluff Configuration - Dragonfly Civil
+# =============================================================================
+# Relaxed rules for migration files where readability trumps strict formatting.
+# Production SQL is validated by CI tests, not linter perfection.
+
+[sqlfluff]
+dialect = postgres
+templater = raw
+max_line_length = 120
+# LT05 = Line too long - disabled for long comments explaining security decisions
+# RF01 = References - false positives with unnest() and lateral joins
+# RF04 = Keywords as identifiers - PostgreSQL allows this for column aliases
+exclude_rules = LT05, RF01, RF04
+
+[sqlfluff:rules:capitalisation.keywords]
+# Use lowercase for PostgreSQL convention
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+# Use lowercase for PostgreSQL convention
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+# Use lowercase for PostgreSQL convention
+capitalisation_policy = lower

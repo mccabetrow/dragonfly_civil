@@ -109,9 +109,9 @@ def test_insert_case_is_idempotent() -> None:
     assert second_id is not None, "Second insert should have an id"
 
     # Idempotency check: IDs must match
-    assert first_id == second_id, (
-        f"Case insert must be idempotent. First id={first_id}, Second id={second_id}"
-    )
+    assert (
+        first_id == second_id
+    ), f"Case insert must be idempotent. First id={first_id}, Second id={second_id}"
 
     # Verify only one row exists
     verify = _fetch_judgment_by_case_number(client, case_number)

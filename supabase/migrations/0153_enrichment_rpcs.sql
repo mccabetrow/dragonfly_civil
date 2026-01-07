@@ -218,3 +218,4 @@ GRANT EXECUTE ON FUNCTION public.upsert_enrichment_bundle(
 ) TO service_role;
 SELECT public.pgrst_reload();
 COMMIT;
+

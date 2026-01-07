@@ -52,3 +52,4 @@ grant execute on function public.queue_job(jsonb) to service_role;
 
 -- migrate:down
 -- Intentionally left blank; the RPC must remain available.
+

@@ -75,3 +75,4 @@ end
 $$;
 -- 4) Make sure callers can execute it
 grant execute on function public.insert_case(jsonb) to anon, authenticated, service_role;
+

@@ -10,3 +10,4 @@ create table if not exists analytics.auth_sessions (
     run_id uuid null,
     node text not null default 'collector_v2'
 );
+

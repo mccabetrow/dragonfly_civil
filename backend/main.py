@@ -10,13 +10,54 @@ PRODUCTION HARDENING NOTES:
 - CORS middleware is FIRST (outermost) to handle preflight correctly
 - Global exception handlers include CORS headers for frontend error visibility
 - All routers explicitly wired with versioned prefixes
+
+ENVIRONMENT LOADING:
+- Environment is loaded BEFORE config import via backend.core.loader
+- This ensures strict isolation: --env prod will NEVER load .env.dev
 """
 
-# Must be first - fixes Windows asyncio compatibility with psycopg3
+# =============================================================================
+# CRITICAL: Configuration Guard - Must run FIRST before any other imports
+# =============================================================================
+from backend.core.config_guard import validate_production_config
+
+validate_production_config()  # Crashes if misconfigured in production
+# =============================================================================
+
+# Must be second - fixes Windows asyncio compatibility with psycopg3
 from .asyncio_compat import ensure_selector_policy_on_windows
 
 ensure_selector_policy_on_windows()
 
+# ============================================================================
+# CRITICAL: Load environment BEFORE importing config
+# This ensures os.environ is populated with the correct .env.{env} values
+# ============================================================================
+import os  # noqa: E402
+
+from .core.bootstrap import (  # noqa: E402
+    BootError,
+    ConfigurationError,
+    bootstrap_environment,
+    generate_boot_report,
+    verify_alerting_status,
+    verify_runtime_config,
+)
+from .core.security_guard import verify_safe_environment  # noqa: E402
+
+# Bootstrap environment (respects --env CLI arg, defaults to 'dev')
+# Skip if already loaded (e.g., by uvicorn wrapper or test harness)
+if not os.environ.get("DRAGONFLY_ACTIVE_ENV"):
+    _env_name = bootstrap_environment(verbose=True)
+    verify_safe_environment(_env_name)
+    verify_runtime_config(_env_name)  # Enforce config hygiene before boot
+    verify_alerting_status()
+else:
+    _env_name = os.environ.get("DRAGONFLY_ACTIVE_ENV", "dev")
+
+# ============================================================================
+# Now safe to import config - os.environ is populated
+# ============================================================================
 import logging  # noqa: E402
 import traceback  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
@@ -28,51 +69,57 @@ from fastapi.responses import JSONResponse  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
 from . import __version__  # noqa: E402
+
+# Router imports - explicit for clarity
+from .api.routers.analytics import router as analytics_router  # noqa: E402
+from .api.routers.budget import router as budget_router  # noqa: E402
+from .api.routers.cases import router as cases_router  # noqa: E402
+from .api.routers.ceo_metrics import router as ceo_metrics_router  # noqa: E402
+from .api.routers.dashboard import router as dashboard_router  # noqa: E402
+from .api.routers.enforcement import router as enforcement_router  # noqa: E402
+from .api.routers.events import router as events_router  # noqa: E402
+from .api.routers.finance import router as finance_router  # noqa: E402
+from .api.routers.foil import router as foil_router  # noqa: E402
+from .api.routers.health import root_router as health_root_router  # noqa: E402
+from .api.routers.health import router as health_router  # noqa: E402
+from .api.routers.ingest import router as ingest_router  # noqa: E402
+from .api.routers.ingest_v2 import router as ingest_v2_router  # noqa: E402
+from .api.routers.intake import router as intake_router  # noqa: E402
+from .api.routers.integrity import router as integrity_router  # noqa: E402
+from .api.routers.intelligence import router as intelligence_router  # noqa: E402
+from .api.routers.offers import router as offers_router  # noqa: E402
+from .api.routers.ops_guardian import router as ops_guardian_router  # noqa: E402
+from .api.routers.packets import router as packets_router  # noqa: E402
+from .api.routers.platform import router as platform_router  # noqa: E402
+from .api.routers.portfolio import router as portfolio_router  # noqa: E402
+from .api.routers.search import router as search_router  # noqa: E402
+from .api.routers.system import router as system_router  # noqa: E402
+from .api.routers.telemetry import router as telemetry_router  # noqa: E402
+from .api.routers.webhooks import router as webhooks_router  # noqa: E402
 from .config import (  # noqa: E402
     configure_logging,
     get_settings,
     log_startup_diagnostics,
     validate_required_env,
 )
-from .core.middleware import (  # noqa: E402
-    PerformanceLoggingMiddleware,
+from .core.middleware import PerformanceLoggingMiddleware  # noqa: E402
+from .core.middleware import (
     RateLimitMiddleware,
     RequestLoggingMiddleware,
     ResponseSanitizationMiddleware,
     get_request_id,
 )
 from .core.trace_middleware import TraceMiddleware, get_trace_id  # noqa: E402
-from .db import close_db_pool, init_db_pool  # noqa: E402
-
-# Router imports - explicit for clarity
-from .routers.analytics import router as analytics_router  # noqa: E402
-from .routers.budget import router as budget_router  # noqa: E402
-from .routers.cases import router as cases_router  # noqa: E402
-from .routers.ceo_metrics import router as ceo_metrics_router  # noqa: E402
-from .routers.enforcement import router as enforcement_router  # noqa: E402
-from .routers.events import router as events_router  # noqa: E402
-from .routers.finance import router as finance_router  # noqa: E402
-from .routers.foil import router as foil_router  # noqa: E402
-from .routers.health import router as health_router  # noqa: E402
-from .routers.ingest import router as ingest_router  # noqa: E402
-from .routers.ingest_v2 import router as ingest_v2_router  # noqa: E402
-from .routers.intake import router as intake_router  # noqa: E402
-from .routers.integrity import router as integrity_router  # noqa: E402
-from .routers.intelligence import router as intelligence_router  # noqa: E402
-from .routers.offers import router as offers_router  # noqa: E402
-from .routers.ops_guardian import router as ops_guardian_router  # noqa: E402
-from .routers.packets import router as packets_router  # noqa: E402
-from .routers.platform import router as platform_router  # noqa: E402
-from .routers.portfolio import router as portfolio_router  # noqa: E402
-from .routers.search import router as search_router  # noqa: E402
-from .routers.system import router as system_router  # noqa: E402
-from .routers.telemetry import router as telemetry_router  # noqa: E402
-from .routers.webhooks import router as webhooks_router  # noqa: E402
+from .db import close_db_pool, database, init_db_pool  # noqa: E402
+from .middleware.version import VersionMiddleware, get_version_info  # noqa: E402
 from .scheduler import init_scheduler  # noqa: E402
 
 # Configure logging before anything else
 configure_logging()
 logger = logging.getLogger(__name__)
+
+# Log environment at module load
+logger.info(f"🚀 Dragonfly booting in [{_env_name.upper()}] mode")
 
 # Validate required environment variables at import time
 # Fail fast if critical vars are missing
@@ -90,19 +137,43 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Application lifespan handler.
 
     Handles startup and shutdown events:
-    - Startup: Initialize database pool
+    - Startup: Verify safe environment, generate boot report, initialize database pool
     - Shutdown: Close database pool
-    """
-    settings = get_settings()
 
+    Uses explicit database.start()/stop() to avoid psycopg_pool deprecation warning:
+    "AsyncConnectionPool constructor open is deprecated"
+
+    SECURITY: verify_safe_environment() ensures we never boot with mismatched
+    credentials (e.g., dev env with prod keys or vice versa).
+    """
     # Log startup diagnostics (same format as workers)
     log_startup_diagnostics("DragonflyAPI")
 
-    # Startup
-    logger.info(f"🚀 Starting Dragonfly Engine v{__version__} (Asset Class)")
+    # ==========================================================================
+    # STARTUP SECURITY VERIFICATION
+    # ==========================================================================
 
+    logger.info(f"🚀 Starting Dragonfly Engine v{__version__} [{_env_name.upper()}]")
+
+    # 1. Verify safe environment - prevents credential/environment mismatches
     try:
-        await init_db_pool(settings)
+        verify_safe_environment(_env_name)
+        logger.info(f"✅ Environment verified: [{_env_name.upper()}]")
+    except Exception as e:
+        logger.critical(f"❌ ENVIRONMENT VERIFICATION FAILED: {e}")
+        raise  # Prevent app from starting with mismatched credentials
+
+    # 2. Generate signed boot report (will raise BootError if critical deps missing)
+    try:
+        boot_report = generate_boot_report(env=_env_name)
+        logger.info(f"✅ Boot report signed: {boot_report.git_sha}")
+    except BootError as e:
+        logger.critical(f"❌ BOOT REFUSED: {e}")
+        raise  # Prevent app from starting
+
+    # 3. Initialize database with explicit lifecycle (avoids deprecation warning)
+    try:
+        await database.start()
         logger.info("✅ Database pool initialized")
     except Exception as e:
         logger.error(f"❌ Failed to initialize database pool: {e}")
@@ -110,9 +181,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # Shutdown
+    # Shutdown - use explicit database.stop() for clean lifecycle
     logger.info("🛑 Shutting down Dragonfly Engine...")
-    await close_db_pool()
+    await database.stop()
     logger.info("✅ Shutdown complete")
 
 
@@ -161,44 +232,67 @@ def create_app() -> FastAPI:
 
     # ==========================================================================
     # MIDDLEWARE ORDER IS CRITICAL
-    # First added = outermost = runs first on request, last on response
-    # CORS MUST be outermost to handle OPTIONS preflight before anything else
+    # FastAPI adds middleware in REVERSE order (last added = outermost)
+    # Execution order: TraceMiddleware -> RateLimitMiddleware -> CORSMiddleware -> VersionMiddleware
     # ==========================================================================
 
-    # 1. CORS (MUST BE FIRST - handles preflight OPTIONS before other middleware)
-    cors_regex = settings.cors_origin_regex
+    # --- Add in REVERSE order (last added = first to execute) ---
+
+    # 4. VersionMiddleware (innermost - adds X-Dragonfly-SHA headers to every response)
+    app.add_middleware(VersionMiddleware)
+    version_info = get_version_info()
     logger.info(
-        f"[CORS] Startup origins: {settings.cors_allowed_origins} "
-        f"(from DRAGONFLY_CORS_ORIGINS={settings.dragonfly_cors_origins!r})"
+        f"[Middleware] VersionMiddleware added: SHA={version_info['sha_short']} "
+        f"Env={version_info['env']}"
     )
-    if cors_regex:
-        logger.info(f"[CORS] Origin regex enabled: {cors_regex}")
+
+    # 3. CORSMiddleware (handles cross-origin requests)
+    cors_origins = settings.cors_allowed_origins
+    cors_regex = settings.cors_origin_regex
+    if not cors_origins and not cors_regex:
+        logger.warning(
+            "[CORS] DENY ALL - No origins configured. "
+            "Set DRAGONFLY_CORS_ORIGINS to allow cross-origin requests."
+        )
+    else:
+        logger.info(
+            f"[CORS] Allowed origins: {cors_origins} "
+            f"(from DRAGONFLY_CORS_ORIGINS={settings.dragonfly_cors_origins!r})"
+        )
+        if cors_regex:
+            logger.info(f"[CORS] Origin regex enabled: {cors_regex}")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_allowed_origins,
+        allow_origins=cors_origins,
         allow_origin_regex=cors_regex,  # Matches Vercel preview deployments
         allow_credentials=True,  # Required for cross-origin auth
         allow_methods=["*"],
         allow_headers=["*"],  # Accept all headers including X-API-Key
-        expose_headers=["Content-Disposition"],
+        expose_headers=["Content-Disposition", "X-Dragonfly-SHA", "X-Request-ID"],
     )
 
-    # 2. Response sanitization (safety net for credential leaks)
-    app.add_middleware(ResponseSanitizationMiddleware, strict_mode=settings.is_production)
-
-    # 3. Rate limiting for sensitive endpoints (production only)
+    # 2. SecurityMiddleware: Rate limiting for abuse detection (always active in prod)
     if settings.is_production:
         app.add_middleware(RateLimitMiddleware)
-        logger.info("Rate limiting enabled for production")
+        logger.info("[Middleware] RateLimitMiddleware enabled for production")
+    else:
+        logger.info("[Middleware] RateLimitMiddleware DISABLED (non-production)")
 
-    # 4. Performance logging (slow query detection)
+    # 1. TraceMiddleware (outermost - generates trace_id FIRST for every request)
+    app.add_middleware(TraceMiddleware)
+    logger.info("[Middleware] TraceMiddleware added (correlation IDs)")
+
+    # --- Additional middleware (after core security stack) ---
+
+    # Response sanitization (safety net for credential leaks)
+    app.add_middleware(ResponseSanitizationMiddleware, strict_mode=settings.is_production)
+    logger.info(f"[Middleware] ResponseSanitizationMiddleware (strict={settings.is_production})")
+
+    # Performance logging (slow query detection)
     app.add_middleware(PerformanceLoggingMiddleware, threshold_s=1.0)
 
-    # 5. Request logging (logs after CORS/rate limit decisions)
+    # Request logging (logs after CORS/rate limit decisions)
     app.add_middleware(RequestLoggingMiddleware)
-
-    # 6. Trace ID middleware (innermost - generates trace_id for every request)
-    app.add_middleware(TraceMiddleware)
 
     # ==========================================================================
     # GLOBAL EXCEPTION HANDLERS WITH CORS HEADERS
@@ -263,7 +357,11 @@ def create_app() -> FastAPI:
     # Platform endpoints - /api/version and /api/ready (no auth required)
     app.include_router(platform_router, prefix="/api", tags=["platform"])
 
-    # Health check - no auth required, root-level for load balancers
+    # Root-level health probes - /health and /readyz (no prefix, for load balancers)
+    # These are the "World-Class Certification" endpoints
+    app.include_router(health_root_router, prefix="", tags=["probes"])
+
+    # Health check - /api/health/* for detailed monitoring
     app.include_router(health_router, prefix="/api", tags=["health"])
 
     # v1 API - Primary versioned endpoints
@@ -321,6 +419,9 @@ def create_app() -> FastAPI:
     # Webhooks - external service callbacks (Proof.com, etc.)
     app.include_router(webhooks_router, prefix="/api", tags=["webhooks"])  # internal: /v1/webhooks
 
+    # Dashboard Fallback - Direct SQL dashboard endpoints (bypasses PostgREST)
+    # Always available for PGRST002 incident mitigation
+    app.include_router(dashboard_router, tags=["dashboard-fallback"])  # internal: /api/v1/dashboard
     # Initialize scheduler (uses on_event internally)
     init_scheduler(app)
 
@@ -360,7 +461,7 @@ def create_app() -> FastAPI:
         Returns 200 only if DB is reachable and SELECT 1 succeeds within 2s.
         Returns 503 with JSON error details if not ready.
         """
-        from .routers.health import readiness_db_check
+        from .api.routers.health import readiness_db_check
 
         return await readiness_db_check()
 
@@ -396,7 +497,7 @@ def create_app() -> FastAPI:
 
         Returns 200 if ready, 503 if not.
         """
-        from .routers.health import readiness_check
+        from .api.routers.health import readiness_check
 
         result = await readiness_check()
         # readiness_check returns either ReadinessResponse or JSONResponse

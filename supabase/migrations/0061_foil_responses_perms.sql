@@ -11,3 +11,4 @@ grant select on public.foil_responses to service_role;
 
 revoke select on public.foil_responses from anon;
 revoke select on public.foil_responses from authenticated;
+

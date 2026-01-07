@@ -100,6 +100,19 @@ MAX_TOTAL_WAIT_SECONDS = 60.0
 BASE_DELAY_SECONDS = 1.0
 READINESS_CHECK_TIMEOUT = 2.0  # 2s timeout for readiness probe SELECT 1
 
+# ═══════════════════════════════════════════════════════════════════════════
+# POOL CONFIGURATION - High-Volume Ingestion Ready
+# ═══════════════════════════════════════════════════════════════════════════
+# These values are tuned for production plaintiff ingestion workloads.
+# Pool is kept lean to avoid exhausting Supabase connection limits.
+
+POOL_MIN_SIZE = 2  # Minimum idle connections
+POOL_MAX_SIZE = 10  # Maximum connections (keep lean for Supabase)
+POOL_TIMEOUT = 30.0  # Seconds to wait for connection from pool
+POOL_RECYCLE = 1800  # Recycle connections every 30 minutes
+CONNECT_TIMEOUT = 5  # TCP connect timeout (fail fast if DB is down)
+STATEMENT_TIMEOUT_MS = 10000  # Kill queries taking > 10 seconds
+
 
 def _parse_dsn_for_logging(dsn: str) -> dict[str, str | None]:
     """
@@ -261,13 +274,24 @@ async def init_db_pool(app: Any | None = None) -> None:
             dsn_host = dsn_info.get("host", "unknown")
             logger.info(f"DEBUG: Connecting to DB Host: {dsn_host} | App Name: {app_name}")
 
+            # Create pool with open=False to avoid deprecation warning
+            # Pool is explicitly opened below via await pool.open()
             pool = AsyncConnectionPool(
                 dsn,
-                min_size=2,
-                max_size=10,
-                kwargs={"application_name": app_name},
+                min_size=POOL_MIN_SIZE,
+                max_size=POOL_MAX_SIZE,
+                timeout=POOL_TIMEOUT,  # Wait for connection from pool
+                max_lifetime=POOL_RECYCLE,  # Recycle stale connections
+                open=False,  # Explicit lifecycle - no auto-open in constructor
+                kwargs={
+                    "application_name": app_name,
+                    "connect_timeout": CONNECT_TIMEOUT,  # Fail fast if DB unreachable
+                    "options": f"-c statement_timeout={STATEMENT_TIMEOUT_MS}",  # Kill long queries
+                },
             )
+            # Explicitly open the pool (required when open=False)
             await pool.open()
+            logger.info("🔌 Database Pool Opened")
 
             # Verify connectivity with a simple ping
             async with pool.connection() as conn:
@@ -396,6 +420,7 @@ async def close_db_pool() -> None:
         _db_pool = None
         _pool_health.initialized = False
         _pool_health.healthy = False
+        logger.info("🔌 Database Pool Closed")
 
 
 async def get_pool() -> Optional[AsyncConnectionPool]:
@@ -586,6 +611,84 @@ async def fetch_val(
             await cur.execute(query, args)
             row = await cur.fetchone()
             return None if row is None else row[0]
+
+
+# ---------------------------------------------------------------------------
+# Database Class with Explicit Lifecycle (Preferred for FastAPI lifespan)
+# ---------------------------------------------------------------------------
+
+
+class Database:
+    """
+    Database manager with explicit lifecycle methods.
+
+    Preferred pattern for FastAPI lifespan to avoid the deprecation warning:
+    "AsyncConnectionPool constructor open is deprecated"
+
+    Usage in FastAPI lifespan:
+        db = Database()
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            await db.start()
+            yield
+            await db.stop()
+
+        app = FastAPI(lifespan=lifespan)
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize database configuration.
+
+        Does NOT open any connections - call start() to open the pool.
+        """
+        self._pool: Optional[AsyncConnectionPool] = None
+        self._dsn: Optional[str] = None
+        self._initialized = False
+
+    async def start(self) -> None:
+        """
+        Initialize and open the connection pool.
+
+        This is the explicit startup - call from FastAPI lifespan startup.
+        Logs: "🔌 Database Pool Opened."
+        """
+        # Delegate to the global init function for now (maintains compatibility)
+        await init_db_pool()
+        self._pool = _db_pool
+        self._initialized = True
+        logger.info("🔌 Database Pool Opened.")
+
+    async def stop(self) -> None:
+        """
+        Close the connection pool.
+
+        This is the explicit shutdown - call from FastAPI lifespan shutdown.
+        Logs: "🔌 Database Pool Closed."
+        """
+        await close_db_pool()
+        self._pool = None
+        self._initialized = False
+        logger.info("🔌 Database Pool Closed.")
+
+    @property
+    def pool(self) -> Optional[AsyncConnectionPool]:
+        """Return the connection pool (may be None if not started)."""
+        return self._pool or _db_pool
+
+    @property
+    def is_initialized(self) -> bool:
+        """Check if the database is initialized."""
+        return self._initialized or (_db_pool is not None)
+
+    async def ping(self) -> bool:
+        """Check database connectivity."""
+        return await ping_db()
+
+
+# Global database instance for FastAPI lifespan
+database = Database()
 
 
 # ---------------------------------------------------------------------------

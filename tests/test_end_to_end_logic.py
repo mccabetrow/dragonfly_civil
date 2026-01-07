@@ -357,18 +357,18 @@ def test_compute_score_breakdown(
 
     breakdown = compute_score_breakdown(enriched, jd)
 
-    assert breakdown.employment == expected_emp, (
-        f"Employment: got {breakdown.employment}, expected {expected_emp}"
-    )
-    assert breakdown.assets == expected_assets, (
-        f"Assets: got {breakdown.assets}, expected {expected_assets}"
-    )
-    assert breakdown.recency == expected_recency, (
-        f"Recency: got {breakdown.recency}, expected {expected_recency}"
-    )
-    assert breakdown.banking == expected_bank, (
-        f"Banking: got {breakdown.banking}, expected {expected_bank}"
-    )
+    assert (
+        breakdown.employment == expected_emp
+    ), f"Employment: got {breakdown.employment}, expected {expected_emp}"
+    assert (
+        breakdown.assets == expected_assets
+    ), f"Assets: got {breakdown.assets}, expected {expected_assets}"
+    assert (
+        breakdown.recency == expected_recency
+    ), f"Recency: got {breakdown.recency}, expected {expected_recency}"
+    assert (
+        breakdown.banking == expected_bank
+    ), f"Banking: got {breakdown.banking}, expected {expected_bank}"
 
 
 def test_compute_score_breakdown_total_matches_sum():

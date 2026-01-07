@@ -2,27 +2,27 @@
 
 -- migrate:up
 
-CREATE TABLE IF NOT EXISTS public.import_runs (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    import_kind text NOT NULL,
-    source_system text NOT NULL,
+create table if not exists public.import_runs (
+    id uuid primary key default gen_random_uuid(),
+    import_kind text not null,
+    source_system text not null,
     source_reference text,
     file_name text,
     storage_path text,
-    status text NOT NULL DEFAULT 'pending',
-    total_rows integer CHECK (total_rows IS NULL OR total_rows >= 0),
-    inserted_rows integer CHECK (inserted_rows IS NULL OR inserted_rows >= 0),
-    skipped_rows integer CHECK (skipped_rows IS NULL OR skipped_rows >= 0),
-    error_rows integer CHECK (error_rows IS NULL OR error_rows >= 0),
-    started_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
+    status text not null default 'pending',
+    total_rows integer check (total_rows is NULL or total_rows >= 0),
+    inserted_rows integer check (inserted_rows is NULL or inserted_rows >= 0),
+    skipped_rows integer check (skipped_rows is NULL or skipped_rows >= 0),
+    error_rows integer check (error_rows is NULL or error_rows >= 0),
+    started_at timestamptz not null default timezone('utc', now()),
     finished_at timestamptz,
     created_by text,
-    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-    created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-    updated_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+    metadata jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default timezone('utc', now()),
+    updated_at timestamptz not null default timezone('utc', now())
 );
 
-DO $$
+do $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1
@@ -38,15 +38,15 @@ BEGIN
 END
 $$;
 
-CREATE INDEX IF NOT EXISTS idx_import_runs_started_at
-ON public.import_runs (started_at DESC);
+create index if not exists idx_import_runs_started_at
+on public.import_runs (started_at desc);
 
-CREATE INDEX IF NOT EXISTS idx_import_runs_status
-ON public.import_runs (status);
+create index if not exists idx_import_runs_status
+on public.import_runs (status);
 
-ALTER TABLE public.import_runs ENABLE ROW LEVEL SECURITY;
+alter table public.import_runs enable row level security;
 
-DO $$
+do $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1
@@ -63,16 +63,16 @@ BEGIN
 END
 $$;
 
-REVOKE ALL ON public.import_runs FROM public;
-REVOKE ALL ON public.import_runs FROM anon;
-REVOKE ALL ON public.import_runs FROM authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.import_runs TO service_role;
+revoke all on public.import_runs from public;
+revoke all on public.import_runs from anon;
+revoke all on public.import_runs from authenticated;
+grant select, insert, update, delete on public.import_runs to service_role;
 
 -- migrate:down
 
-REVOKE SELECT, INSERT, UPDATE, DELETE ON public.import_runs FROM service_role;
+revoke select, insert, update, delete on public.import_runs from service_role;
 
-DO $$
+do $$
 BEGIN
     IF EXISTS (
         SELECT 1
@@ -86,11 +86,11 @@ BEGIN
 END
 $$;
 
-ALTER TABLE public.import_runs DISABLE ROW LEVEL SECURITY;
+alter table public.import_runs disable row level security;
 
-DROP INDEX IF EXISTS idx_import_runs_status;
-DROP INDEX IF EXISTS idx_import_runs_started_at;
+drop index if exists idx_import_runs_status;
+drop index if exists idx_import_runs_started_at;
 
-DROP TRIGGER IF EXISTS trg_import_runs_touch ON public.import_runs;
+drop trigger if exists trg_import_runs_touch on public.import_runs;
 
-DROP TABLE IF EXISTS public.import_runs;
+drop table if exists public.import_runs;

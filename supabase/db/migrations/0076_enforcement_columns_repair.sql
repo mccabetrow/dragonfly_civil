@@ -3,9 +3,9 @@
 
 -- migrate:up
 
-ALTER TABLE public.judgments
-ADD COLUMN IF NOT EXISTS enforcement_stage text,
-ADD COLUMN IF NOT EXISTS enforcement_stage_updated_at timestamptz;
+alter table public.judgments
+add column if not exists enforcement_stage text,
+add column if not exists enforcement_stage_updated_at timestamptz;
 
 -- migrate:down
 

@@ -5,3 +5,4 @@ CREATE POLICY "Allow public read-only access"
 ON public.judgments
 FOR SELECT
 USING (true);
+

@@ -117,3 +117,4 @@ $$;
 grant execute on function public.insert_case_with_entities(jsonb) to anon,
 authenticated,
 service_role;
+

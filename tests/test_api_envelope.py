@@ -348,9 +348,9 @@ class TestEnvelopeConsistency:
         health_data = health_resp.json()
 
         assert required_fields.issubset(health_data.keys()), "Health missing required fields"
-        assert required_meta_fields.issubset(health_data["meta"].keys()), (
-            "Health meta missing fields"
-        )
+        assert required_meta_fields.issubset(
+            health_data["meta"].keys()
+        ), "Health meta missing fields"
 
     def test_envelope_degraded_defaults_to_false(self, client):
         """Successful responses should have degraded=False."""

@@ -96,3 +96,4 @@ grant select, insert, update, delete on public.enrichment_runs to service_role;
 
 drop view if exists public.enrichment_runs;
 drop table if exists judgments.enrichment_runs;
+

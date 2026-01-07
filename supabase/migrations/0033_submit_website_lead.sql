@@ -42,3 +42,4 @@ GRANT EXECUTE ON FUNCTION public.submit_website_lead(
     NUMERIC,
     TEXT
 ) TO anon, authenticated;
+

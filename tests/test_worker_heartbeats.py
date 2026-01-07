@@ -84,7 +84,7 @@ class TestSystemRouterImport:
 
     def test_router_imports(self) -> None:
         """Verify system router can be imported."""
-        from backend.routers.system import router
+        from backend.api.routers.system import router
 
         assert router is not None
         assert router.prefix == "/v1/system"

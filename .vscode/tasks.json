@@ -857,6 +857,146 @@
         "clear": true
       },
       "detail": "⚠️ Full Go-Live: Preflight → Migration → Acceptance (with confirmation gates)"
+    },
+    {
+      "label": "Golden Path (Dev)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/golden_path_dev.ps1"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true,
+        "clear": true
+      },
+      "detail": "🚦 End-to-End pipeline validation: Ingest → Process → Score (dev)"
+    },
+    {
+      "label": "Golden Path (Prod)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/golden_path_prod.ps1",
+        "-Force"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "prod"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true,
+        "clear": true
+      },
+      "detail": "⚠️ End-to-End pipeline validation: Ingest → Process → Score (PROD)"
+    },
+    {
+      "label": "Go-Live Gate (Dev)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/certify_readiness.ps1",
+        "-Env",
+        "dev"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true,
+        "clear": true
+      },
+      "detail": "Run full readiness certification against dev"
+    },
+    {
+      "label": "Go-Live Gate (Prod)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/certify_readiness.ps1",
+        "-Env",
+        "prod"
+      ],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "prod"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true,
+        "clear": true
+      },
+      "detail": "⚠️ Full production Go-Live certification — final gate before plaintiff onboarding"
+    },
+    {
+      "label": "Watchdog (Dev)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "backend.monitors.watchdog", "--env", "dev", "--once"],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Run platform health check once against dev"
+    },
+    {
+      "label": "Watchdog Loop (Dev)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "backend.monitors.watchdog", "--env", "dev"],
+      "options": {
+        "env": {
+          "SUPABASE_MODE": "dev"
+        }
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Run continuous platform monitoring (60s interval)"
     }
   ],
   "inputs": [

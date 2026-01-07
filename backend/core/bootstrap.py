@@ -544,46 +544,42 @@ def get_git_sha() -> str:
 
     Resolution order:
         1. RAILWAY_GIT_COMMIT_SHA env var (Railway deployment)
-        2. GIT_COMMIT env var (Generic CI systems)
-        3. VERCEL_GIT_COMMIT_SHA env var (Vercel deployment)
-        4. Local git rev-parse --short HEAD (local dev)
-        5. Fallback: "unknown"
+        2. VERCEL_GIT_COMMIT_SHA env var (Vercel deployment)
+        3. GITHUB_SHA env var (GitHub Actions)
+        4. GIT_COMMIT env var (Jenkins / generic CI)
+        5. GIT_SHA env var (manual override)
+        6. Local git rev-parse HEAD (local dev)
+        7. Fallback: "local-dev"
 
     Returns:
-        Short git SHA (e.g., "a1b2c3d") or "unknown"
+        Short git SHA (8 chars) or "local-dev"
     """
-    # Step 1: Check Railway environment variable (primary production target)
-    railway_sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA")
-    if railway_sha:
-        sha = railway_sha[:7] if len(railway_sha) > 7 else railway_sha
-        logger.debug(f"Resolved git SHA from RAILWAY_GIT_COMMIT_SHA: {sha}")
-        return sha
+    # Check environment variables in priority order
+    env_vars = [
+        "RAILWAY_GIT_COMMIT_SHA",
+        "VERCEL_GIT_COMMIT_SHA",
+        "GITHUB_SHA",
+        "GIT_COMMIT",
+        "GIT_SHA",
+    ]
+    for env_var in env_vars:
+        value = os.environ.get(env_var, "").strip()
+        if value and value.lower() not in ("unknown", "local", ""):
+            sha = value[:8] if len(value) >= 8 else value
+            logger.debug(f"Resolved git SHA from {env_var}: {sha}")
+            return sha
 
-    # Step 2: Check generic CI environment variable
-    generic_sha = os.environ.get("GIT_COMMIT")
-    if generic_sha:
-        sha = generic_sha[:7] if len(generic_sha) > 7 else generic_sha
-        logger.debug(f"Resolved git SHA from GIT_COMMIT: {sha}")
-        return sha
-
-    # Step 3: Check Vercel environment variable
-    vercel_sha = os.environ.get("VERCEL_GIT_COMMIT_SHA")
-    if vercel_sha:
-        sha = vercel_sha[:7] if len(vercel_sha) > 7 else vercel_sha
-        logger.debug(f"Resolved git SHA from VERCEL_GIT_COMMIT_SHA: {sha}")
-        return sha
-
-    # Step 4: Try local git (dev mode)
+    # Try local git (dev mode)
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git", "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             timeout=5,
             cwd=_find_project_root(),
         )
         if result.returncode == 0 and result.stdout.strip():
-            sha = result.stdout.strip()
+            sha = result.stdout.strip()[:8]
             logger.debug(f"Resolved git SHA from local repo: {sha}")
             return sha
     except FileNotFoundError:
@@ -594,9 +590,9 @@ def get_git_sha() -> str:
     except Exception as e:
         logger.debug(f"Failed to get local git SHA: {e}")
 
-    # Step 5: Final fallback
+    # Final fallback
     logger.warning("Could not resolve git SHA from any source")
-    return "unknown"
+    return "local-dev"
 
 
 class RuntimeConfigurationError(RuntimeError):

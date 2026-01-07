@@ -1,44 +1,48 @@
 -- 0087_plaintiff_call_attempts.sql
 -- Introduce detailed call-attempt logging plus the log_call_outcome RPC consumed by the dashboard.
 -- migrate:up
-BEGIN;
-CREATE TABLE IF NOT EXISTS public.plaintiff_call_attempts (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    plaintiff_id uuid NOT NULL REFERENCES public.plaintiffs(id) ON DELETE CASCADE,
-    task_id uuid REFERENCES public.plaintiff_tasks(id) ON DELETE
-    SET NULL,
-        attempted_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-        outcome text NOT NULL,
-        interest_level text,
-        notes text,
-        next_follow_up_at timestamptz,
-        created_by text NOT NULL DEFAULT 'call_queue',
-        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-        CONSTRAINT plaintiff_call_attempts_outcome_check CHECK (
-            outcome IN (
-                'reached',
-                'voicemail',
-                'no_answer',
-                'bad_number',
-                'do_not_call'
-            )
+begin;
+create table if not exists public.plaintiff_call_attempts (
+    id uuid primary key default gen_random_uuid(),
+    plaintiff_id uuid not null references public.plaintiffs (
+        id
+    ) on delete cascade,
+    task_id uuid references public.plaintiff_tasks (id) on delete
+    set null,
+    attempted_at timestamptz not null default timezone('utc', now()),
+    outcome text not null,
+    interest_level text,
+    notes text,
+    next_follow_up_at timestamptz,
+    created_by text not null default 'call_queue',
+    metadata jsonb not null default '{}'::jsonb,
+    constraint plaintiff_call_attempts_outcome_check check (
+        outcome in (
+            'reached',
+            'voicemail',
+            'no_answer',
+            'bad_number',
+            'do_not_call'
         )
+    )
 );
-CREATE INDEX IF NOT EXISTS idx_plaintiff_call_attempts_plaintiff_id ON public.plaintiff_call_attempts (plaintiff_id, attempted_at DESC);
-CREATE OR REPLACE FUNCTION public.log_call_outcome(
-        _plaintiff_id uuid,
-        _task_id uuid,
-        _outcome text,
-        _interest_level text DEFAULT NULL,
-        _notes text DEFAULT NULL,
-        _next_follow_up_at timestamptz DEFAULT NULL
-    ) RETURNS TABLE (
-        call_attempt_id uuid,
-        updated_task_id uuid,
-        created_follow_up_task_id uuid
-    ) LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = public,
-    pg_temp AS $$
+create index if not exists idx_plaintiff_call_attempts_plaintiff_id on public.plaintiff_call_attempts (
+    plaintiff_id, attempted_at desc
+);
+create or replace function public.log_call_outcome(
+    _plaintiff_id uuid,
+    _task_id uuid,
+    _outcome text,
+    _interest_level text default NULL,
+    _notes text default NULL,
+    _next_follow_up_at timestamptz default NULL
+) returns table (
+    call_attempt_id uuid,
+    updated_task_id uuid,
+    created_follow_up_task_id uuid
+) language plpgsql security definer
+set search_path = public,
+pg_temp as $$
 DECLARE _attempt_id uuid;
 _closed_task_id uuid;
 _follow_up_task_id uuid;
@@ -162,17 +166,23 @@ RETURN NEXT;
 RETURN;
 END;
 $$;
-GRANT EXECUTE ON FUNCTION public.log_call_outcome(uuid, uuid, text, text, text, timestamptz) TO anon,
-    authenticated,
-    service_role;
-COMMIT;
+grant execute on function public.log_call_outcome(
+    uuid, uuid, text, text, text, timestamptz
+) to anon,
+authenticated,
+service_role;
+commit;
 -- migrate:down
-BEGIN;
-REVOKE EXECUTE ON FUNCTION public.log_call_outcome(uuid, uuid, text, text, text, timestamptz)
-FROM anon,
-    authenticated,
-    service_role;
-DROP FUNCTION IF EXISTS public.log_call_outcome(uuid, uuid, text, text, text, timestamptz) CASCADE;
-DROP INDEX IF EXISTS idx_plaintiff_call_attempts_plaintiff_id;
-DROP TABLE IF EXISTS public.plaintiff_call_attempts;
-COMMIT;
+begin;
+revoke execute on function public.log_call_outcome(
+    uuid, uuid, text, text, text, timestamptz
+)
+from anon,
+authenticated,
+service_role;
+drop function if exists public.log_call_outcome(
+    uuid, uuid, text, text, text, timestamptz
+) cascade;
+drop index if exists idx_plaintiff_call_attempts_plaintiff_id;
+drop table if exists public.plaintiff_call_attempts;
+commit;

@@ -40,3 +40,4 @@ service_role;
 DROP VIEW IF EXISTS public.v_plaintiff_call_queue;
 
 -- Powers the “call queue” panel in the dashboard to target the next plaintiffs to contact.
+

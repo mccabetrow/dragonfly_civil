@@ -54,10 +54,7 @@
       "name": "Secrets",
       "type": "n8n-nodes-base.set",
       "typeVersion": 2,
-      "position": [
-        -240,
-        500
-      ]
+      "position": [-240, 500]
     },
     {
       "parameters": {
@@ -72,10 +69,7 @@
       "name": "Cron",
       "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
-      "position": [
-        -480,
-        500
-      ]
+      "position": [-480, 500]
     },
     {
       "parameters": {
@@ -85,10 +79,7 @@
       "name": "Build Source Queue",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
-      "position": [
-        0,
-        500
-      ]
+      "position": [0, 500]
     },
     {
       "parameters": {
@@ -101,10 +92,7 @@
       "name": "HTTP Collector",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [
-        240,
-        500
-      ]
+      "position": [240, 500]
     },
     {
       "parameters": {
@@ -121,10 +109,7 @@
       "name": "Supabase Upsert (REST)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [
-        480,
-        500
-      ]
+      "position": [480, 500]
     },
     {
       "parameters": {
@@ -135,10 +120,7 @@
       "name": "Postgres Select Recent Cases",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
-      "position": [
-        720,
-        500
-      ]
+      "position": [720, 500]
     },
     {
       "parameters": {
@@ -151,10 +133,7 @@
       "name": "HTTP PDL Lookup",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [
-        1200,
-        340
-      ]
+      "position": [1200, 340]
     },
     {
       "parameters": {
@@ -167,10 +146,7 @@
       "name": "HTTP Apollo Lookup",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [
-        1200,
-        500
-      ]
+      "position": [1200, 500]
     },
     {
       "parameters": {
@@ -183,10 +159,7 @@
       "name": "HTTP Whitepages Lookup",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [
-        1200,
-        660
-      ]
+      "position": [1200, 660]
     },
     {
       "parameters": {
@@ -196,10 +169,7 @@
       "name": "Merge PDL & Apollo",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 1,
-      "position": [
-        1440,
-        420
-      ]
+      "position": [1440, 420]
     },
     {
       "parameters": {
@@ -209,10 +179,7 @@
       "name": "Merge Enrichment",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 1,
-      "position": [
-        1680,
-        520
-      ]
+      "position": [1680, 520]
     },
     {
       "parameters": {
@@ -226,10 +193,7 @@
       "name": "RPC upsert_enrichment_bundle",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [
-        1920,
-        520
-      ]
+      "position": [1920, 520]
     },
     {
       "parameters": {
@@ -240,10 +204,7 @@
       "name": "Postgres Update Scores",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
-      "position": [
-        2160,
-        520
-      ]
+      "position": [2160, 520]
     },
     {
       "parameters": {
@@ -268,10 +229,7 @@
       "name": "Switch Tier Routing",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 1,
-      "position": [
-        2400,
-        520
-      ]
+      "position": [2400, 520]
     },
     {
       "parameters": {
@@ -284,26 +242,20 @@
       "name": "HTTP Lob",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [
-        2400,
-        360
-      ]
+      "position": [2400, 360]
     },
     {
       "parameters": {
         "url": "={{ $json.DRY_RUN ? 'http://localhost:5100/twilio' : 'https://api.twilio.com/2010-04-01/Accounts/' + $json.TWILIO_SID + '/Messages.json' }}",
         "jsonParameters": true,
-  "headerParametersJson": "{\n  \"Authorization\": \"{{ $json.DRY_RUN ? 'Dry-Run' : $json.TWILIO_AUTH_HEADER }}\"\n}",
+        "headerParametersJson": "{\n  \"Authorization\": \"{{ $json.DRY_RUN ? 'Dry-Run' : $json.TWILIO_AUTH_HEADER }}\"\n}",
         "bodyParametersJson": "{\n  \"case_id\": {{ $json.case_id }},\n  \"tier\": {{ $json.tier }}\n}"
       },
       "id": "15",
       "name": "HTTP Twilio",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [
-        2400,
-        520
-      ]
+      "position": [2400, 520]
     },
     {
       "parameters": {
@@ -316,10 +268,7 @@
       "name": "HTTP Postmark",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [
-        2400,
-        680
-      ]
+      "position": [2400, 680]
     }
   ],
   "connections": {

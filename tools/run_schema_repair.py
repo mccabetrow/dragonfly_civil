@@ -30,7 +30,8 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.supabase_client import get_supabase_db_url, get_supabase_env  # noqa: E402
+from src.supabase_client import get_supabase_db_url  # noqa: E402
+from src.supabase_client import get_supabase_env
 
 logging.basicConfig(
     level=logging.INFO,

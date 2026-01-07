@@ -45,3 +45,4 @@ $$;
 -- migrate:down
 
 -- No-op: queues are durable and safe to keep in place.
+

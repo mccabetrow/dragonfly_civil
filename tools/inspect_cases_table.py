@@ -1,15 +1,16 @@
 import os
+import sys
 
 import psycopg
 
-project_ref = os.environ.get("SUPABASE_PROJECT_REF", "ejiddanxtqcleyswqvkc")
-db_password = os.environ.get("SUPABASE_DB_PASSWORD", "Norwaykmt99!!")
-DB_URL = (
-    os.environ.get("SUPABASE_DB_URL")
-    or f"postgresql://postgres:{db_password}@db.{project_ref}.supabase.co:5432/postgres"
-)
+# Use environment variables only - no hardcoded defaults for secrets
+db_url = os.environ.get("SUPABASE_DB_URL")
+if not db_url:
+    print("ERROR: SUPABASE_DB_URL environment variable not set", file=sys.stderr)
+    print("Run: ./scripts/load_env.ps1 to load environment", file=sys.stderr)
+    sys.exit(1)
 
-with psycopg.connect(DB_URL) as conn:
+with psycopg.connect(db_url) as conn:
     with conn.cursor() as cur:
         cur.execute(
             """

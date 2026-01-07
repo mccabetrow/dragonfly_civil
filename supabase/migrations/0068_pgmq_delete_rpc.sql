@@ -23,3 +23,4 @@ revoke execute on function public.pgmq_delete(text, bigint) from authenticated;
 revoke execute on function public.pgmq_delete(text, bigint) from service_role;
 
 drop function if exists public.pgmq_delete (text, bigint);
+

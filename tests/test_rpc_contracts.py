@@ -150,9 +150,9 @@ class TestInsertOrGetCaseWithEntities:
         # Assert idempotency
         assert result1["case_id"] == result2["case_id"], "Case ID must be stable across calls"
         assert result1["case_number"] == result2["case_number"]
-        assert set(result1.get("entity_ids", [])) == set(result2.get("entity_ids", [])), (
-            "Entity IDs must be stable across calls"
-        )
+        assert set(result1.get("entity_ids", [])) == set(
+            result2.get("entity_ids", [])
+        ), "Entity IDs must be stable across calls"
 
     def test_no_duplicate_rows_created(self) -> None:
         """Second RPC call must not create duplicate case or entity rows."""
@@ -212,12 +212,12 @@ class TestInsertOrGetCaseWithEntities:
                 row = cur.fetchone()
                 entities_count_2 = row[0] if row else 0
 
-        assert cases_count_1 == cases_count_2 == 1, (
-            f"Expected exactly 1 case row, got {cases_count_1} then {cases_count_2}"
-        )
-        assert entities_count_1 == entities_count_2, (
-            f"Entity count changed from {entities_count_1} to {entities_count_2}"
-        )
+        assert (
+            cases_count_1 == cases_count_2 == 1
+        ), f"Expected exactly 1 case row, got {cases_count_1} then {cases_count_2}"
+        assert (
+            entities_count_1 == entities_count_2
+        ), f"Entity count changed from {entities_count_1} to {entities_count_2}"
 
 
 # ---------------------------------------------------------------------------
@@ -301,9 +301,9 @@ class TestQueueJob:
             },
         ).execute()
 
-        assert resp1.data != resp2.data, (
-            "Different idempotency keys should produce different message IDs"
-        )
+        assert (
+            resp1.data != resp2.data
+        ), "Different idempotency keys should produce different message IDs"
 
     def test_validates_required_kind(self) -> None:
         """queue_job raises error when kind is missing."""
@@ -469,9 +469,9 @@ class TestUpsertEnrichmentBundle:
                 row = cur.fetchone()
                 contacts_count_2 = row[0] if row else 0
 
-        assert contacts_count_1 == contacts_count_2, (
-            f"Contact count changed from {contacts_count_1} to {contacts_count_2}"
-        )
+        assert (
+            contacts_count_1 == contacts_count_2
+        ), f"Contact count changed from {contacts_count_1} to {contacts_count_2}"
 
     def test_updates_existing_contact_fields(self) -> None:
         """Second upsert updates mutable fields on existing contacts."""

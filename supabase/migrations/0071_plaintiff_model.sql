@@ -411,3 +411,4 @@ ALTER TABLE public.plaintiffs DISABLE ROW LEVEL SECURITY;
 DROP TRIGGER IF EXISTS trg_plaintiffs_touch ON public.plaintiffs;
 ALTER TABLE public.plaintiffs DROP CONSTRAINT IF EXISTS plaintiffs_name_normalized_key;
 DROP TABLE IF EXISTS public.plaintiffs;
+

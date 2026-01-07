@@ -158,7 +158,9 @@ class TestFetchSinglePlaintiff:
     def test_not_found(self):
         """Should return None when not found."""
         mock_client = MagicMock()
-        mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = []
+        mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = (
+            []
+        )
 
         result = fetch_single_plaintiff(mock_client, "nonexistent")
 
@@ -279,7 +281,9 @@ class TestHandleCallQueueSync:
         job = {"msg_id": "123", "plaintiff_id": "nonexistent"}
 
         mock_client = MagicMock()
-        mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = []
+        mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = (
+            []
+        )
 
         with patch(
             "workers.call_queue_sync_handler.create_supabase_client",

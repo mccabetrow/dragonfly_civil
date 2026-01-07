@@ -131,3 +131,4 @@ create policy service_foil_responses_rw on judgments.foil_responses
 for all
 using (auth.role() = 'service_role')
 with check (auth.role() = 'service_role');
+

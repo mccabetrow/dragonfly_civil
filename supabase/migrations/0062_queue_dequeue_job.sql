@@ -46,3 +46,4 @@ grant execute on function public.dequeue_job(text) to service_role;
 
 revoke execute on function public.dequeue_job(text) from service_role;
 drop function if exists public.dequeue_job (text);
+

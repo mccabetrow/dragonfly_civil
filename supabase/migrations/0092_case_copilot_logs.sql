@@ -29,3 +29,4 @@ INSERT,
 UPDATE,
 DELETE ON public.case_copilot_logs TO service_role;
 COMMIT;
+

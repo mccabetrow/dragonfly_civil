@@ -5,6 +5,7 @@ etl/src/auth/session.json
 state/session.json
 *.playwright/
 playwright/.auth/**
+.golden_path_last.json
 
 # generated artifacts
 data/simplicity_status_export.csv

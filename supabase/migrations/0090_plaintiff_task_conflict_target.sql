@@ -5,3 +5,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS plaintiff_tasks_unique_kind_status ON public.p
     plaintiff_id, kind, status
 );
 COMMIT;
+

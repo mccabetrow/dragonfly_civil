@@ -94,3 +94,4 @@ DROP INDEX IF EXISTS idx_import_runs_started_at;
 DROP TRIGGER IF EXISTS trg_import_runs_touch ON public.import_runs;
 
 DROP TABLE IF EXISTS public.import_runs;
+

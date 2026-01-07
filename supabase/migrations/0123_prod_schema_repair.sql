@@ -585,3 +585,4 @@ REVOKE ALL PRIVILEGES ON TABLE public.v_priority_pipeline
 FROM authenticated;
 GRANT SELECT ON public.v_priority_pipeline TO service_role;
 COMMIT;
+

@@ -101,3 +101,4 @@ before update on parties.entities
 for each row execute function public.tg_touch_updated_at();
 
 grant select, insert, update on parties.entities to service_role;
+

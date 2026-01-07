@@ -9,7 +9,23 @@ Includes:
 - Transactional database operations
 """
 
-from .db import Database, DatabaseNotStartedError, get_database, shutdown_database, startup_database
+from .config_guard import (
+    ConfigurationSecurityViolation,
+    ConfigValidationResult,
+    check_critical_vars,
+    check_forbidden_vars,
+    check_pooler_enforcement,
+    require_pooler_connection,
+    validate_production_config,
+)
+from .db import (
+    Database,
+    DatabaseConnectionError,
+    DatabaseNotStartedError,
+    get_database,
+    shutdown_database,
+    startup_database,
+)
 from .errors import (
     DatabaseError,
     DragonflyError,
@@ -115,7 +131,16 @@ __all__ = [
     # Database
     "Database",
     "DatabaseNotStartedError",
+    "DatabaseConnectionError",
     "get_database",
     "startup_database",
     "shutdown_database",
+    # Configuration Guard
+    "validate_production_config",
+    "ConfigValidationResult",
+    "ConfigurationSecurityViolation",
+    "check_forbidden_vars",
+    "check_pooler_enforcement",
+    "check_critical_vars",
+    "require_pooler_connection",
 ]

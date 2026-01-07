@@ -332,9 +332,9 @@ class TestSchemaDataContracts:
         """Verify public.judgments table exists."""
         with self.conn.cursor() as cur:
             exists = _table_exists(cur, "public", "judgments")
-            assert exists, (
-                "Table public.judgments does not exist. This is a CORE table - check migrations."
-            )
+            assert (
+                exists
+            ), "Table public.judgments does not exist. This is a CORE table - check migrations."
 
     def test_public_judgments_required_columns(self):
         """Verify public.judgments has required columns."""
@@ -365,9 +365,9 @@ class TestSchemaDataContracts:
         """Verify public.plaintiffs table exists."""
         with self.conn.cursor() as cur:
             exists = _table_exists(cur, "public", "plaintiffs")
-            assert exists, (
-                "Table public.plaintiffs does not exist. This is a CORE table - check migrations."
-            )
+            assert (
+                exists
+            ), "Table public.plaintiffs does not exist. This is a CORE table - check migrations."
 
     def test_public_plaintiffs_required_columns(self):
         """Verify public.plaintiffs has required columns."""
@@ -450,9 +450,9 @@ class TestSchemaDataContracts:
         """Verify enforcement.enforcement_plans table exists."""
         with self.conn.cursor() as cur:
             exists = _table_exists(cur, "enforcement", "enforcement_plans")
-            assert exists, (
-                "Table enforcement.enforcement_plans does not exist. Run migrations to create it."
-            )
+            assert (
+                exists
+            ), "Table enforcement.enforcement_plans does not exist. Run migrations to create it."
 
     def test_enforcement_plans_required_columns(self):
         """Verify enforcement.enforcement_plans has required columns."""
@@ -640,9 +640,9 @@ class TestSchemaDataContracts:
         """Verify finance.v_portfolio_stats view exists."""
         with self.conn.cursor() as cur:
             exists = _view_exists(cur, "finance", "v_portfolio_stats")
-            assert exists, (
-                "View finance.v_portfolio_stats does not exist. Run migrations to create it."
-            )
+            assert (
+                exists
+            ), "View finance.v_portfolio_stats does not exist. Run migrations to create it."
 
     def test_finance_v_portfolio_stats_queryable(self):
         """Verify finance.v_portfolio_stats can be queried without error."""

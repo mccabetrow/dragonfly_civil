@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""
+Dragonfly Civil - Migration History Repair Tool
+
+Identifies and repairs mismatched migration versions between the database's
+schema_migrations table and the local migration files.
+
+The problem: Some migrations were applied with 8-digit versions (20250102)
+but Supabase's standard uses 14-digit timestamps (20250102000000).
+
+This tool:
+1. Scans local migration files to build expected version -> name mapping
+2. Queries the database for applied migrations
+3. Identifies drift (version mismatches)
+4. Generates SQL to repair the history table
+
+Usage:
+    python -m tools.repair_migration_history --env dev
+    python -m tools.repair_migration_history --env dev --execute
+    python -m tools.repair_migration_history --env dev --sql-only
+
+Exit Codes:
+    0 - No drift detected or repair successful
+    1 - Drift detected (dry-run mode) or repair failed
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+# Add project root to path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("repair_migration_history")
+
+
+@dataclass
+class MigrationFile:
+    """Represents a local migration file."""
+
+    version: str
+    name: str
+    filename: str
+
+
+@dataclass
+class AppliedMigration:
+    """Represents an applied migration from the database."""
+
+    version: str
+    name: str
+
+
+@dataclass
+class DriftItem:
+    """A migration version that needs repair."""
+
+    db_version: str
+    expected_version: str
+    name: str
+    action: str  # 'update_version' or 'missing'
+
+
+def scan_local_migrations(migrations_dir: Path) -> list[MigrationFile]:
+    """
+    Scan local migration files and extract version/name.
+
+    Returns:
+        List of MigrationFile objects sorted by version.
+    """
+    migrations = []
+
+    for file in migrations_dir.glob("*.sql"):
+        if file.name == "rollback_template.sql":
+            continue  # Skip template files
+
+        # Parse version from filename
+        # Patterns: 20250102_name.sql or 20250102000000_name.sql or 0001_name.sql
+        match = re.match(r"^(\d+)_(.+)\.sql$", file.name)
+        if match:
+            version = match.group(1)
+            name = match.group(2)
+            migrations.append(MigrationFile(version=version, name=name, filename=file.name))
+
+    return sorted(migrations, key=lambda m: m.version)
+
+
+def get_applied_migrations(db_url: str) -> list[AppliedMigration]:
+    """
+    Query the database for applied migrations.
+
+    Returns:
+        List of AppliedMigration objects.
+    """
+    import psycopg
+
+    with psycopg.connect(db_url) as conn:
+        cur = conn.execute(
+            """
+            SELECT version, name
+            FROM supabase_migrations.schema_migrations
+            ORDER BY version
+            """
+        )
+        return [AppliedMigration(version=row[0], name=row[1]) for row in cur.fetchall()]
+
+
+def detect_drift(
+    local_migrations: list[MigrationFile],
+    applied_migrations: list[AppliedMigration],
+) -> list[DriftItem]:
+    """
+    Compare local files with applied migrations to detect drift.
+
+    Returns:
+        List of DriftItem objects describing needed repairs.
+    """
+    drift = []
+
+    # Build lookup by name (since versions might differ)
+    local_by_name = {m.name: m for m in local_migrations}
+    applied_by_name = {m.name: m for m in applied_migrations}
+
+    # Also build lookup by version for direct matches
+    applied_by_version = {m.version: m for m in applied_migrations}
+
+    for local in local_migrations:
+        # First check if there's a direct version match
+        if local.version in applied_by_version:
+            continue  # Perfect match, no drift
+
+        # Check if there's a name match with different version
+        if local.name in applied_by_name:
+            applied = applied_by_name[local.name]
+            if applied.version != local.version:
+                drift.append(
+                    DriftItem(
+                        db_version=applied.version,
+                        expected_version=local.version,
+                        name=local.name,
+                        action="update_version",
+                    )
+                )
+
+    return drift
+
+
+def generate_repair_sql(drift_items: list[DriftItem]) -> str:
+    """
+    Generate SQL statements to repair the migration history.
+
+    Returns:
+        SQL script as a string.
+    """
+    if not drift_items:
+        return "-- No drift detected. Migration history is consistent.\n"
+
+    lines = [
+        "-- Dragonfly Migration History Repair Script",
+        "-- Generated by tools/repair_migration_history.py",
+        "--",
+        "-- This script updates the supabase_migrations.schema_migrations table",
+        "-- to align database version records with local migration file versions.",
+        "--",
+        "-- REVIEW CAREFULLY BEFORE EXECUTING!",
+        "",
+        "BEGIN;",
+        "",
+    ]
+
+    for item in drift_items:
+        lines.append(f"-- Repair: {item.name}")
+        lines.append(f"-- Current DB version: {item.db_version}")
+        lines.append(f"-- Expected version:   {item.expected_version}")
+
+        if item.action == "update_version":
+            lines.append(
+                f"UPDATE supabase_migrations.schema_migrations "
+                f"SET version = '{item.expected_version}' "
+                f"WHERE version = '{item.db_version}' AND name = '{item.name}';"
+            )
+        lines.append("")
+
+    lines.extend(
+        [
+            "-- Verify the repair",
+            "SELECT version, name FROM supabase_migrations.schema_migrations "
+            "WHERE version LIKE '2025%' ORDER BY version;",
+            "",
+            "COMMIT;",
+        ]
+    )
+
+    return "\n".join(lines)
+
+
+def execute_repair(db_url: str, drift_items: list[DriftItem]) -> bool:
+    """
+    Execute the repair SQL against the database.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    import psycopg
+
+    try:
+        with psycopg.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                for item in drift_items:
+                    if item.action == "update_version":
+                        cur.execute(
+                            """
+                            UPDATE supabase_migrations.schema_migrations
+                            SET version = %s
+                            WHERE version = %s AND name = %s
+                            """,
+                            (item.expected_version, item.db_version, item.name),
+                        )
+                        logger.info(
+                            f"Updated {item.name}: {item.db_version} -> {item.expected_version}"
+                        )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Repair failed: {e}")
+        return False
+
+
+def verify_consistency(db_url: str, local_migrations: list[MigrationFile]) -> bool:
+    """
+    Verify that the database migration history matches local files.
+
+    Returns:
+        True if consistent, False if drift remains.
+    """
+    applied = get_applied_migrations(db_url)
+    drift = detect_drift(local_migrations, applied)
+    return len(drift) == 0
+
+
+def main() -> int:
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description="Repair migration history drift between database and local files"
+    )
+    parser.add_argument(
+        "--env",
+        choices=["dev", "prod"],
+        default="dev",
+        help="Environment to check/repair (default: dev)",
+    )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Execute the repair (default: dry-run)",
+    )
+    parser.add_argument(
+        "--sql-only",
+        action="store_true",
+        help="Only output SQL, don't check or execute",
+    )
+    parser.add_argument(
+        "--migrations-dir",
+        type=Path,
+        default=PROJECT_ROOT / "supabase" / "migrations",
+        help="Path to migrations directory",
+    )
+
+    args = parser.parse_args()
+
+    # Set environment
+    os.environ["SUPABASE_MODE"] = args.env
+
+    print()
+    print("=" * 70)
+    print(f"  Migration History Repair Tool - {args.env.upper()}")
+    print("=" * 70)
+    print()
+
+    # Scan local migrations
+    print(f"Scanning migrations in: {args.migrations_dir}")
+    local_migrations = scan_local_migrations(args.migrations_dir)
+    print(f"Found {len(local_migrations)} local migration files")
+    print()
+
+    # Get database URL
+    from src.supabase_client import get_supabase_db_url
+
+    db_url = get_supabase_db_url()
+
+    # Get applied migrations
+    print("Querying applied migrations from database...")
+    applied_migrations = get_applied_migrations(db_url)
+    print(f"Found {len(applied_migrations)} applied migrations")
+    print()
+
+    # Detect drift
+    print("Detecting drift...")
+    drift = detect_drift(local_migrations, applied_migrations)
+
+    if not drift:
+        print("✅ No drift detected. Migration history is consistent.")
+        return 0
+
+    print(f"⚠️  Found {len(drift)} migrations with version drift:")
+    print()
+    for item in drift:
+        print(f"  • {item.name}")
+        print(f"    DB: {item.db_version} → File: {item.expected_version}")
+    print()
+
+    # Generate SQL
+    sql = generate_repair_sql(drift)
+
+    if args.sql_only:
+        print("Generated SQL:")
+        print("-" * 70)
+        print(sql)
+        return 1  # Drift exists
+
+    if args.execute:
+        print("Executing repair...")
+        if execute_repair(db_url, drift):
+            print()
+            print("Verifying consistency...")
+            if verify_consistency(db_url, local_migrations):
+                print("✅ Repair successful. Migration history is now consistent.")
+                return 0
+            else:
+                print("❌ Repair completed but drift remains. Manual intervention needed.")
+                return 1
+        else:
+            print("❌ Repair failed.")
+            return 1
+    else:
+        print("Dry-run mode. Generated SQL:")
+        print("-" * 70)
+        print(sql)
+        print("-" * 70)
+        print()
+        print("To execute the repair, run with --execute flag:")
+        print(f"  python -m tools.repair_migration_history --env {args.env} --execute")
+        return 1  # Drift exists
+
+
+if __name__ == "__main__":
+    sys.exit(main())

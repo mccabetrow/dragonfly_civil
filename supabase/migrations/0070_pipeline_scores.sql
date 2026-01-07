@@ -97,3 +97,4 @@ drop column if exists contactability_score,
 drop column if exists identity_score,
 drop column if exists last_scored_at,
 drop column if exists last_enriched_at;
+

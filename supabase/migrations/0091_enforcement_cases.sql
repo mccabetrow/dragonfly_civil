@@ -211,3 +211,4 @@ GRANT SELECT ON public.v_enforcement_timeline TO anon,
 authenticated,
 service_role;
 COMMIT;
+

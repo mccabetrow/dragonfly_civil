@@ -1,10 +1,6 @@
 import pytest
 
-from src.db_upload_safe import (
-    chunked,
-    upsert_public_judgments,
-    upsert_public_judgments_chunked,
-)
+from src.db_upload_safe import chunked, upsert_public_judgments, upsert_public_judgments_chunked
 
 
 class FakeResponse:

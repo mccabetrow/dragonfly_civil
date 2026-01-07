@@ -60,3 +60,4 @@ revoke all on public.enrichment_runs from anon;
 revoke all on public.enrichment_runs from authenticated;
 grant select, insert, update, delete on public.enrichment_runs to service_role;
             for all
+

@@ -3,45 +3,45 @@
 
 -- migrate:up
 
-WITH allowable_plaintiff_status AS (
-    SELECT ARRAY[
+with allowable_plaintiff_status as (
+    select array[
         'new',
         'contacted',
         'qualified',
         'sent_agreement',
         'signed',
         'lost'
-    ] AS values
+    ] as values
 )
 
-UPDATE public.plaintiffs p
-SET status = 'new'
-FROM allowable_plaintiff_status AS als
-WHERE
-    p.status IS NULL
-    OR btrim(lower(p.status)) = ''
-    OR btrim(lower(p.status)) NOT IN (SELECT unnest(als.values));
+update public.plaintiffs p
+set status = 'new'
+from allowable_plaintiff_status as als
+where
+    p.status is NULL
+    or btrim(lower(p.status)) = ''
+    or btrim(lower(p.status)) not in (select unnest(als.values));
 
-WITH allowable_enforcement_stage AS (
-    SELECT ARRAY[
+with allowable_enforcement_stage as (
+    select array[
         'pre_enforcement',
         'paperwork_filed',
         'levy_issued',
         'waiting_payment',
         'collected_partially',
         'collected_paid'
-    ] AS values
+    ] as values
 )
 
-UPDATE public.judgments j
-SET enforcement_stage = 'pre_enforcement'
-FROM allowable_enforcement_stage AS aes
-WHERE
-    j.enforcement_stage IS NULL
-    OR btrim(lower(j.enforcement_stage)) = ''
-    OR btrim(lower(j.enforcement_stage)) NOT IN (SELECT unnest(aes.values));
+update public.judgments j
+set enforcement_stage = 'pre_enforcement'
+from allowable_enforcement_stage as aes
+where
+    j.enforcement_stage is NULL
+    or btrim(lower(j.enforcement_stage)) = ''
+    or btrim(lower(j.enforcement_stage)) not in (select unnest(aes.values));
 
-DO $$
+do $$
 DECLARE
     existing_constraint text;
 BEGIN
@@ -58,7 +58,7 @@ BEGIN
 END
 $$;
 
-DO $$
+do $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1
@@ -81,7 +81,7 @@ BEGIN
 END
 $$;
 
-DO $$
+do $$
 DECLARE
     existing_constraint text;
 BEGIN
@@ -98,7 +98,7 @@ BEGIN
 END
 $$;
 
-DO $$
+do $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1
@@ -126,7 +126,7 @@ $$;
 
 -- migrate:down
 
-DO $$
+do $$
 BEGIN
     IF EXISTS (
         SELECT 1
@@ -141,7 +141,7 @@ BEGIN
 END
 $$;
 
-DO $$
+do $$
 BEGIN
     IF EXISTS (
         SELECT 1

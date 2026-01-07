@@ -426,9 +426,9 @@ class TestIntakeRadarWithSeededData:
             new_count = result_row[0] if result_row else 0
 
             # Assert at least 5 more than baseline
-            assert new_count >= baseline_count + 5, (
-                f"Expected at least {baseline_count + 5} judgments_24h, got {new_count}"
-            )
+            assert (
+                new_count >= baseline_count + 5
+            ), f"Expected at least {baseline_count + 5} judgments_24h, got {new_count}"
 
         finally:
             # Rollback to avoid polluting database
@@ -476,9 +476,9 @@ class TestIntakeRadarWithSeededData:
 
             # Assert AUM increased by at least our seeded amount
             delta = new_aum - baseline_aum
-            assert delta >= expected_sum - 0.01, (
-                f"Expected AUM increase of at least {expected_sum}, got {delta}"
-            )
+            assert (
+                delta >= expected_sum - 0.01
+            ), f"Expected AUM increase of at least {expected_sum}, got {delta}"
 
         finally:
             cur.execute("ROLLBACK TO SAVEPOINT test_aum")

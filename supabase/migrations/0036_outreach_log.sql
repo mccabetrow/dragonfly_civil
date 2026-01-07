@@ -18,3 +18,4 @@ create index if not exists outreach_log_case_number_idx on public.outreach_log (
 
 drop index if exists outreach_log_case_number_idx;
 drop table if exists public.outreach_log;
+

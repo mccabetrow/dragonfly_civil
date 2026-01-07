@@ -26,6 +26,7 @@ import {
 import { cn } from '../lib/design-tokens';
 import { useRefreshBus } from '../context/RefreshContext';
 import { apiClient } from '../lib/apiClient';
+import { SourceIndicatorSafe } from '../components/System/SourceIndicator';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -264,6 +265,9 @@ const Topbar: FC<TopbarProps> = ({ onMobileMenuOpen, environment, sidebarCollaps
 
             {/* Environment Badge */}
             <EnvironmentBadge environment={environment} isProd={isProd} />
+
+            {/* Data Source Indicator (Circuit Breaker) */}
+            <SourceIndicatorSafe compact />
 
             {/* User Avatar */}
             <div className="ml-1 flex h-8 w-8 items-center justify-center rounded-md bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 font-mono">

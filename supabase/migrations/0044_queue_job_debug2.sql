@@ -25,3 +25,4 @@ $$;
 -- migrate:down
 
 DO $$ BEGIN END $$;
+

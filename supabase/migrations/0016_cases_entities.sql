@@ -210,3 +210,4 @@ $$;
 
 revoke all on function public.pgrst_reload() from public;
 grant execute on function public.pgrst_reload() to service_role;
+

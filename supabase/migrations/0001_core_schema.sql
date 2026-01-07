@@ -387,3 +387,4 @@ select
     co.tier
 from judgments.cases as c
 left join enrichment.collectability as co on c.case_id = co.case_id;
+

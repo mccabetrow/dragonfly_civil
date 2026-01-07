@@ -16,11 +16,7 @@ from playwright.sync_api import (  # type: ignore[import-not-found]
 
 from ..settings import get_settings
 from ..utils.log import get_logger
-from .playwright_utils import (
-    create_browser_and_context,
-    prepare_page,
-    stealth_delay,
-)
+from .playwright_utils import create_browser_and_context, prepare_page, stealth_delay
 
 __all__ = ["run_login"]
 

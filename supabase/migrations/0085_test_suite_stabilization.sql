@@ -566,3 +566,4 @@ authenticated,
 service_role;
 -- migrate:down
 -- Safety migration only; no automatic rollback.
+

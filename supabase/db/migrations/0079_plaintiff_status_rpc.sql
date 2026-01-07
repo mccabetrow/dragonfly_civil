@@ -3,16 +3,16 @@
 
 -- migrate:up
 
-CREATE OR REPLACE FUNCTION public.set_plaintiff_status(
+create or replace function public.set_plaintiff_status(
     _plaintiff_id uuid,
     _new_status text,
-    _note text DEFAULT NULL,
-    _changed_by text DEFAULT NULL
+    _note text default NULL,
+    _changed_by text default NULL
 )
-RETURNS public.plaintiffs
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
+returns public.plaintiffs
+language plpgsql
+security definer
+as $$
 DECLARE
     _valid_statuses constant text[] := ARRAY[
         'new',
@@ -87,17 +87,17 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.set_plaintiff_status(
+grant execute on function public.set_plaintiff_status(
     uuid, text, text, text
-) TO anon,
+) to anon,
 authenticated;
 
 -- migrate:down
 
-REVOKE EXECUTE ON FUNCTION public.set_plaintiff_status(
+revoke execute on function public.set_plaintiff_status(
     uuid, text, text, text
-) FROM anon,
+) from anon,
 authenticated;
-DROP FUNCTION IF EXISTS public.set_plaintiff_status (uuid, text, text, text);
+drop function if exists public.set_plaintiff_status(uuid, text, text, text);
 
 -- Use public.set_plaintiff_status to mutate plaintiffs.status consistently with history + tasks.

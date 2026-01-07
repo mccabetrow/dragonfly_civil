@@ -57,3 +57,4 @@ SELECT CURRENT_DATE AS run_date,
 GRANT SELECT ON public.v_daily_health TO anon, authenticated, service_role;
 
 COMMENT ON VIEW public.v_daily_health IS 'Daily health metrics for the Dragonfly Engine dashboard and Discord broadcasts';
+

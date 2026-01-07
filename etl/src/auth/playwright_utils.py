@@ -13,12 +13,8 @@ from ..utils.log import get_logger
 _LOG = get_logger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from playwright.sync_api import (  # type: ignore[import-not-found]
-        Browser,
-        BrowserContext,
-        Page,
-        Playwright,
-    )
+    from playwright.sync_api import Browser  # type: ignore[import-not-found]
+    from playwright.sync_api import BrowserContext, Page, Playwright
 
 __all__ = [
     "PlaywrightConfig",

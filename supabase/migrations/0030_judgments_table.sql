@@ -25,3 +25,4 @@ CREATE INDEX idx_defendant_name ON judgments (defendant_name);
 
 -- Tell Supabase to recognize the new table
 NOTIFY pgrst, 'reload schema';
+

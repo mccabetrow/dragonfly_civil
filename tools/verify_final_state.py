@@ -52,7 +52,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # TYPES
 # ═══════════════════════════════════════════════════════════════════════════

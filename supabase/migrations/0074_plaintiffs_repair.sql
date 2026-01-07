@@ -180,3 +180,4 @@ DROP TABLE IF EXISTS public.plaintiffs;
 
 -- 0074_plaintiffs_repair.sql
 -- Ensures public.plaintiffs and related tables/views exist for ETL and dashboards on all environments.
+

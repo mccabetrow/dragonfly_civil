@@ -241,9 +241,9 @@ class TestClaimPendingJobPerformance:
     @skip_if_no_db
     def test_claim_pending_job_exists(self, db_connection):
         """Verify the RPC exists before testing performance."""
-        assert check_function_exists(db_connection, "ops", "claim_pending_job"), (
-            "ops.claim_pending_job function not found"
-        )
+        assert check_function_exists(
+            db_connection, "ops", "claim_pending_job"
+        ), "ops.claim_pending_job function not found"
 
     @skip_if_no_db
     def test_claim_pending_job_cost_budget(self, db_connection):
@@ -340,9 +340,9 @@ class TestQueueHealthViewPerformance:
     @skip_if_no_db
     def test_queue_health_view_exists(self, db_connection):
         """Verify the view exists before testing performance."""
-        assert check_view_exists(db_connection, "ops", "v_queue_health"), (
-            "ops.v_queue_health view not found"
-        )
+        assert check_view_exists(
+            db_connection, "ops", "v_queue_health"
+        ), "ops.v_queue_health view not found"
 
     @skip_if_no_db
     def test_queue_health_execution_time(self, db_connection):

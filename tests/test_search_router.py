@@ -177,14 +177,14 @@ class TestSearchRequestModel:
 
     def test_default_limit(self):
         """Default limit is 5."""
-        from backend.routers.search import SemanticSearchRequest
+        from backend.api.routers.search import SemanticSearchRequest
 
         request = SemanticSearchRequest(query="test")
         assert request.limit == 5
 
     def test_custom_limit(self):
         """Accepts custom limit."""
-        from backend.routers.search import SemanticSearchRequest
+        from backend.api.routers.search import SemanticSearchRequest
 
         request = SemanticSearchRequest(query="test", limit=10)
         assert request.limit == 10
@@ -195,7 +195,7 @@ class TestJudgmentSearchResultModel:
 
     def test_creates_result_from_db_row(self):
         """Creates result model from database row data."""
-        from backend.routers.search import JudgmentSearchResult
+        from backend.api.routers.search import JudgmentSearchResult
 
         result = JudgmentSearchResult(
             id=1,
@@ -216,7 +216,7 @@ class TestJudgmentSearchResultModel:
 
     def test_handles_optional_fields(self):
         """Handles optional/nullable fields."""
-        from backend.routers.search import JudgmentSearchResult
+        from backend.api.routers.search import JudgmentSearchResult
 
         result = JudgmentSearchResult(
             id=1,

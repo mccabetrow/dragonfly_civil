@@ -308,21 +308,21 @@ def generate_announcement(
 ║  SYSTEM HEALTH                                                               ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
-║  Doctor Checks:     {doctor_status} ({doctor_detail}){' ' * (35 - len(doctor_detail))}║
+║  Doctor Checks:     {doctor_status} ({doctor_detail}){" " * (35 - len(doctor_detail))}║
 ║  PostgREST Cache:   {pgrst_status.ljust(55)}║
 ║                                                                              ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  BATCH PIPELINE METRICS (Last 24 Hours)                                      ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
-║  Total Batches:     {str(batch_metrics.get('total_batches', 0)).ljust(55)}║
-║  Completed:         {str(batch_metrics.get('completed_batches', 0)).ljust(55)}║
-║  Failed:            {str(batch_metrics.get('failed_batches', 0)).ljust(55)}║
+║  Total Batches:     {str(batch_metrics.get("total_batches", 0)).ljust(55)}║
+║  Completed:         {str(batch_metrics.get("completed_batches", 0)).ljust(55)}║
+║  Failed:            {str(batch_metrics.get("failed_batches", 0)).ljust(55)}║
 ║  Success Rate:      {f"{success_rate:.1f}%".ljust(55)}║
 ║                                                                              ║
-║  Rows Processed:    {str(batch_metrics.get('total_rows', 0)).ljust(55)}║
-║  Rows Inserted:     {str(batch_metrics.get('inserted_rows', 0)).ljust(55)}║
-║  Duplicates Skipped:{str(batch_metrics.get('skipped_rows', 0)).ljust(55)}║
+║  Rows Processed:    {str(batch_metrics.get("total_rows", 0)).ljust(55)}║
+║  Rows Inserted:     {str(batch_metrics.get("inserted_rows", 0)).ljust(55)}║
+║  Duplicates Skipped:{str(batch_metrics.get("skipped_rows", 0)).ljust(55)}║
 ║                                                                              ║
 ║  Avg Processing:    {f"{batch_metrics.get('avg_processing_ms', 0)}ms".ljust(55)}║
 ║  Dedupe Rate:       {f"{batch_metrics.get('avg_dedupe_pct', 0)}%".ljust(55)}║
@@ -332,9 +332,9 @@ def generate_announcement(
 ║  DATA SUMMARY                                                                ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
-║  Total Batches (All Time):  {str(batch_summary.get('total', 0)).ljust(47)}║
-║  Plaintiffs in System:      {str(plaintiff_counts.get('plaintiffs', 0)).ljust(47)}║
-║  Plaintiff Contacts:        {str(plaintiff_counts.get('contacts', 0)).ljust(47)}║
+║  Total Batches (All Time):  {str(batch_summary.get("total", 0)).ljust(47)}║
+║  Plaintiffs in System:      {str(plaintiff_counts.get("plaintiffs", 0)).ljust(47)}║
+║  Plaintiff Contacts:        {str(plaintiff_counts.get("contacts", 0)).ljust(47)}║
 ║                                                                              ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  NEXT STEPS                                                                  ║

@@ -27,3 +27,4 @@ ADD COLUMN IF NOT EXISTS judgment_number text;
 COMMIT;
 -- NOTE: Simplicity importer support migration.
 -- Adds source_reference + contact uniqueness to support idempotent ingest of external leads.
+

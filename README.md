@@ -1,6 +1,42 @@
-# Dragonfly Quickstart
+# Dragonfly Civil
+
+> **Judgment-Enforcement Operating System**
 
 <!-- CI/CD: production_deploy workflow triggers on push to main -->
+
+---
+
+## 📂 System Architecture & Repository Structure
+
+Dragonfly is organized into **4 Planes** with strict separation of concerns:
+
+| Plane          | Responsibility  | Directory                                  | Technology                         |
+| -------------- | --------------- | ------------------------------------------ | ---------------------------------- |
+| **Data**       | Source of Truth | `supabase/`                                | Postgres, RLS, Migrations          |
+| **Service**    | Business Logic  | `backend/`, `etl/`, `workers/`, `brain/`   | Python, FastAPI, Railway           |
+| **Experience** | User Interface  | `dragonfly-dashboard/`                     | React, TypeScript, Vercel          |
+| **Ops**        | Reliability     | `scripts/`, `tools/`, `.github/workflows/` | PowerShell, Python, GitHub Actions |
+
+```
+dragonfly_civil/
+├── supabase/           # DATA PLANE - Migrations, schema
+├── backend/            # SERVICE PLANE - FastAPI, workers
+├── etl/                # SERVICE PLANE - Ingestion pipelines
+├── workers/            # SERVICE PLANE - Background jobs
+├── brain/              # SERVICE PLANE - Scoring & escalation
+├── dragonfly-dashboard/# EXPERIENCE PLANE - React frontend
+├── scripts/            # OPS PLANE - PowerShell automation
+├── tools/              # OPS PLANE - Python tooling & gates
+├── .github/workflows/  # OPS PLANE - CI/CD pipelines
+└── docs/               # OPS PLANE - Documentation
+```
+
+📖 **Full Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+📋 **Decision Records:** [docs/decisions/](docs/decisions/)
+
+---
+
+## Quickstart
 
 1. Activate a virtual environment:
    - Windows: `python -m venv .venv && .\.venv\Scripts\Activate.ps1`

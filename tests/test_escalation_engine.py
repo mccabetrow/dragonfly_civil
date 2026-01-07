@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from brain.escalation_engine import (
-    EscalationDecision,
-    EscalationEngine,
-    EscalationSignals,
-)
+from brain.escalation_engine import EscalationDecision, EscalationEngine, EscalationSignals
 
 
 def build_signals(**overrides) -> EscalationSignals:

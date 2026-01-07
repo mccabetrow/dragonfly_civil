@@ -37,3 +37,4 @@ REVOKE EXECUTE ON FUNCTION public.spawn_enforcement_flow(
 ) FROM service_role;
 
 DROP FUNCTION IF EXISTS public.spawn_enforcement_flow (text, text);
+

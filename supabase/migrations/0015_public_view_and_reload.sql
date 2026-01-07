@@ -27,3 +27,4 @@ $$;
 -- Only the service role should be able to call this
 revoke all on function public.pgrst_reload() from public;
 grant execute on function public.pgrst_reload() to service_role;
+

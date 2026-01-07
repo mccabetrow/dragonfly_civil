@@ -67,3 +67,4 @@ $$;
 grant execute on function public.insert_case(jsonb) to anon,
 authenticated,
 service_role;
+

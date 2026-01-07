@@ -3,41 +3,41 @@
 
 -- migrate:up
 
-CREATE TABLE IF NOT EXISTS public.plaintiff_tasks (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    plaintiff_id uuid NOT NULL REFERENCES public.plaintiffs (
+create table if not exists public.plaintiff_tasks (
+    id uuid primary key default gen_random_uuid(),
+    plaintiff_id uuid not null references public.plaintiffs (
         id
-    ) ON DELETE CASCADE,
-    kind text NOT NULL,
-    status text NOT NULL DEFAULT 'open',
+    ) on delete cascade,
+    kind text not null,
+    status text not null default 'open',
     due_at timestamptz,
     completed_at timestamptz,
     note text,
-    created_at timestamptz NOT NULL DEFAULT now(),
+    created_at timestamptz not null default now(),
     created_by text
 );
 
-ALTER TABLE public.plaintiff_tasks
-ADD COLUMN IF NOT EXISTS id uuid DEFAULT gen_random_uuid(),
-ADD COLUMN IF NOT EXISTS plaintiff_id uuid,
-ADD COLUMN IF NOT EXISTS kind text,
-ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'open',
-ADD COLUMN IF NOT EXISTS due_at timestamptz,
-ADD COLUMN IF NOT EXISTS completed_at timestamptz,
-ADD COLUMN IF NOT EXISTS note text,
-ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
-ADD COLUMN IF NOT EXISTS created_by text;
+alter table public.plaintiff_tasks
+add column if not exists id uuid default gen_random_uuid(),
+add column if not exists plaintiff_id uuid,
+add column if not exists kind text,
+add column if not exists status text not null default 'open',
+add column if not exists due_at timestamptz,
+add column if not exists completed_at timestamptz,
+add column if not exists note text,
+add column if not exists created_at timestamptz not null default now(),
+add column if not exists created_by text;
 
-ALTER TABLE public.plaintiff_tasks
-ALTER COLUMN id SET DEFAULT gen_random_uuid(),
-ALTER COLUMN plaintiff_id SET NOT NULL,
-ALTER COLUMN kind SET NOT NULL,
-ALTER COLUMN status SET DEFAULT 'open',
-ALTER COLUMN status SET NOT NULL,
-ALTER COLUMN created_at SET DEFAULT now(),
-ALTER COLUMN created_at SET NOT NULL;
+alter table public.plaintiff_tasks
+alter column id set default gen_random_uuid(),
+alter column plaintiff_id set not null,
+alter column kind set not null,
+alter column status set default 'open',
+alter column status set not null,
+alter column created_at set default now(),
+alter column created_at set not null;
 
-DO $$
+do $$
 BEGIN
     ALTER TABLE public.plaintiff_tasks
         ADD CONSTRAINT plaintiff_tasks_plaintiff_id_fkey
@@ -50,44 +50,44 @@ EXCEPTION
 END
 $$;
 
-CREATE INDEX IF NOT EXISTS plaintiff_tasks_plaintiff_status_due_idx
-ON public.plaintiff_tasks (plaintiff_id, status, due_at);
+create index if not exists plaintiff_tasks_plaintiff_status_due_idx
+on public.plaintiff_tasks (plaintiff_id, status, due_at);
 
-CREATE OR REPLACE VIEW public.v_plaintiff_open_tasks AS
-SELECT
-    t.id AS task_id,
+create or replace view public.v_plaintiff_open_tasks as
+select
+    t.id as task_id,
     t.plaintiff_id,
-    p.name AS plaintiff_name,
+    p.name as plaintiff_name,
     p.firm_name,
     t.kind,
     t.status,
     t.due_at,
     t.created_at,
     t.note
-FROM public.plaintiff_tasks AS t
-INNER JOIN public.plaintiffs AS p
-    ON t.plaintiff_id = p.id
-WHERE t.status IN ('open', 'in_progress');
+from public.plaintiff_tasks as t
+inner join public.plaintiffs as p
+    on t.plaintiff_id = p.id
+where t.status in ('open', 'in_progress');
 
-GRANT SELECT ON TABLE public.plaintiff_tasks TO anon, authenticated;
-GRANT SELECT ON public.v_plaintiff_open_tasks TO anon, authenticated;
-GRANT SELECT ON TABLE public.plaintiff_tasks TO anon,
+grant select on table public.plaintiff_tasks to anon, authenticated;
+grant select on public.v_plaintiff_open_tasks to anon, authenticated;
+grant select on table public.plaintiff_tasks to anon,
 authenticated,
 service_role;
-GRANT SELECT ON public.v_plaintiff_open_tasks TO anon,
+grant select on public.v_plaintiff_open_tasks to anon,
 authenticated,
 service_role;
 
 -- migrate:down
 
-REVOKE SELECT ON public.v_plaintiff_open_tasks FROM anon,
+revoke select on public.v_plaintiff_open_tasks from anon,
 authenticated,
 service_role;
-REVOKE SELECT ON TABLE public.plaintiff_tasks FROM anon,
+revoke select on table public.plaintiff_tasks from anon,
 authenticated,
 service_role;
-DROP VIEW IF EXISTS public.v_plaintiff_open_tasks;
-DROP INDEX IF EXISTS plaintiff_tasks_plaintiff_status_due_idx;
-DROP TABLE IF EXISTS public.plaintiff_tasks;
+drop view if exists public.v_plaintiff_open_tasks;
+drop index if exists plaintiff_tasks_plaintiff_status_due_idx;
+drop table if exists public.plaintiff_tasks;
 
 -- Purpose: track plaintiff-facing tasks and expose open work for dashboards.

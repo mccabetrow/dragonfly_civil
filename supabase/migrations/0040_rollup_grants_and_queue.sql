@@ -77,3 +77,4 @@ grant execute on function public.ack_job(text, bigint) to service_role;
 
 drop function if exists public.dequeue_job (text);
 drop function if exists public.ack_job (text, bigint);
+

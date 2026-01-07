@@ -1,9 +1,6 @@
 """Tests for the plaintiff vendor adapter."""
 
-from etl.src.plaintiff_vendor_adapter import (
-    CANONICAL_HEADERS,
-    map_vendor_row_to_plaintiff,
-)
+from etl.src.plaintiff_vendor_adapter import CANONICAL_HEADERS, map_vendor_row_to_plaintiff
 
 
 def test_simplicity_mapping_generates_canonical_row():

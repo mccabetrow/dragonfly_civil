@@ -18,3 +18,4 @@ service_role;
 GRANT ALL PRIVILEGES ON public.v_metrics_intake_daily TO service_role;
 GRANT ALL PRIVILEGES ON public.v_metrics_pipeline TO service_role;
 GRANT ALL PRIVILEGES ON public.v_metrics_enforcement TO service_role;
+

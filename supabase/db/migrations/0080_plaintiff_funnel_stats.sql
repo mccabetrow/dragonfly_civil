@@ -3,26 +3,26 @@
 
 -- migrate:up
 
-CREATE OR REPLACE VIEW public.v_plaintiff_funnel_stats AS
-SELECT
-    COUNT(*)::bigint AS plaintiff_count,
-    COALESCE(SUM(o.total_judgment_amount), 0)::numeric AS total_judgment_amount,
-    COALESCE(p.status, 'unknown') AS status
-FROM public.plaintiffs AS p
-LEFT JOIN public.v_plaintiffs_overview AS o
-    ON p.id = o.plaintiff_id
-GROUP BY COALESCE(p.status, 'unknown')
-ORDER BY status;
+create or replace view public.v_plaintiff_funnel_stats as
+select
+    COUNT(*)::bigint as plaintiff_count,
+    COALESCE(SUM(o.total_judgment_amount), 0)::numeric as total_judgment_amount,
+    COALESCE(p.status, 'unknown') as status
+from public.plaintiffs as p
+left join public.v_plaintiffs_overview as o
+    on p.id = o.plaintiff_id
+group by COALESCE(p.status, 'unknown')
+order by status;
 
-GRANT SELECT ON public.v_plaintiff_funnel_stats TO anon,
+grant select on public.v_plaintiff_funnel_stats to anon,
 authenticated,
 service_role;
 
 -- migrate:down
 
-REVOKE SELECT ON public.v_plaintiff_funnel_stats FROM anon,
+revoke select on public.v_plaintiff_funnel_stats from anon,
 authenticated,
 service_role;
-DROP VIEW IF EXISTS public.v_plaintiff_funnel_stats;
+drop view if exists public.v_plaintiff_funnel_stats;
 
 -- Purpose: summarize plaintiff funnel volume and value for dashboards.

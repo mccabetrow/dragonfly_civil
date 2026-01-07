@@ -270,9 +270,9 @@ class TestBreakGlassSecurityInvariant:
         content = break_glass_file.read_text(encoding="utf-8")
 
         # Must contain explicit REVOKE of INSERT, UPDATE, DELETE from authenticated
-        assert re.search(r"REVOKE\s+INSERT.*FROM\s+authenticated", content, re.IGNORECASE), (
-            "Break-glass must REVOKE INSERT from authenticated"
-        )
+        assert re.search(
+            r"REVOKE\s+INSERT.*FROM\s+authenticated", content, re.IGNORECASE
+        ), "Break-glass must REVOKE INSERT from authenticated"
 
         assert re.search(
             r"REVOKE\s+(?:INSERT,\s*)?UPDATE.*FROM\s+authenticated", content, re.IGNORECASE
@@ -289,27 +289,27 @@ class TestBreakGlassSecurityInvariant:
         content = break_glass_file.read_text(encoding="utf-8")
 
         # Must revoke from anon as well
-        assert re.search(r"REVOKE.*FROM.*anon", content, re.IGNORECASE), (
-            "Break-glass must REVOKE privileges from anon"
-        )
+        assert re.search(
+            r"REVOKE.*FROM.*anon", content, re.IGNORECASE
+        ), "Break-glass must REVOKE privileges from anon"
 
     def test_break_glass_grants_to_service_role(self, break_glass_file: Path) -> None:
         """Verify break-glass grants DML to service_role."""
         content = break_glass_file.read_text(encoding="utf-8")
 
         # Must grant to service_role
-        assert re.search(r"GRANT\s+ALL.*TO\s+service_role", content, re.IGNORECASE), (
-            "Break-glass must GRANT ALL to service_role"
-        )
+        assert re.search(
+            r"GRANT\s+ALL.*TO\s+service_role", content, re.IGNORECASE
+        ), "Break-glass must GRANT ALL to service_role"
 
     def test_break_glass_has_verification_block(self, break_glass_file: Path) -> None:
         """Verify break-glass includes a verification DO block."""
         content = break_glass_file.read_text(encoding="utf-8")
 
         # Should have a verification block that raises exception on violations
-        assert re.search(r"RAISE\s+EXCEPTION.*SECURITY", content, re.IGNORECASE), (
-            "Break-glass must include verification block that raises on security violations"
-        )
+        assert re.search(
+            r"RAISE\s+EXCEPTION.*SECURITY", content, re.IGNORECASE
+        ), "Break-glass must include verification block that raises on security violations"
 
     def test_break_glass_is_idempotent(self, break_glass_file: Path) -> None:
         """Verify break-glass can be run multiple times safely."""
@@ -319,11 +319,11 @@ class TestBreakGlassSecurityInvariant:
         # ALTER TABLE ... DISABLE ROW LEVEL SECURITY is idempotent
         # GRANT/REVOKE are idempotent
         # Should not have CREATE TABLE without IF NOT EXISTS
-        assert not re.search(r"CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS)", content, re.IGNORECASE), (
-            "Break-glass must use CREATE TABLE IF NOT EXISTS"
-        )
+        assert not re.search(
+            r"CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS)", content, re.IGNORECASE
+        ), "Break-glass must use CREATE TABLE IF NOT EXISTS"
 
         # Should not have DROP TABLE without IF EXISTS
-        assert not re.search(r"DROP\s+TABLE\s+(?!IF\s+EXISTS)", content, re.IGNORECASE), (
-            "Break-glass must use DROP TABLE IF EXISTS"
-        )
+        assert not re.search(
+            r"DROP\s+TABLE\s+(?!IF\s+EXISTS)", content, re.IGNORECASE
+        ), "Break-glass must use DROP TABLE IF EXISTS"

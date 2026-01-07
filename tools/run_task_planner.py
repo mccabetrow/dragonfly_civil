@@ -140,9 +140,7 @@ def _print_debug_summary(
     followups_status = (
         "enabled"
         if config.enable_followups
-        else "auto"
-        if config.enable_followups is None
-        else "disabled"
+        else "auto" if config.enable_followups is None else "disabled"
     )
     print(f"[debug] Follow-ups configuration: {followups_status}")
     print(f"[debug] Planned tasks: {len(outcome.planned_tasks)}")

@@ -1,18 +1,309 @@
 # Dragonfly Civil - Go-Live Runbook
 
-**Version:** 1.0  
-**Last Updated:** 2025-01-05  
+**Version:** 2.0  
+**Last Updated:** 2026-01-07  
 **Author:** Dragonfly SRE Team
+
+> **Purpose:** Single source of truth for production deployment.  
+> **Audience:** Release manager, on-call engineer.  
+> **Usage:** Open this on your second monitor during deployment.
 
 ---
 
 ## Table of Contents
 
-1. [Go-Live Announcement Template](#go-live-announcement-template)
-2. [Green Light Requirements](#green-light-requirements)
-3. [Failure Modes & CLI Fixes](#failure-modes--cli-fixes)
-4. [Monitoring & Alerts](#monitoring--alerts)
-5. [Rollback Procedures](#rollback-procedures)
+1. [Deployment Sequence (The Golden Path)](#deployment-sequence-the-golden-path)
+   - [Phase 0: Freeze](#phase-0-freeze-)
+   - [Phase 1: Certification (The Gate)](#phase-1-certification-the-gate-)
+   - [Phase 2: Technical Golden Path](#phase-2-technical-golden-path-)
+   - [Phase 3: Business Proof of Life](#phase-3-business-proof-of-life-)
+   - [Phase 4: Ingest (The Button)](#phase-4-ingest-the-button-)
+2. [Post-Go-Live Verification](#post-go-live-verification)
+3. [Go-Live Announcement Template](#go-live-announcement-template)
+4. [Green Light Requirements](#green-light-requirements)
+5. [Failure Modes & CLI Fixes](#failure-modes--cli-fixes)
+6. [Monitoring & Alerts](#monitoring--alerts)
+7. [Rollback Procedures](#rollback-procedures)
+
+---
+
+## Deployment Sequence (The Golden Path)
+
+### Pre-Flight Checklist
+
+| Item             | Command / Action            | Expected               |
+| ---------------- | --------------------------- | ---------------------- |
+| Git status clean | `git status`                | No uncommitted changes |
+| On `main` branch | `git branch --show-current` | `main`                 |
+| Latest pull      | `git pull origin main`      | Already up to date     |
+| CI passing       | Check GitHub Actions        | ✅ Green               |
+| `.env` loaded    | `./scripts/load_env.ps1`    | No errors              |
+
+---
+
+### Phase 0: Freeze 🧊
+
+**Goal:** Ensure the codebase is stable and ready for production.
+
+#### 0.1 Verify Clean State
+
+```powershell
+git status
+git log --oneline -5
+```
+
+- [ ] Working tree clean
+- [ ] Latest commit matches expected release
+
+#### 0.2 Verify CI Gate
+
+```powershell
+# Check that go_live_gate runs in CI
+gh run list --workflow=ci.yml --limit=3
+```
+
+- [ ] Most recent CI run is green
+- [ ] `go_live_gate` job passed
+
+#### 0.3 Set Environment
+
+```powershell
+$env:SUPABASE_MODE = 'prod'
+./scripts/load_env.ps1
+```
+
+- [ ] Environment variables loaded
+- [ ] No credential warnings
+
+---
+
+### Phase 1: Certification (The Gate) 🚪
+
+**Goal:** All 11 production gates must pass before proceeding.
+
+#### 1.1 Run Production Gate
+
+```powershell
+python -m tools.go_live_gate --env prod
+```
+
+**Expected Output:**
+
+```
+✅ Gate 1: Environment Configuration
+✅ Gate 2: Database Connectivity
+✅ Gate 3: Schema Consistency
+✅ Gate 4: RLS Enforcement
+✅ Gate 5: Critical Views
+✅ Gate 6: Worker Health
+✅ Gate 7: API Endpoints
+✅ Gate 8: Audit Trail
+✅ Gate 9: Security Hardening
+✅ Gate 10: Backup Verification
+✅ Gate 11: Rate Limiting
+
+🎉 ALL 11 GATES PASSED - READY FOR GO-LIVE
+```
+
+- [ ] All 11 gates passed
+- [ ] No warnings or degraded states
+
+#### 1.2 Verify Worker Health
+
+```powershell
+python -m tools.monitor_workers --env prod
+```
+
+- [ ] All workers reporting healthy
+- [ ] No stale heartbeats (> 5 min)
+- [ ] Memory/CPU within limits
+
+#### 1.3 Inspect Job Queue
+
+```powershell
+python -m tools.queue_inspect --env prod
+```
+
+- [ ] No stuck jobs
+- [ ] Queue depth acceptable (< 100 pending)
+- [ ] No poison messages
+
+---
+
+### Phase 2: Technical Golden Path 🛤️
+
+**Goal:** Proves DB, API, and Views are functional end-to-end.
+
+#### 2.1 Run Golden Path
+
+```powershell
+python -m tools.golden_path --env prod --cleanup
+```
+
+**Expected Output:**
+
+```
+============================================================
+GOLDEN PATH TEST SUITE
+Environment: PROD
+============================================================
+✅ Database connection established
+✅ Schema version verified
+✅ Critical views accessible
+✅ API health endpoint responding
+✅ Test entity lifecycle (create → read → delete)
+✅ Cleanup complete
+
+🎉 GOLDEN PATH: ALL CHECKS PASSED
+============================================================
+```
+
+- [ ] All checks passed
+- [ ] Cleanup confirmed (no orphaned test data)
+
+#### 2.2 Verify Critical Views
+
+```powershell
+python -m tools.smoke_plaintiffs --env prod
+```
+
+- [ ] `v_plaintiffs_overview` returns rows
+- [ ] `v_judgment_pipeline` accessible
+- [ ] `v_enforcement_overview` accessible
+
+---
+
+### Phase 3: Business Proof of Life 📋
+
+**Goal:** Proves business invariants hold – we won't sue without authorization.
+
+#### 3.1 Run Business Logic Verification
+
+```powershell
+python -m tools.verify_business_logic --env prod
+```
+
+> ⚠️ **This will prompt for confirmation before running against prod.**
+
+**Expected Output:**
+
+```
+============================================================
+BUSINESS LOGIC VERIFICATION
+Environment: PROD
+============================================================
+✅ PASS  The Block: Enforcement blocked and remediation task created
+✅ PASS  The Cure: Both fee_agreement and loa registered
+✅ PASS  The Success: Enforcement authorized and executed
+
+🎉 ALL BUSINESS INVARIANTS VERIFIED
+   The system correctly:
+   • BLOCKS enforcement without signed consent
+   • ALLOWS enforcement with valid LOA + Fee Agreement
+============================================================
+```
+
+- [ ] "The Block" test passed (unauthorized = blocked)
+- [ ] "The Cure" test passed (consent registration works)
+- [ ] "The Success" test passed (authorized = allowed)
+
+#### 3.2 Verify Audit Trail
+
+```powershell
+python -m tools.verify_court_proof --env prod
+```
+
+- [ ] Audit log immutability confirmed
+- [ ] Evidence vault lockdown verified
+
+---
+
+### Phase 4: Ingest (The Button) 🚀
+
+**Goal:** Begin processing real data.
+
+#### 4.1 Pre-Ingest Verification
+
+```powershell
+# Check ingest queue is empty
+python -m tools.queue_inspect --env prod --queue ingest
+```
+
+- [ ] No pending ingest jobs
+- [ ] Workers ready to receive
+
+#### 4.2 Trigger Ingest
+
+**Option A: Automated Trigger**
+
+```powershell
+python -m backend.workers.ingest_trigger
+```
+
+**Option B: Manual CSV Drop**
+
+```powershell
+# Copy validated CSV to ingest folder
+Copy-Item "data_in/validated_batch.csv" -Destination "data_in/live/"
+```
+
+**Option C: Via n8n Workflow**
+
+- Trigger the `plaintiff-ingest` workflow in n8n dashboard
+
+#### 4.3 Monitor Ingest Progress
+
+```powershell
+# Watch ingest in real-time
+python -m tools.monitor_ingest --env prod --follow
+```
+
+- [ ] Rows processing without errors
+- [ ] No validation failures
+- [ ] Completion confirmation received
+
+---
+
+## Post-Go-Live Verification
+
+### Immediate Checks (T+5 min)
+
+```powershell
+# Verify data landed
+python -m tools.doctor_all --env prod
+
+# Check dashboard views
+python -m tools.smoke_plaintiffs --env prod
+```
+
+- [ ] Doctor reports healthy
+- [ ] Dashboard views populated
+
+### Monitoring Checks (T+30 min)
+
+```powershell
+# Worker health
+python -m tools.monitor_workers --env prod
+
+# Queue depth
+python -m tools.queue_inspect --env prod
+```
+
+- [ ] Workers stable
+- [ ] No queue backlog
+
+---
+
+## Deployment Sign-Off
+
+| Phase                   | Passed | Initials | Timestamp |
+| ----------------------- | ------ | -------- | --------- |
+| Phase 0: Freeze         | ☐      | \_\_\_   | \_\_\_    |
+| Phase 1: Certification  | ☐      | \_\_\_   | \_\_\_    |
+| Phase 2: Golden Path    | ☐      | \_\_\_   | \_\_\_    |
+| Phase 3: Business Proof | ☐      | \_\_\_   | \_\_\_    |
+| Phase 4: Ingest         | ☐      | \_\_\_   | \_\_\_    |
+| Post-Go-Live            | ☐      | \_\_\_   | \_\_\_    |
 
 ---
 
@@ -449,6 +740,7 @@ python -m tools.generate_announcement --env prod --output announcement.md
 
 **Document Version History:**
 
-| Version | Date       | Author   | Changes         |
-| ------- | ---------- | -------- | --------------- |
-| 1.0     | 2025-01-05 | SRE Team | Initial release |
+| Version | Date       | Author   | Changes                                               |
+| ------- | ---------- | -------- | ----------------------------------------------------- |
+| 2.0     | 2026-01-07 | SRE Team | Added 4-phase deployment sequence, sign-off checklist |
+| 1.0     | 2025-01-05 | SRE Team | Initial release                                       |

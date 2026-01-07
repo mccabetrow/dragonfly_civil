@@ -71,3 +71,4 @@ $$;
 grant execute on function public.ack_job(text, bigint) to service_role;
 
 -- migrate:down
+

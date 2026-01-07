@@ -66,9 +66,9 @@ class TestRPCClientSignatures:
                 if "self" in arg_names:
                     arg_names.remove("self")
 
-                assert "worker_id" in arg_names, (
-                    f"claim_pending_job must accept worker_id parameter. Found args: {arg_names}"
-                )
+                assert (
+                    "worker_id" in arg_names
+                ), f"claim_pending_job must accept worker_id parameter. Found args: {arg_names}"
                 return
 
         pytest.fail("claim_pending_job function not found in rpc_client.py")
@@ -127,9 +127,9 @@ class TestBootstrapContract:
         source = bootstrap_path.read_text(encoding="utf-8")
 
         # Check that claim_pending_job call includes worker_id
-        assert "worker_id=worker_id" in source or "worker_id=" in source, (
-            "_default_claim_job must pass worker_id to claim_pending_job"
-        )
+        assert (
+            "worker_id=worker_id" in source or "worker_id=" in source
+        ), "_default_claim_job must pass worker_id to claim_pending_job"
 
     def test_mark_job_retry_uses_backoff_seconds(self):
         """_mark_job_retry MUST pass backoff_seconds to update_job_status."""
@@ -137,9 +137,9 @@ class TestBootstrapContract:
         source = bootstrap_path.read_text(encoding="utf-8")
 
         # Check that update_job_status call includes backoff_seconds in retry path
-        assert "backoff_seconds=backoff_seconds" in source or "backoff_seconds=" in source, (
-            "_mark_job_retry must pass backoff_seconds to update_job_status"
-        )
+        assert (
+            "backoff_seconds=backoff_seconds" in source or "backoff_seconds=" in source
+        ), "_mark_job_retry must pass backoff_seconds to update_job_status"
 
 
 # =============================================================================
@@ -234,9 +234,9 @@ class TestWorkerJobClaimContract:
 
         # The run_worker function should call bootstrap.run() without job_claimer
         # This ensures the bootstrap's _default_claim_job (with worker_id) is used
-        assert "job_claimer=" not in source or "job_claimer=claim_simplicity_job" not in source, (
-            "simplicity_ingest_worker should use bootstrap's default claim (with worker_id)"
-        )
+        assert (
+            "job_claimer=" not in source or "job_claimer=claim_simplicity_job" not in source
+        ), "simplicity_ingest_worker should use bootstrap's default claim (with worker_id)"
 
     def test_enforcement_engine_uses_default_claimer(self):
         """enforcement_engine.main() must NOT pass job_claimer."""

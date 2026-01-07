@@ -178,3 +178,4 @@ BEGIN
     EXECUTE 'GRANT EXECUTE ON FUNCTION public.upsert_enrichment_bundle(jsonb) TO anon, authenticated, service_role';
   END IF;
 END $$;
+

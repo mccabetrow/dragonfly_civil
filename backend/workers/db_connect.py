@@ -255,6 +255,7 @@ def connect_with_retry(
     worker_type: str,
     config: RetryConfig | None = None,
     exit_on_failure: bool = True,
+    row_factory=None,
 ) -> Optional[psycopg.Connection]:
     """
     Connect to PostgreSQL with exponential backoff and jitter.
@@ -266,10 +267,14 @@ def connect_with_retry(
         worker_type: Worker name for log context
         config: Retry configuration (uses defaults if None)
         exit_on_failure: If True, call sys.exit(EXIT_CODE_DB_UNAVAILABLE) on failure
+        row_factory: psycopg row factory (e.g., dict_row). If None, uses dict_row.
 
     Returns:
         psycopg.Connection if successful, None if failed (when exit_on_failure=False)
     """
+    # Default to dict_row if not specified
+    if row_factory is None:
+        row_factory = dict_row
     config = config or RetryConfig()
 
     # Step 1: Sanitize DSN (reject quotes, internal whitespace, malformed values)
@@ -325,7 +330,7 @@ def connect_with_retry(
             conn = psycopg.connect(
                 clean_dsn,
                 connect_timeout=config.connect_timeout,
-                row_factory=dict_row,
+                row_factory=row_factory,
                 application_name=app_name,
             )
             elapsed_ms = (time.monotonic() - start_time) * 1000

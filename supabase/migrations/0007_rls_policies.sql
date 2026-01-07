@@ -299,3 +299,4 @@ begin
     grant execute on function enrichment.upsert_enrichment_bundle(jsonb) to anon, authenticated, service_role;
   end if;
 end $$;
+

@@ -29,3 +29,4 @@ grant all on table public.events to service_role;
 
 drop table if exists public.events;
 drop table if exists public.runs;
+

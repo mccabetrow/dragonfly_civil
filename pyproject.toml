@@ -66,6 +66,28 @@ ignore = [
     "E402",  # Module level import not at top (scripts manipulate sys.path)
 ]
 
+# Per-file ignores for SQL-heavy files (trailing whitespace in multiline SQL strings)
+[tool.ruff.lint.per-file-ignores]
+# Migration files: SQL readability requires indentation that triggers W291/W293
+"supabase/migrations/*.sql" = ["W291", "W293"]
+# Backend files with embedded SQL strings
+"backend/api/routes/ops.py" = ["W291", "W293"]
+"backend/routers/enforcement_hybrid_example.py" = ["W291", "W293"]
+"backend/routers/telemetry.py" = ["W291", "W293"]
+"backend/routers/health.py" = ["W291", "W293"]
+"backend/services/dashboard_fallback.py" = ["W291", "W293"]
+"backend/services/ingestion_service.py" = ["W291", "W293", "F841"]
+"backend/utils/audit.py" = ["W291", "W293"]
+"backend/workers/outbox_processor.py" = ["F841"]
+"backend/workers/watchdog.py" = ["W291", "W293"]
+"etl/loaders.py" = ["W291", "W293"]
+# Scripts with embedded SQL
+"scripts/apply_title_trigger.py" = ["W291", "W293"]
+"scripts/tmp_refresh_enforcement_views.py" = ["W291", "W293"]
+# Blanket exclusions for tools and tests (common SQL patterns, unused vars in smoke tests)
+"tools/*.py" = ["W291", "W293", "F841"]
+"tests/*.py" = ["W291", "W293", "F841"]
+
 # =============================================================================
 # Black Configuration - Code Formatting
 # =============================================================================
