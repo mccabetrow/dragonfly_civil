@@ -1,0 +1,118 @@
+# =============================================================================
+# Lint Gate - Server-Side Pre-Commit Enforcement
+# =============================================================================
+# This workflow enforces commit discipline on the server side.
+# Even if developers use --no-verify locally, PRs will be blocked if dirty.
+#
+# Runs the exact same pre-commit hooks as the local environment.
+# =============================================================================
+
+name: Lint Gate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    name: Pre-Commit Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Setup
+      # -----------------------------------------------------------------------
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for gitleaks secret scanning
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # -----------------------------------------------------------------------
+      # Caching - Speed up subsequent runs
+      # -----------------------------------------------------------------------
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-pre-commit-
+            ${{ runner.os }}-pip-
+
+      - name: Cache pre-commit hooks
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: ${{ runner.os }}-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pre-commit-
+
+      # -----------------------------------------------------------------------
+      # Install
+      # -----------------------------------------------------------------------
+      - name: Install pre-commit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pre-commit
+
+      # -----------------------------------------------------------------------
+      # Execute
+      # -----------------------------------------------------------------------
+      - name: Run pre-commit on all files
+        id: pre-commit
+        run: |
+          echo "::group::Running pre-commit hooks"
+          pre-commit run --all-files --show-diff-on-failure
+          echo "::endgroup::"
+
+      # -----------------------------------------------------------------------
+      # Failure Summary (for PR comments)
+      # -----------------------------------------------------------------------
+      - name: Generate failure summary
+        if: failure()
+        run: |
+          echo "## ❌ Pre-Commit Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "One or more pre-commit hooks failed. Please fix the issues locally:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Install pre-commit if needed" >> $GITHUB_STEP_SUMMARY
+          echo "pip install pre-commit" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Run the fix script" >> $GITHUB_STEP_SUMMARY
+          echo "python -m tools.fix_linting" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Or run pre-commit manually" >> $GITHUB_STEP_SUMMARY
+          echo "pre-commit run --all-files" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See the workflow logs for details on which hooks failed." >> $GITHUB_STEP_SUMMARY
+
+      - name: Generate success summary
+        if: success()
+        run: |
+          echo "## ✅ Pre-Commit Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All pre-commit hooks passed successfully." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Hooks run:" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔒 Gitleaks (secret detection)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🖤 Black (code formatting)" >> $GITHUB_STEP_SUMMARY
+          echo "- ⚡ Ruff (fast linting)" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 isort (import sorting)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🎨 Prettier (JSON formatting)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🐘 SQLFluff (SQL linting)" >> $GITHUB_STEP_SUMMARY

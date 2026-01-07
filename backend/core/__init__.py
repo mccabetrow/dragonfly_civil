@@ -9,6 +9,7 @@ Includes:
 - Transactional database operations
 """
 
+from .db import Database, DatabaseNotStartedError, get_database, shutdown_database, startup_database
 from .errors import (
     DatabaseError,
     DragonflyError,
@@ -111,4 +112,10 @@ __all__ = [
     "atomic_judgment_update",
     "batch_update_scores",
     "OptimisticLockError",
+    # Database
+    "Database",
+    "DatabaseNotStartedError",
+    "get_database",
+    "startup_database",
+    "shutdown_database",
 ]

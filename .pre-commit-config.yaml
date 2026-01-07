@@ -62,12 +62,7 @@ repos:
       # Prevent use of --linked with Supabase CLI (causes pooler DNS issues on Windows)
       - id: no-supabase-linked
         name: no supabase --linked
-        entry: >
-          bash -c 'if grep -vE "^[[:space:]]*(#|//).*" "$@" 2>/dev/null | grep -qE "supabase[[:space:]]+(db|migration|link).*--linked"; then
-          echo "";
-          echo "ERROR: Use --db-url with SUPABASE_DB_URL_DEV/PROD instead of --linked.";
-          echo "The --linked flag causes pooler DNS issues on Windows.";
-          exit 1; fi; exit 0' --
+        entry: python tools/check_supabase_linked.py
         language: system
         files: '\.(ps1|sh)$'
         types: [text]
