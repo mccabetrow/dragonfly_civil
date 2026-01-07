@@ -1,5 +1,5 @@
 """
-Tests for backend.routers.search
+Tests for backend.api.routers.search
 
 Integration-style tests for the semantic search endpoint with mocked embedding.
 
@@ -34,7 +34,7 @@ class TestSemanticSearchEndpoint:
 
         app = create_app()
 
-        with patch("backend.routers.search.generate_embedding") as mock_gen:
+        with patch("backend.api.routers.search.generate_embedding") as mock_gen:
             mock_gen.return_value = None  # Simulate failure
 
             with TestClient(app, raise_server_exceptions=False) as client:
@@ -87,9 +87,9 @@ class TestSemanticSearchEndpoint:
             mock_record.get = lambda key, default=None, r=row: r.get(key, default)
             mock_records.append(mock_record)
 
-        with patch("backend.routers.search.generate_embedding") as mock_gen:
+        with patch("backend.api.routers.search.generate_embedding") as mock_gen:
             mock_gen.return_value = mock_embedding
-            with patch("backend.routers.search.get_connection") as mock_get_conn:
+            with patch("backend.api.routers.search.get_connection") as mock_get_conn:
                 mock_conn = AsyncMock()
                 mock_conn.fetch.return_value = mock_records
                 mock_get_conn.return_value.__aenter__.return_value = mock_conn
@@ -118,9 +118,9 @@ class TestSemanticSearchEndpoint:
 
         app = create_app()
 
-        with patch("backend.routers.search.generate_embedding") as mock_gen:
+        with patch("backend.api.routers.search.generate_embedding") as mock_gen:
             mock_gen.return_value = mock_embedding
-            with patch("backend.routers.search.get_connection") as mock_get_conn:
+            with patch("backend.api.routers.search.get_connection") as mock_get_conn:
                 mock_conn = AsyncMock()
                 mock_conn.fetch.return_value = []
                 mock_get_conn.return_value.__aenter__.return_value = mock_conn

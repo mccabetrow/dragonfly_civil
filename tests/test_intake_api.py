@@ -164,7 +164,7 @@ class TestIntakeUploadErrorHandling:
         async def boom():
             raise RuntimeError("boom")
 
-        monkeypatch.setattr("backend.routers.intake.get_pool", boom)
+        monkeypatch.setattr("backend.api.routers.intake.get_pool", boom)
 
         # Build a minimal valid CSV upload
         csv_content = b"name,email\nJohn Doe,john@example.com\n"
@@ -241,7 +241,7 @@ class TestIntakeStateEndpoint:
         async def boom():
             raise RuntimeError("Database connection failed")
 
-        monkeypatch.setattr("backend.routers.intake.get_pool", boom)
+        monkeypatch.setattr("backend.api.routers.intake.get_pool", boom)
 
         response = client.get("/api/v1/intake/state")
 
@@ -293,7 +293,7 @@ class TestListBatchesDegradeGuard:
         async def boom():
             raise RuntimeError("Database connection failed")
 
-        monkeypatch.setattr("backend.routers.intake.get_pool", boom)
+        monkeypatch.setattr("backend.api.routers.intake.get_pool", boom)
 
         response = client.get("/api/v1/intake/batches")
 

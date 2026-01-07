@@ -8,7 +8,9 @@ from click.testing import CliRunner
 from tools import doctor_all
 
 
-def _patch_common_success(monkeypatch, env: str = "dev", patch_config: bool = True) -> None:
+def _patch_common_success(
+    monkeypatch, env: str = "dev", patch_config: bool = True, patch_schema_guard: bool = True
+) -> None:
     monkeypatch.setattr(doctor_all, "_bootstrap_env", lambda requested: env)
     if patch_config:
         # Runner functions now accept tolerant kwarg
@@ -16,10 +18,18 @@ def _patch_common_success(monkeypatch, env: str = "dev", patch_config: bool = Tr
             doctor_all, "_config_check_runner", lambda env, tolerant=False: (lambda: None)
         )
     monkeypatch.setattr(doctor_all, "_doctor_runner", lambda env: lambda: None)
-    monkeypatch.setattr(
-        doctor_all, "_n8n_validator_runner", lambda env, tolerant=False: (lambda: None)
-    )
     monkeypatch.setattr(doctor_all, "_security_audit_runner", lambda env: (lambda: None))
+    # Mock external API/storage checks
+    monkeypatch.setattr(
+        doctor_all, "_check_storage_runner", lambda env, tolerant=False: (lambda: None)
+    )
+    monkeypatch.setattr(
+        doctor_all, "_check_api_health_runner", lambda env, tolerant=False: (lambda: None)
+    )
+    if patch_schema_guard:
+        monkeypatch.setattr(
+            doctor_all, "_prod_schema_guard_runner", lambda env, tolerant=False: (lambda: None)
+        )
     monkeypatch.setattr(doctor_all.smoke_plaintiffs, "main", lambda: None)
     monkeypatch.setattr(doctor_all.smoke_enforcement, "main", lambda: None)
 
@@ -118,7 +128,7 @@ def test_doctor_all_reports_orphaned_tasks_and_cases(monkeypatch):
 
 
 def test_doctor_all_runs_prod_schema_guard(monkeypatch):
-    _patch_common_success(monkeypatch, env="prod")
+    _patch_common_success(monkeypatch, env="prod", patch_schema_guard=False)
     guard_calls: list[list[str]] = []
     monkeypatch.setattr(
         doctor_all.check_prod_schema,
@@ -140,7 +150,7 @@ def test_doctor_all_runs_prod_schema_guard(monkeypatch):
 
 
 def test_doctor_all_schema_guard_failure_reports(monkeypatch):
-    _patch_common_success(monkeypatch, env="prod")
+    _patch_common_success(monkeypatch, env="prod", patch_schema_guard=False)
     guard_calls: list[list[str]] = []
 
     def _failing_guard(args: list[str]) -> int:

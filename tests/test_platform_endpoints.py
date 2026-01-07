@@ -146,7 +146,7 @@ class TestReadyEndpoint:
     def test_returns_503_on_failure(self, client):
         """Returns 503 when checks fail."""
         # Mock get_pool to return None to simulate DB unavailable
-        with patch("backend.routers.platform.get_pool", new_callable=AsyncMock) as mock_pool:
+        with patch("backend.api.routers.platform.get_pool", new_callable=AsyncMock) as mock_pool:
             mock_pool.return_value = None
             response = client.get("/api/ready")
             assert response.status_code == 503
@@ -157,7 +157,7 @@ class TestReadyEndpoint:
     def test_failure_reason_is_redacted(self, client):
         """Failure reason doesn't expose sensitive details."""
         # Mock get_pool to return None to simulate failure
-        with patch("backend.routers.platform.get_pool", new_callable=AsyncMock) as mock_pool:
+        with patch("backend.api.routers.platform.get_pool", new_callable=AsyncMock) as mock_pool:
             mock_pool.return_value = None
             response = client.get("/api/ready")
             data = response.json()

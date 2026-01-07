@@ -50,8 +50,8 @@ class TestListBatchesSQLConstruction:
         """Test pagination without status filter uses correct SQL placeholders."""
         pool, cursor = mock_pool
 
-        with patch("backend.routers.intake.get_pool", return_value=pool):
-            with patch("backend.routers.intake.get_current_user"):
+        with patch("backend.api.routers.intake.get_pool", return_value=pool):
+            with patch("backend.api.routers.intake.get_current_user"):
                 from backend.api.routers.intake import list_batches
 
                 # Create mock auth context
@@ -75,8 +75,8 @@ class TestListBatchesSQLConstruction:
         """Test pagination with status filter uses correct SQL placeholders."""
         pool, cursor = mock_pool
 
-        with patch("backend.routers.intake.get_pool", return_value=pool):
-            with patch("backend.routers.intake.get_current_user"):
+        with patch("backend.api.routers.intake.get_pool", return_value=pool):
+            with patch("backend.api.routers.intake.get_current_user"):
                 from backend.api.routers.intake import list_batches
 
                 mock_auth = MagicMock()
@@ -105,8 +105,8 @@ class TestListBatchesSQLConstruction:
 
         cursor.execute = tracking_execute
 
-        with patch("backend.routers.intake.get_pool", return_value=pool):
-            with patch("backend.routers.intake.get_current_user"):
+        with patch("backend.api.routers.intake.get_pool", return_value=pool):
+            with patch("backend.api.routers.intake.get_current_user"):
                 from backend.api.routers.intake import list_batches
 
                 mock_auth = MagicMock()

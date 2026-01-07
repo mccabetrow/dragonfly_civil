@@ -136,13 +136,15 @@ class TestBackendDbPoolApplicationName:
 
     def test_pool_uses_safe_application_name_format(self):
         """Verify the pool init code uses kwargs format, not options."""
+        import re
         from pathlib import Path
 
         db_py = Path(__file__).parent.parent / "backend" / "db.py"
         source = db_py.read_text(encoding="utf-8")
 
-        # Verify we use kwargs={"application_name": ...}
-        assert 'kwargs={"application_name":' in source or "kwargs={'application_name':" in source
+        # Verify we use kwargs={...} with application_name inside (may be multi-line)
+        assert "kwargs={" in source, "Pool should use kwargs= parameter"
+        assert '"application_name"' in source, "kwargs should include application_name"
 
         # Verify we do NOT use options with -c application_name
         assert "-c application_name" not in source

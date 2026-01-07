@@ -217,7 +217,7 @@ class TestIntakeStateEndpointEnvelope:
     @pytest.fixture
     def mock_db_pool(self):
         """Mock database pool for testing."""
-        with patch("backend.routers.intake.get_pool") as mock:
+        with patch("backend.api.routers.intake.get_pool") as mock:
             # Create mock connection and cursor
             mock_cursor = AsyncMock()
             mock_cursor.fetchone = AsyncMock(
@@ -290,7 +290,7 @@ class TestIntakeBatchesEndpointEnvelope:
     def test_batches_returns_envelope_structure(self, client):
         """GET /api/v1/intake/batches should return ApiResponse envelope."""
         # Even if DB fails, should return 200 with degraded envelope
-        with patch("backend.routers.intake.get_pool") as mock:
+        with patch("backend.api.routers.intake.get_pool") as mock:
             mock.side_effect = Exception("Database unavailable")
 
             response = client.get("/api/v1/intake/batches")
@@ -313,7 +313,7 @@ class TestIntakeBatchesEndpointEnvelope:
 
     def test_batches_degraded_has_trace_id(self, client):
         """Degraded batches response should include trace_id for debugging."""
-        with patch("backend.routers.intake.get_pool") as mock:
+        with patch("backend.api.routers.intake.get_pool") as mock:
             mock.side_effect = Exception("Connection refused")
 
             response = client.get("/api/v1/intake/batches")

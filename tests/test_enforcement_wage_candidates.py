@@ -82,7 +82,7 @@ class TestWageCandidatesWithAuth:
         mock_client.schema.return_value = mock_schema
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_client,
         ):
             response = auth_client.get("/api/v1/enforcement/wage-candidates")
@@ -124,7 +124,7 @@ class TestWageCandidatesWithAuth:
         mock_client.schema.return_value = mock_schema
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_client,
         ):
             response = auth_client.get(
@@ -184,7 +184,7 @@ class TestWageCandidatesWithAuth:
         mock_client.schema.return_value = mock_schema
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_client,
         ):
             response = auth_client.get("/api/v1/enforcement/wage-candidates")
@@ -224,7 +224,7 @@ class TestWageCandidatesWithAuth:
         mock_client.schema.return_value = mock_schema
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_client,
         ):
             response = auth_client.get(
@@ -271,7 +271,7 @@ class TestWageCandidatesErrorHandling:
         mock_client.schema.side_effect = Exception("Database connection failed")
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_client,
         ):
             response = auth_client.get("/api/v1/enforcement/wage-candidates")

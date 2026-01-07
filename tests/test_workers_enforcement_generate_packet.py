@@ -76,11 +76,11 @@ class TestGeneratePacketEndpoint:
         )
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_supabase,
         ):
             with patch(
-                "backend.routers.enforcement.get_current_user",
+                "backend.api.routers.enforcement.get_current_user",
                 return_value=mock_auth,
             ):
                 request = GeneratePacketRequest(
@@ -116,7 +116,7 @@ class TestGeneratePacketEndpoint:
         )
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_supabase,
         ):
             request = GeneratePacketRequest(
@@ -159,7 +159,7 @@ class TestJobStatusEndpoint:
         ]
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_client,
         ):
             response = await get_job_status("test-job-id", mock_auth)
@@ -199,7 +199,7 @@ class TestJobStatusEndpoint:
         ]
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_client,
         ):
             response = await get_job_status("test-job-id", mock_auth)
@@ -221,7 +221,7 @@ class TestJobStatusEndpoint:
         )
 
         with patch(
-            "backend.routers.enforcement.get_supabase_client",
+            "backend.api.routers.enforcement.get_supabase_client",
             return_value=mock_client,
         ):
             with pytest.raises(HTTPException) as exc_info:

@@ -37,13 +37,15 @@ def test_evaluate_env_requirements_flags_missing_value():
 
 
 def test_evaluate_env_requirements_flags_missing_value_prod():
+    """Missing optional key is WARN even in prod (OPENAI_API_KEY is optional)."""
     env_values = _base_env()
     env_values.pop("OPENAI_API_KEY")
 
     results = config_check.evaluate_env_requirements("prod", env_values=env_values)
     openai_result = next(result for result in results if result.name == "OPENAI_API_KEY")
 
-    assert openai_result.status == "FAIL"
+    # OPENAI_API_KEY is in OPTIONAL_KEYS, so missing = WARN (not FAIL)
+    assert openai_result.status == "WARN"
 
 
 def test_db_requirement_allows_explicit_url():

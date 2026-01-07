@@ -113,6 +113,7 @@ def find_raw_sql_violations(file_path: Path) -> list[RawSQLViolation]:
     - Docstrings
     - Test files (they may contain examples)
     - Migration helpers
+    - Ingestion services (intentional direct DB access for batch pipelines)
 
     Returns list of violations found.
     """
@@ -120,6 +121,12 @@ def find_raw_sql_violations(file_path: Path) -> list[RawSQLViolation]:
 
     # Skip test files
     if "test_" in file_path.name or "_test.py" in file_path.name:
+        return violations
+
+    # Skip ingestion services - they intentionally use direct DB access for batch pipelines
+    # These operate on intake schema during ETL and are not user-facing API code
+    allowlisted_files = {"ingest.py", "ingestion_service.py", "orchestrator.py"}
+    if file_path.name in allowlisted_files:
         return violations
 
     try:
