@@ -1,0 +1,189 @@
+# =============================================================================
+# Dragonfly Civil - Perfect Gate CI Pipeline
+# =============================================================================
+#
+# This workflow enforces code quality, basic logic correctness, and security
+# invariants before code is ever reviewed.
+#
+# Gate Components:
+#   1. The Bouncer  - pre-commit (lint, format, style)
+#   2. The Brain    - pytest (preflight, platform_endpoints, db tests)
+#   3. The Guard    - static security scanners (secret_leak_scan, frontend_security)
+#
+# Author: Dragonfly DevOps
+# Date: 2026-01-07
+# =============================================================================
+
+name: Perfect Gate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# Prevent concurrent runs on the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ===========================================================================
+  # enforce-quality: The single gate that must pass before merge
+  # ===========================================================================
+  enforce-quality:
+    name: Enforce Quality Gate
+    runs-on: ubuntu-latest
+
+    # -------------------------------------------------------------------------
+    # Service Containers - Postgres for DB tests
+    # -------------------------------------------------------------------------
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        # Health check to ensure Postgres is ready before steps run
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # -------------------------------------------------------------------------
+    # Environment Variables
+    # -------------------------------------------------------------------------
+    env:
+      DATABASE_SCHEME: postgres
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_HOST: localhost
+      DATABASE_PORT: 5432
+      DATABASE_NAME: postgres
+      SUPABASE_DB_SCHEME: postgresql
+      ENVIRONMENT: test
+      SUPABASE_MODE: dev
+      # Dummy values for pydantic Settings validation during import
+      SUPABASE_URL: "https://placeholder.supabase.co"
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      SUPABASE_PROJECT_REF: "placeholder"
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Setup
+      # -----------------------------------------------------------------------
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Compose database environment variables
+        run: |
+          echo "DATABASE_URL=${DATABASE_SCHEME}://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}" >> $GITHUB_ENV
+          echo "SUPABASE_DB_URL=${SUPABASE_DB_SCHEME}://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}" >> $GITHUB_ENV
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pre-commit
+
+      # -----------------------------------------------------------------------
+      # The Bouncer - Lint & Style (fail fast if code is ugly)
+      # -----------------------------------------------------------------------
+      - name: "🚪 The Bouncer: Lint & Style"
+        id: lint
+        run: |
+          echo "::group::Running pre-commit on all files"
+          pre-commit run --all-files --show-diff-on-failure
+          echo "::endgroup::"
+
+      # -----------------------------------------------------------------------
+      # The Brain - Logic Checks (pytest)
+      # -----------------------------------------------------------------------
+      - name: "🧠 The Brain: Logic Checks"
+        id: tests
+        run: |
+          echo "::group::Running pytest (preflight, platform_endpoints, db)"
+          pytest -q -k "preflight or platform_endpoints or db" --tb=short \
+            --junitxml=pytest-results.xml \
+            2>&1 | tee pytest-output.log
+          echo "::endgroup::"
+
+      # -----------------------------------------------------------------------
+      # The Guard - Security Audit (static analysis, no live DB needed)
+      # -----------------------------------------------------------------------
+      - name: "🛡️ The Guard: Secret Leak Scan"
+        id: secrets
+        run: |
+          echo "::group::Scanning for leaked secrets"
+          python -m tools.secret_leak_scan --strict
+          echo "::endgroup::"
+
+      - name: "🛡️ The Guard: Frontend Security Scan"
+        id: frontend
+        run: |
+          echo "::group::Scanning frontend for security violations"
+          python -m tools.scan_frontend_security --strict
+          echo "::endgroup::"
+
+      # -----------------------------------------------------------------------
+      # Artifacts - Upload logs on failure for debugging
+      # -----------------------------------------------------------------------
+      - name: Upload pytest logs on failure
+        if: failure() && steps.tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-logs
+          path: |
+            pytest-output.log
+            pytest-results.xml
+          retention-days: 7
+
+      - name: Upload pre-commit logs on failure
+        if: failure() && steps.lint.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-logs
+          path: |
+            .pre-commit-output.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # -----------------------------------------------------------------------
+      # Summary
+      # -----------------------------------------------------------------------
+      - name: Gate Summary
+        if: always()
+        run: |
+          echo "## 🐉 Perfect Gate Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚪 Lint & Style | ${{ steps.lint.outcome == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧠 Logic Tests | ${{ steps.tests.outcome == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🛡️ Secret Scan | ${{ steps.secrets.outcome == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🛡️ Frontend Security | ${{ steps.frontend.outcome == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "### ✅ All gates passed! Ready for review." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Gate failed. Fix issues before merge." >> $GITHUB_STEP_SUMMARY
+          fi
