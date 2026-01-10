@@ -87,7 +87,7 @@ def main() -> None:
     print(f"  Log:     {log_level}")
     print("=" * 60)
 
-    # Launch uvicorn
+    # Launch uvicorn with Railway/proxy-friendly settings
     uvicorn.run(
         app,
         host=host,
@@ -95,6 +95,8 @@ def main() -> None:
         workers=workers,
         log_level=log_level,
         access_log=True,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )
 
 
