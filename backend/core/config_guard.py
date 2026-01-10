@@ -92,6 +92,21 @@ def _parse_db_port(url: Optional[str]) -> Optional[int]:
         return None
 
 
+def _parse_db_sslmode(url: Optional[str]) -> Optional[str]:
+    """Extract sslmode from database URL query string."""
+    if not url:
+        return None
+    try:
+        from urllib.parse import parse_qs
+
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        sslmode_list = params.get("sslmode", [])
+        return sslmode_list[0] if sslmode_list else None
+    except Exception:
+        return None
+
+
 def _log_banner(title: str, color: str = RED) -> None:
     """Print a prominent banner for visibility in logs."""
     border = "=" * 70
@@ -134,12 +149,78 @@ def check_forbidden_vars() -> tuple[bool, Optional[str]]:
     return True, None
 
 
-def check_pooler_enforcement() -> tuple[bool, Optional[str]]:
+def check_pooler_enforcement() -> tuple[bool, Optional[str], bool]:
     """
     Check 2: Pooler Enforcement
 
-    Runtime database connections should use the Transaction Pooler (port 6543)
-    instead of direct connections (port 5432).
+    Runtime database connections MUST use the Transaction Pooler (port 6543)
+    instead of direct connections (port 5432) in production.
+
+    Returns:
+        Tuple of (passed, message, is_fatal)
+    """
+    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+    is_prod = _is_production()
+
+    if not db_url:
+        # No DB URL - will be caught by critical vars check
+        return True, None, False
+
+    port = _parse_db_port(db_url)
+
+    if port is None:
+        return True, None, False  # Can't parse, don't warn
+
+    if port == 6543:
+        return True, None, False  # Correct port
+
+    if port == 5432:
+        if is_prod:
+            # FATAL in production
+            return (
+                False,
+                (
+                    "⛔ CRITICAL: Production Runtime is using Direct Connection (5432). "
+                    "Must use Pooler (6543).\n"
+                    "\n"
+                    f"Current port: {port} (direct connection)\n"
+                    "Expected port: 6543 (transaction pooler)\n"
+                    "\n"
+                    "Direct connections bypass the pooler and can exhaust the database\n"
+                    "connection limit (max 60 connections), causing cascading failures.\n"
+                    "\n"
+                    "IMMEDIATE ACTION REQUIRED:\n"
+                    "  1. Update SUPABASE_DB_URL to use port 6543 (transaction pooler)\n"
+                    "  2. Redeploy the service"
+                ),
+                True,
+            )
+        else:
+            # Warning in dev
+            return (
+                False,
+                (
+                    f"⚠️  Runtime is NOT connected to the Transaction Pooler!\n"
+                    f"\n"
+                    f"Current port: {port} (direct connection)\n"
+                    f"Expected port: 6543 (transaction pooler)\n"
+                    f"\n"
+                    f"Direct connections can exhaust the database connection limit.\n"
+                    f"Consider updating your SUPABASE_DB_URL to use port 6543."
+                ),
+                False,
+            )
+
+    # Non-standard port - just note it
+    return True, f"Database using non-standard port {port}", False
+
+
+def check_sslmode() -> tuple[bool, Optional[str]]:
+    """
+    Check 3: SSL Mode Verification
+
+    Ensure sslmode is configured for secure database connections.
+    In production, missing sslmode is a warning (Supabase defaults to require).
 
     Returns:
         Tuple of (passed, warning_message)
@@ -147,30 +228,98 @@ def check_pooler_enforcement() -> tuple[bool, Optional[str]]:
     db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
 
     if not db_url:
-        # No DB URL - will be caught by critical vars check
         return True, None
 
-    port = _parse_db_port(db_url)
+    sslmode = _parse_db_sslmode(db_url)
 
-    if port is None:
-        return True, None  # Can't parse, don't warn
+    if sslmode:
+        # sslmode is set - good
+        if sslmode in ("require", "verify-ca", "verify-full"):
+            return True, None
+        elif sslmode == "disable":
+            return False, (
+                "⚠️  SSL is DISABLED for database connection!\n"
+                "\n"
+                "sslmode=disable is insecure for production.\n"
+                "Consider using sslmode=require or stronger."
+            )
+        else:
+            return True, f"Using sslmode={sslmode}"
 
-    if port == 6543:
-        return True, None  # Correct port
-
-    if port == 5432:
+    # sslmode not explicitly set
+    if _is_production():
         return False, (
-            f"⚠️  Runtime is NOT connected to the Transaction Pooler!\n"
-            f"\n"
-            f"Current port: {port} (direct connection)\n"
-            f"Expected port: 6543 (transaction pooler)\n"
-            f"\n"
-            f"Direct connections can exhaust the database connection limit.\n"
-            f"Consider updating your SUPABASE_DB_URL to use port 6543."
+            "⚠️  sslmode not explicitly set in SUPABASE_DB_URL.\n"
+            "\n"
+            "Supabase defaults to sslmode=require, but explicit is better.\n"
+            "Consider adding ?sslmode=require to your connection string."
         )
 
-    # Non-standard port - just note it
-    return True, f"Database using non-standard port {port}"
+    return True, None
+
+
+def validate_db_config() -> None:
+    """
+    Validate database configuration at startup.
+
+    This function performs strict validation of SUPABASE_DB_URL:
+    - Checks port is 6543 (pooler) not 5432 (direct) in production
+    - Verifies sslmode is configured
+    - Exits with code 1 if fatal issues are detected
+
+    Call this BEFORE db.start() in your application entrypoint.
+
+    Raises:
+        SystemExit: If fatal configuration issues are detected in production
+    """
+    is_prod = _is_production()
+    env = _get_env()
+
+    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+
+    if not db_url:
+        if is_prod:
+            _log_banner("DATABASE CONFIGURATION ERROR", RED)
+            print(
+                f"{RED}SUPABASE_DB_URL is not set. Cannot start without database.{RESET}\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        else:
+            logger.warning("SUPABASE_DB_URL not set (acceptable in dev)")
+            return
+
+    # Check port
+    port = _parse_db_port(db_url)
+    if port == 5432 and is_prod:
+        _log_banner("CRITICAL: WRONG DATABASE PORT", RED)
+        print(
+            f"{RED}⛔ CRITICAL: Production Runtime is using Direct Connection (5432).{RESET}\n"
+            f"{RED}   Must use Pooler (6543).{RESET}\n"
+            f"\n"
+            f"{RED}Direct connections bypass the connection pooler and can exhaust{RESET}\n"
+            f"{RED}the database connection limit, causing cascading failures.{RESET}\n"
+            f"\n"
+            f"{YELLOW}FIX: Update SUPABASE_DB_URL to use port 6543 and redeploy.{RESET}\n",
+            file=sys.stderr,
+        )
+        logger.critical(
+            "Production using direct DB port 5432 instead of pooler 6543",
+            extra={"port": port, "environment": env},
+        )
+        sys.exit(1)
+
+    # Check sslmode
+    sslmode = _parse_db_sslmode(db_url)
+    if not sslmode:
+        if is_prod:
+            logger.warning(
+                "sslmode not explicitly set in SUPABASE_DB_URL. "
+                "Supabase defaults to require, but explicit is recommended."
+            )
+        # Not fatal - Supabase defaults to require
+
+    logger.debug(f"DB config validated: port={port}, sslmode={sslmode or 'default'}")
 
 
 def check_critical_vars() -> tuple[bool, list[str]]:
@@ -251,14 +400,25 @@ def validate_production_config() -> ConfigValidationResult:
         result.fatal_errors.append(error)
 
     # =========================================================================
-    # CHECK 2: Pooler Enforcement (WARNING only)
+    # CHECK 2: Pooler Enforcement (FATAL in production, WARNING in dev)
     # =========================================================================
-    passed, warning = check_pooler_enforcement()
-    if not passed and warning:
-        result.warnings.append(warning)
+    passed, message, is_fatal = check_pooler_enforcement()
+    if not passed and message:
+        if is_fatal:
+            result.passed = False
+            result.fatal_errors.append(message)
+        else:
+            result.warnings.append(message)
 
     # =========================================================================
-    # CHECK 3: Critical Variables (FATAL in production)
+    # CHECK 3: SSL Mode (WARNING only)
+    # =========================================================================
+    passed, ssl_warning = check_sslmode()
+    if not passed and ssl_warning:
+        result.warnings.append(ssl_warning)
+
+    # =========================================================================
+    # CHECK 4: Critical Variables (FATAL in production)
     # =========================================================================
     passed, missing = check_critical_vars()
     if not passed:

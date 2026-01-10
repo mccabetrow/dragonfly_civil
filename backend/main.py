@@ -19,7 +19,7 @@ ENVIRONMENT LOADING:
 # =============================================================================
 # CRITICAL: Configuration Guard - Must run FIRST before any other imports
 # =============================================================================
-from backend.core.config_guard import validate_production_config
+from backend.core.config_guard import validate_db_config, validate_production_config
 
 validate_production_config()  # Crashes if misconfigured in production
 # =============================================================================
@@ -87,6 +87,7 @@ from .api.routers.ingest_v2 import router as ingest_v2_router  # noqa: E402
 from .api.routers.intake import router as intake_router  # noqa: E402
 from .api.routers.integrity import router as integrity_router  # noqa: E402
 from .api.routers.intelligence import router as intelligence_router  # noqa: E402
+from .api.routers.metrics import router as metrics_router  # noqa: E402
 from .api.routers.offers import router as offers_router  # noqa: E402
 from .api.routers.ops_guardian import router as ops_guardian_router  # noqa: E402
 from .api.routers.packets import router as packets_router  # noqa: E402
@@ -96,12 +97,7 @@ from .api.routers.search import router as search_router  # noqa: E402
 from .api.routers.system import router as system_router  # noqa: E402
 from .api.routers.telemetry import router as telemetry_router  # noqa: E402
 from .api.routers.webhooks import router as webhooks_router  # noqa: E402
-from .config import (  # noqa: E402
-    configure_logging,
-    get_settings,
-    log_startup_diagnostics,
-    validate_required_env,
-)
+from .config import get_settings, log_startup_diagnostics, validate_required_env  # noqa: E402
 from .core.middleware import PerformanceLoggingMiddleware  # noqa: E402
 from .core.middleware import (
     RateLimitMiddleware,
@@ -111,11 +107,14 @@ from .core.middleware import (
 )
 from .core.trace_middleware import TraceMiddleware, get_trace_id  # noqa: E402
 from .db import close_db_pool, database, init_db_pool  # noqa: E402
+from .middleware.correlation import CorrelationMiddleware  # noqa: E402
+from .middleware.metrics import MetricsMiddleware  # noqa: E402
 from .middleware.version import VersionMiddleware, get_version_info  # noqa: E402
 from .scheduler import init_scheduler  # noqa: E402
+from .utils.logging import setup_logging  # noqa: E402
 
 # Configure logging before anything else
-configure_logging()
+setup_logging(service_name="dragonfly-api")
 logger = logging.getLogger(__name__)
 
 # Log environment at module load
@@ -171,7 +170,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.critical(f"❌ BOOT REFUSED: {e}")
         raise  # Prevent app from starting
 
-    # 3. Initialize database with explicit lifecycle (avoids deprecation warning)
+    # 3. Validate database configuration (port 6543 required in prod)
+    validate_db_config()
+
+    # 4. Initialize database with explicit lifecycle (avoids deprecation warning)
     try:
         await database.start()
         logger.info("✅ Database pool initialized")
@@ -233,7 +235,7 @@ def create_app() -> FastAPI:
     # ==========================================================================
     # MIDDLEWARE ORDER IS CRITICAL
     # FastAPI adds middleware in REVERSE order (last added = outermost)
-    # Execution order: TraceMiddleware -> RateLimitMiddleware -> CORSMiddleware -> VersionMiddleware
+    # Execution order: CorrelationMiddleware -> TraceMiddleware -> RateLimitMiddleware -> CORSMiddleware -> VersionMiddleware
     # ==========================================================================
 
     # --- Add in REVERSE order (last added = first to execute) ---
@@ -278,9 +280,13 @@ def create_app() -> FastAPI:
     else:
         logger.info("[Middleware] RateLimitMiddleware DISABLED (non-production)")
 
-    # 1. TraceMiddleware (outermost - generates trace_id FIRST for every request)
+    # 1. TraceMiddleware (outermost before correlation - generates trace IDs for every request)
     app.add_middleware(TraceMiddleware)
-    logger.info("[Middleware] TraceMiddleware added (correlation IDs)")
+    logger.info("[Middleware] TraceMiddleware added (trace IDs)")
+
+    # 0. CorrelationMiddleware (true outermost - ensures X-Request-ID is present)
+    app.add_middleware(CorrelationMiddleware)
+    logger.info("[Middleware] CorrelationMiddleware added (request IDs)")
 
     # --- Additional middleware (after core security stack) ---
 
@@ -293,6 +299,10 @@ def create_app() -> FastAPI:
 
     # Request logging (logs after CORS/rate limit decisions)
     app.add_middleware(RequestLoggingMiddleware)
+
+    # Metrics collection (counts requests and errors for /api/metrics)
+    app.add_middleware(MetricsMiddleware)
+    logger.info("[Middleware] MetricsMiddleware added (request/error counting)")
 
     # ==========================================================================
     # GLOBAL EXCEPTION HANDLERS WITH CORS HEADERS
@@ -415,6 +425,9 @@ def create_app() -> FastAPI:
 
     # System - Worker heartbeats and system health
     app.include_router(system_router, prefix="/api", tags=["system"])  # internal: /v1/system
+
+    # Observability - Lightweight metrics endpoint (requires API key)
+    app.include_router(metrics_router, prefix="/api", tags=["observability"])  # /api/metrics
 
     # Webhooks - external service callbacks (Proof.com, etc.)
     app.include_router(webhooks_router, prefix="/api", tags=["webhooks"])  # internal: /v1/webhooks
