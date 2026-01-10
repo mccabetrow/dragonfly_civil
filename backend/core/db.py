@@ -25,6 +25,8 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import re
+import sys
 import time
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator, Optional
@@ -352,6 +354,24 @@ class Database:
 
             except Exception as e:
                 last_error = e
+                error_str = str(e).lower()
+
+                # SAFETY: Detect fatal auth errors and abort immediately
+                # to prevent Supabase server_login_retry lockout
+                fatal_patterns = [
+                    "password authentication failed",
+                    "authentication failed",
+                    "role .* does not exist",
+                    "database .* does not exist",
+                ]
+                for pattern in fatal_patterns:
+                    if re.search(pattern, error_str):
+                        logger.critical(
+                            "⛔ FATAL: Authentication/authorization error detected. "
+                            "ABORTING to prevent account lockout. "
+                            f"Error: {type(e).__name__}: {e}"
+                        )
+                        sys.exit(1)
 
                 # Close any partially opened pool
                 if pool is not None:
@@ -510,6 +530,39 @@ class Database:
         except Exception as e:
             logger.warning(f"Database ping failed: {e}")
             return False
+
+    async def check_connection(self) -> tuple[bool, str]:
+        """
+        Lightweight DB connection check for readiness probes.
+
+        This method is designed for /readyz endpoints and health checks.
+        It performs a minimal query (SELECT 1) to verify database connectivity
+        without consuming significant resources.
+
+        Returns:
+            tuple[bool, str]: (is_healthy, message)
+                - (True, "ok") if connection succeeds
+                - (False, "Pool not started") if pool is None
+                - (False, "Connection failed: <redacted>") on error
+
+        Note:
+            Error messages are redacted to prevent information leakage
+            in public health endpoints. Full details are logged internally.
+        """
+        if self.pool is None:
+            return False, "Pool not started"
+
+        try:
+            async with self.pool.connection() as conn:
+                result = await conn.execute("SELECT 1")
+                row = await result.fetchone()
+                if row is not None and row[0] == 1:
+                    return True, "ok"
+                return False, "Unexpected query result"
+        except Exception as e:
+            # Log full error internally, return redacted message externally
+            logger.warning(f"check_connection failed: {type(e).__name__}: {e}")
+            return False, "Connection failed"
 
     def __repr__(self) -> str:
         status = "open" if self.is_open else "closed"

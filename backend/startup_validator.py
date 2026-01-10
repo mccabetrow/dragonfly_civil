@@ -225,6 +225,9 @@ def _track_optional_config(result: StartupValidationResult) -> None:
             elif "URL" in key and "@" in value:
                 # Redact URLs with credentials
                 result.effective_config[key] = "SET (redacted)"
+            elif "WEBHOOK" in key:
+                # Redact webhook URLs (they contain secrets in the path)
+                result.effective_config[key] = "SET (redacted)"
             else:
                 result.effective_config[key] = f"SET ({value})"
         else:
