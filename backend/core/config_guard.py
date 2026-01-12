@@ -15,7 +15,14 @@ preventing accidental exposure of direct database credentials in production.
 SECURITY MODEL:
 - Runtime services use SUPABASE_DB_URL (port 6543, connection pooler)
 - Migrations use SUPABASE_MIGRATE_DB_URL (port 5432, direct connection)
-- These MUST NEVER be mixed in production
+- These MUST NEVER be mixed in production runtime
+
+EXECUTION MODE DETECTION:
+- Runtime mode: API servers, workers, background services
+- Scripts mode: CLI tools (tools.*, etl.*), migrations, one-off scripts
+
+The module distinguishes execution modes to allow scripts to use
+SUPABASE_MIGRATE_DB_URL while blocking it in runtime services.
 
 Usage:
     # At the very top of your entrypoint (before other imports)
@@ -27,6 +34,7 @@ Usage:
 
 Author: Principal DevOps Engineer
 Date: 2026-01-07
+Updated: 2026-01-11 - Added execution mode detection and auth failure handling
 """
 
 from __future__ import annotations
@@ -35,7 +43,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import urlparse
 
 # Use basic logging since this runs before structured logging is configured
@@ -47,6 +55,106 @@ YELLOW = "\033[93m"
 GREEN = "\033[92m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
+
+# =============================================================================
+# RUNTIME CONFIG POLICY TABLE (for documentation)
+# =============================================================================
+# Rule                          | Condition                | Severity | Action
+# ------------------------------|--------------------------|----------|--------
+# ENV_FILE missing              | .env.{env} not found     | INFO     | Warn, continue
+# SUPABASE_MIGRATE_DB_URL       | Var present in runtime   | FATAL    | Exit 1
+# SUPABASE_MIGRATE_DB_URL       | Var present in scripts   | ALLOWED  | Continue
+# Port 5432 in prod runtime     | DB URL port 5432, prod   | FATAL    | Exit 1
+# sslmode missing in prod       | No sslmode, prod runtime | FATAL    | Exit 1
+# sslmode=disable in prod       | sslmode=disable, prod    | FATAL    | Exit 1
+# Auth failure                  | password/role/db error   | FATAL    | Exit immediately
+# Network/transient failure     | timeout, unreachable     | WARN     | Backoff + retry
+# =============================================================================
+
+# Patterns that indicate auth failures (no retry, exit fast)
+AUTH_FAILURE_PATTERNS = frozenset(
+    [
+        "password authentication failed",
+        "role",  # "role X does not exist"
+        "does not exist",
+        "server_login_retry",
+        "too many connections",
+        "FATAL:  password",
+        "authentication failed",
+    ]
+)
+
+# Patterns that indicate network/transient failures (retry with backoff)
+NETWORK_FAILURE_PATTERNS = frozenset(
+    [
+        "could not connect",
+        "connection refused",
+        "connection timed out",
+        "network is unreachable",
+        "timeout expired",
+        "server closed the connection unexpectedly",
+        "SSL SYSCALL error",
+    ]
+)
+
+# Script module prefixes that indicate non-runtime execution
+SCRIPT_MODULE_PREFIXES = ("tools.", "etl.", "tests.", "scripts.")
+
+ExecutionMode = Literal["runtime", "script"]
+
+_EXECUTION_MODE: ExecutionMode | None = None
+
+
+def _infer_scripts_mode_from_context() -> bool:
+    """Best-effort detection based on __main__ metadata and argv."""
+
+    main_module = getattr(sys.modules.get("__main__"), "__name__", "")
+    spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+    if spec and spec.name:
+        main_module = spec.name
+
+    for prefix in SCRIPT_MODULE_PREFIXES:
+        if main_module.startswith(prefix):
+            return True
+
+    if sys.argv:
+        script_path = sys.argv[0].replace("\\", "/").lower()
+        for prefix in SCRIPT_MODULE_PREFIXES:
+            normalized = prefix.rstrip(".").replace(".", "/")
+            if f"/{normalized}" in script_path:
+                return True
+        if "/scripts/" in script_path:
+            return True
+
+    return False
+
+
+def _resolve_execution_mode() -> ExecutionMode:
+    """Resolve execution mode using env override first, then heuristics."""
+
+    explicit = os.environ.get("DRAGONFLY_EXECUTION_MODE", "").strip().lower()
+    if explicit == "script":
+        return "script"
+    if explicit == "runtime":
+        return "runtime"
+
+    return "script" if _infer_scripts_mode_from_context() else "runtime"
+
+
+def _reset_execution_mode_cache() -> None:
+    """Reset cached execution mode (used by tests)."""
+
+    global _EXECUTION_MODE
+    _EXECUTION_MODE = None
+
+
+def get_execution_mode() -> ExecutionMode:
+    """Return cached execution mode for deterministic policy evaluation."""
+
+    global _EXECUTION_MODE
+    if _EXECUTION_MODE is None:
+        _EXECUTION_MODE = _resolve_execution_mode()
+    return _EXECUTION_MODE
 
 
 @dataclass
@@ -65,6 +173,43 @@ class ConfigurationSecurityViolation(SystemExit):
     def __init__(self, message: str):
         super().__init__(1)
         self.message = message
+
+
+# =============================================================================
+# EXECUTION MODE DETECTION
+# =============================================================================
+
+
+def is_scripts_mode() -> bool:
+    """
+    Determine if we're running in scripts mode (CLI tools, migrations).
+
+    Scripts mode is detected by:
+    1. DRAGONFLY_EXECUTION_MODE env var set to "script"
+    2. __main__ module starts with tools., etl., tests., or scripts.
+    3. sys.argv[0] contains known script paths
+
+    In scripts mode, SUPABASE_MIGRATE_DB_URL is ALLOWED.
+
+    Returns:
+        True if running as a script/CLI tool, False for runtime services
+    """
+    return get_execution_mode() == "script"
+
+
+def is_runtime_mode() -> bool:
+    """
+    Determine if we're running in runtime mode (API servers, workers).
+
+    Runtime mode is the default. In runtime mode:
+    - SUPABASE_MIGRATE_DB_URL is FORBIDDEN
+    - Port 5432 is FORBIDDEN in production
+    - sslmode=require is REQUIRED in production
+
+    Returns:
+        True if running as a runtime service, False for scripts
+    """
+    return get_execution_mode() == "runtime"
 
 
 def _get_env() -> str:
@@ -92,6 +237,41 @@ def _parse_db_port(url: Optional[str]) -> Optional[int]:
         return None
 
 
+def _parse_db_host(url: Optional[str]) -> Optional[str]:
+    """Extract hostname from database URL."""
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+        return parsed.hostname
+    except Exception:
+        return None
+
+
+def _is_pooler_host(hostname: Optional[str]) -> bool:
+    """
+    Check if hostname is a Supabase transaction pooler.
+
+    Supabase pooler hostnames follow the pattern:
+    - aws-0-<region>.pooler.supabase.com (cloud)
+    - <project-ref>.pooler.supabase.co (legacy)
+
+    Direct connection hostnames are:
+    - db.<project-ref>.supabase.co (direct)
+
+    Args:
+        hostname: The database hostname
+
+    Returns:
+        True if hostname indicates a pooler connection
+    """
+    if not hostname:
+        return False
+    hostname_lower = hostname.lower()
+    # Supabase pooler patterns
+    return "pooler" in hostname_lower or hostname_lower.startswith("aws-")
+
+
 def _parse_db_sslmode(url: Optional[str]) -> Optional[str]:
     """Extract sslmode from database URL query string."""
     if not url:
@@ -107,6 +287,46 @@ def _parse_db_sslmode(url: Optional[str]) -> Optional[str]:
         return None
 
 
+def _enforce_prod_pooler_contract() -> None:
+    """Exit immediately if production runtime DB URL violates pooler contract."""
+
+    if not (_is_production() and is_runtime_mode()):
+        return
+
+    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+
+    if not db_url:
+        return  # Missing URL handled elsewhere
+
+    host = _parse_db_host(db_url) or ""
+    port = _parse_db_port(db_url)
+    sslmode = _parse_db_sslmode(db_url)
+
+    violations: list[str] = []
+
+    if ".pooler.supabase.com" not in host.lower():
+        violations.append(f"host={host or 'missing'}")
+
+    if port != 6543:
+        violations.append(f"port={port or 'missing'}")
+
+    if sslmode != "require":
+        violations.append(f"sslmode={sslmode or 'missing'}")
+
+    if violations:
+        message = (
+            "⛔ SUPABASE_DB_URL invalid for prod runtime - require *.pooler.supabase.com:6543?sslmode=require "
+            f"(violations: {', '.join(violations)})"
+        )
+        # Prominent operator-visible log (grep for this in Railway)
+        print(
+            f"{RED}[CONFIG_GUARD] ⛔ FATAL: {message}{RESET}",
+            file=sys.stderr,
+        )
+        logger.critical(f"DB URL contract violation: {', '.join(violations)}")
+        sys.exit(message)
+
+
 def _log_banner(title: str, color: str = RED) -> None:
     """Print a prominent banner for visibility in logs."""
     border = "=" * 70
@@ -115,27 +335,115 @@ def _log_banner(title: str, color: str = RED) -> None:
     print(f"{border}{RESET}\n", file=sys.stderr)
 
 
+# =============================================================================
+# AUTH FAILURE CLASSIFICATION
+# =============================================================================
+
+
+def classify_db_error(error_message: str) -> str:
+    """
+    Classify a database error as 'auth', 'network', or 'unknown'.
+
+    Auth failures should exit immediately (no retry) to prevent lockouts.
+    Network failures should use exponential backoff with jitter.
+
+    Args:
+        error_message: The error message string from psycopg or connection
+
+    Returns:
+        'auth' - Authentication failure (exit fast, no retry)
+        'network' - Network/transient failure (retry with backoff)
+        'unknown' - Unknown error type
+    """
+    error_lower = error_message.lower()
+
+    # Check for auth failures first (exit fast)
+    for pattern in AUTH_FAILURE_PATTERNS:
+        if pattern.lower() in error_lower:
+            return "auth"
+
+    # Check for network failures (retry with backoff)
+    for pattern in NETWORK_FAILURE_PATTERNS:
+        if pattern.lower() in error_lower:
+            return "network"
+
+    return "unknown"
+
+
+def is_auth_failure(error_message: str) -> bool:
+    """
+    Check if an error message indicates an authentication failure.
+
+    Auth failures include:
+    - password authentication failed
+    - role X does not exist
+    - database X does not exist
+    - server_login_retry (Supabase-specific lockout indicator)
+    - too many connections
+
+    These should trigger immediate exit, NOT retry, to avoid lockouts.
+
+    Args:
+        error_message: The error message string
+
+    Returns:
+        True if this is an auth failure that should not be retried
+    """
+    return classify_db_error(error_message) == "auth"
+
+
+def is_network_failure(error_message: str) -> bool:
+    """
+    Check if an error message indicates a network/transient failure.
+
+    Network failures include:
+    - could not connect
+    - connection refused
+    - connection timed out
+    - network is unreachable
+
+    These should use exponential backoff with jitter.
+
+    Args:
+        error_message: The error message string
+
+    Returns:
+        True if this is a network failure that can be retried
+    """
+    return classify_db_error(error_message) == "network"
+
+
 def check_forbidden_vars() -> tuple[bool, Optional[str]]:
     """
     Check 1: Forbidden Variables (Anti-Footgun)
 
-    In production, SUPABASE_MIGRATE_DB_URL must NEVER be present.
+    SUPABASE_MIGRATE_DB_URL must NEVER be present in RUNTIME environments.
     This URL provides direct database access (port 5432) which bypasses
     the connection pooler and can exhaust database connections.
+
+    IMPORTANT: This check is SKIPPED in scripts mode (tools.*, etl.*, etc.)
+    because scripts legitimately need the migration URL.
 
     Returns:
         Tuple of (passed, error_message)
     """
-    if not _is_production():
+    # POLICY: SUPABASE_MIGRATE_DB_URL is ALLOWED in scripts mode
+    if is_scripts_mode():
+        migrate_url = os.environ.get("SUPABASE_MIGRATE_DB_URL")
+        if migrate_url:
+            logger.debug("SUPABASE_MIGRATE_DB_URL present in scripts mode (allowed)")
         return True, None
 
+    # POLICY: SUPABASE_MIGRATE_DB_URL is FORBIDDEN in runtime mode
     migrate_url = os.environ.get("SUPABASE_MIGRATE_DB_URL")
     if migrate_url:
         return False, (
-            "⛔ SECURITY VIOLATION: Migration credentials detected in Runtime!\n"
+            "⛔ FATAL: SUPABASE_MIGRATE_DB_URL detected in runtime environment!\n"
             "\n"
-            "SUPABASE_MIGRATE_DB_URL (port 5432) is set in a production runtime.\n"
-            "This bypasses the connection pooler and can exhaust DB connections.\n"
+            "This URL provides direct database access (port 5432) which:\n"
+            "  - Bypasses the connection pooler\n"
+            "  - Can exhaust DB connection limit (max 60 connections)\n"
+            "  - May trigger server_login_retry lockouts\n"
             "\n"
             "IMMEDIATE ACTION REQUIRED:\n"
             "  1. Go to Railway Dashboard → Your Service → Variables\n"
@@ -168,51 +476,45 @@ def check_pooler_enforcement() -> tuple[bool, Optional[str], bool]:
 
     port = _parse_db_port(db_url)
 
-    if port is None:
-        return True, None, False  # Can't parse, don't warn
-
     if port == 6543:
         return True, None, False  # Correct port
 
-    if port == 5432:
-        if is_prod:
-            # FATAL in production
+    is_runtime_prod = is_runtime_mode() and is_prod
+
+    if port is None:
+        if is_runtime_prod:
             return (
                 False,
-                (
-                    "⛔ CRITICAL: Production Runtime is using Direct Connection (5432). "
-                    "Must use Pooler (6543).\n"
-                    "\n"
-                    f"Current port: {port} (direct connection)\n"
-                    "Expected port: 6543 (transaction pooler)\n"
-                    "\n"
-                    "Direct connections bypass the pooler and can exhaust the database\n"
-                    "connection limit (max 60 connections), causing cascading failures.\n"
-                    "\n"
-                    "IMMEDIATE ACTION REQUIRED:\n"
-                    "  1. Update SUPABASE_DB_URL to use port 6543 (transaction pooler)\n"
-                    "  2. Redeploy the service"
-                ),
+                "⛔ CRITICAL: Unable to determine database port. Production runtime must explicitly use port 6543.",
                 True,
             )
-        else:
-            # Warning in dev
-            return (
-                False,
-                (
-                    f"⚠️  Runtime is NOT connected to the Transaction Pooler!\n"
-                    f"\n"
-                    f"Current port: {port} (direct connection)\n"
-                    f"Expected port: 6543 (transaction pooler)\n"
-                    f"\n"
-                    f"Direct connections can exhaust the database connection limit.\n"
-                    f"Consider updating your SUPABASE_DB_URL to use port 6543."
-                ),
-                False,
-            )
+        return True, None, False
 
-    # Non-standard port - just note it
-    return True, f"Database using non-standard port {port}", False
+    if is_runtime_prod and port != 6543:
+        return (
+            False,
+            (
+                "⛔ CRITICAL: Production runtime is not using the Supabase pooler (port 6543).\n"
+                f"\nCurrent port: {port}\n"
+                "Required port: 6543 (transaction pooler)\n"
+                "\nDirect connections bypass the pooler and can exhaust the database connection limit.\n"
+                "Update SUPABASE_DB_URL to use the pooler and redeploy."
+            ),
+            True,
+        )
+
+    if port != 6543:
+        # Non-prod warning
+        return (
+            False,
+            (
+                "⚠️  Runtime is not connected to the transaction pooler (port 6543).\n"
+                f"Current port: {port}. Consider switching to 6543 for parity."
+            ),
+            False,
+        )
+
+    return True, None, False
 
 
 def check_sslmode() -> tuple[bool, Optional[str]]:
@@ -263,19 +565,36 @@ def validate_db_config() -> None:
     Validate database configuration at startup.
 
     This function performs strict validation of SUPABASE_DB_URL:
-    - Checks port is 6543 (pooler) not 5432 (direct) in production
-    - Verifies sslmode is configured
-    - Exits with code 1 if fatal issues are detected
+    - FATAL if SUPABASE_MIGRATE_DB_URL is present (any environment)
+    - FATAL if port is 5432 in production (must use 6543)
+    - Warns if sslmode is not explicitly set
 
     Call this BEFORE db.start() in your application entrypoint.
 
     Raises:
-        SystemExit: If fatal configuration issues are detected in production
+        SystemExit: If fatal configuration issues are detected
     """
     is_prod = _is_production()
     env = _get_env()
 
     db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+
+    # CHECK 1: SUPABASE_MIGRATE_DB_URL must NEVER be present (any env)
+    migrate_url = os.environ.get("SUPABASE_MIGRATE_DB_URL")
+    if migrate_url:
+        _log_banner("FATAL: MIGRATION URL IN RUNTIME", RED)
+        print(
+            f"{RED}⛔ SUPABASE_MIGRATE_DB_URL is set in runtime environment.{RESET}\n"
+            f"{RED}This leaks direct database credentials (port 5432) into the app tier.{RESET}\n"
+            f"\n"
+            f"{YELLOW}ACTION: Remove SUPABASE_MIGRATE_DB_URL from Railway service variables.{RESET}\n",
+            file=sys.stderr,
+        )
+        logger.critical(
+            "Migration database URL detected in runtime environment - exiting",
+            extra={"environment": env},
+        )
+        sys.exit(1)
 
     if not db_url:
         if is_prod:
@@ -289,10 +608,10 @@ def validate_db_config() -> None:
             logger.warning("SUPABASE_DB_URL not set (acceptable in dev)")
             return
 
-    # Check port
+    # CHECK 2: Port must be 6543 (pooler) in production
     port = _parse_db_port(db_url)
     if port == 5432 and is_prod:
-        _log_banner("CRITICAL: WRONG DATABASE PORT", RED)
+        _log_banner("FATAL: WRONG DATABASE PORT", RED)
         print(
             f"{RED}⛔ CRITICAL: Production Runtime is using Direct Connection (5432).{RESET}\n"
             f"{RED}   Must use Pooler (6543).{RESET}\n"
@@ -304,22 +623,27 @@ def validate_db_config() -> None:
             file=sys.stderr,
         )
         logger.critical(
-            "Production using direct DB port 5432 instead of pooler 6543",
+            "Production using direct DB port 5432 instead of pooler 6543 - exiting",
             extra={"port": port, "environment": env},
         )
         sys.exit(1)
 
-    # Check sslmode
+    # CHECK 3: sslmode (warning only)
     sslmode = _parse_db_sslmode(db_url)
     if not sslmode:
         if is_prod:
             logger.warning(
                 "sslmode not explicitly set in SUPABASE_DB_URL. "
-                "Supabase defaults to require, but explicit is recommended."
+                "Add '?sslmode=require' to enforce encrypted connections."
             )
         # Not fatal - Supabase defaults to require
 
-    logger.debug(f"DB config validated: port={port}, sslmode={sslmode or 'default'}")
+    # SUCCESS: Print verification message
+    if port == 6543:
+        print(f"{GREEN}✅ Config Verified (Pooler: 6543){RESET}", file=sys.stderr)
+        logger.info("Config Verified (Pooler: 6543)")
+    elif port:
+        logger.debug(f"DB config validated: port={port}, sslmode={sslmode or 'default'}")
 
 
 def check_critical_vars() -> tuple[bool, list[str]]:
@@ -383,6 +707,9 @@ def validate_production_config() -> ConfigValidationResult:
     """
     env = _get_env()
     is_prod = _is_production()
+
+    # Immediate production enforcement (single-line operator signal)
+    _enforce_prod_pooler_contract()
 
     result = ConfigValidationResult(
         passed=True,
@@ -470,9 +797,22 @@ def validate_production_config() -> ConfigValidationResult:
                 file=sys.stderr,
             )
 
-    # Success message
+    # Success message - prominent for operator visibility
     if result.passed:
-        logger.debug(f"Configuration validated OK (env={env})")
+        db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+        host = _parse_db_host(db_url)
+        port = _parse_db_port(db_url)
+        sslmode = _parse_db_sslmode(db_url)
+        is_pooler = ".pooler.supabase.com" in (host or "").lower()
+
+        # Operator-visible log line (grep for this in Railway)
+        print(
+            f"{GREEN}[CONFIG_GUARD] ✅ DB URL validated: pooler={is_pooler}, port={port}, ssl={sslmode}{RESET}",
+            file=sys.stderr,
+        )
+        logger.info(
+            f"Configuration validated OK (env={env}, pooler={is_pooler}, port={port}, ssl={sslmode})"
+        )
 
     return result
 
@@ -498,6 +838,182 @@ def require_pooler_connection() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+def validate_runtime_config() -> None:
+    """
+    STRICT Runtime Configuration Guard for Production.
+
+    This function enforces Phase 0/Phase 1 containment rules:
+    1. Pooler Enforcement: Port MUST be 6543 in production (FATAL if 5432)
+    2. SSL Enforcement: sslmode=require MUST be present (FATAL if missing)
+    3. Migration Credential Leak: SUPABASE_MIGRATE_DB_URL must NOT exist (FATAL)
+
+    IMPORTANT: This function is a NO-OP in scripts mode (tools.*, etl.*, etc.)
+    because scripts may legitimately need different configuration.
+
+    Call this at the TOP of your entrypoint, BEFORE db.start().
+
+    Usage:
+        # In backend/api/main.py or backend/workers/base.py
+        from backend.core.config_guard import validate_runtime_config
+        validate_runtime_config()
+
+    Raises:
+        SystemExit(1): If any invariant is violated in runtime mode
+    """
+    # POLICY: Skip strict runtime checks in scripts mode
+    if is_scripts_mode():
+        logger.debug("validate_runtime_config() skipped in scripts mode")
+        return
+
+    env = _get_env()
+    is_prod = _is_production()
+    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+
+    # =========================================================================
+    # CHECK 1: Migration Credential Leak (FATAL in runtime mode)
+    # =========================================================================
+    migrate_url = os.environ.get("SUPABASE_MIGRATE_DB_URL")
+    if migrate_url:
+        logger.critical("[CRITICAL] Migration DSN leaked in Runtime!")
+        _log_banner("CRITICAL: MIGRATION DSN LEAKED IN RUNTIME", RED)
+        print(
+            f"{RED}[CRITICAL] Migration DSN leaked in Runtime!{RESET}\n"
+            f"\n"
+            f"{RED}SUPABASE_MIGRATE_DB_URL must NEVER be present in runtime services.{RESET}\n"
+            f"{RED}This exposes direct database credentials (port 5432) to the app tier.{RESET}\n"
+            f"\n"
+            f"{YELLOW}IMMEDIATE ACTION:{RESET}\n"
+            f"{YELLOW}  1. Railway Dashboard → Service → Variables{RESET}\n"
+            f"{YELLOW}  2. DELETE the SUPABASE_MIGRATE_DB_URL variable{RESET}\n"
+            f"{YELLOW}  3. Redeploy{RESET}\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # =========================================================================
+    # CHECK 2: Database URL Required
+    # =========================================================================
+    if not db_url:
+        if is_prod:
+            logger.critical("[CRITICAL] SUPABASE_DB_URL is not set!")
+            _log_banner("CRITICAL: DATABASE URL MISSING", RED)
+            print(
+                f"{RED}[CRITICAL] SUPABASE_DB_URL is not set.{RESET}\n"
+                f"{RED}Production services cannot start without a database connection.{RESET}\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        else:
+            logger.warning("SUPABASE_DB_URL not set (acceptable in dev)")
+            return
+
+    # =========================================================================
+    # CHECK 3: Pooler Enforcement (FATAL if port 5432 or non-pooler host in prod)
+    # =========================================================================
+    port = _parse_db_port(db_url)
+    hostname = _parse_db_host(db_url)
+    is_pooler = _is_pooler_host(hostname)
+
+    if is_prod:
+        # In production, BOTH conditions must be met:
+        # 1. Port must be 6543
+        # 2. Host must contain "pooler" or be an AWS pooler
+        if port != 6543:
+            logger.critical("[CRITICAL] Production runtime must use Supabase pooler port 6543.")
+            _log_banner("CRITICAL: WRONG DATABASE PORT", RED)
+            printable_port = port if port is not None else "unknown/default"
+            print(
+                f"{RED}⛔ FATAL: Prod using Direct Connection/Wrong Port. Must use Pooler (6543).{RESET}\n"
+                f"\n"
+                f"{RED}Current port: {printable_port}{RESET}\n"
+                f"{RED}Required port: 6543 (transaction pooler){RESET}\n"
+                f"\n"
+                f"{RED}Direct connections bypass the pooler and can exhaust the{RESET}\n"
+                f"{RED}database connection limit (max 60), causing cascading failures.{RESET}\n"
+                f"\n"
+                f"{YELLOW}IMMEDIATE ACTION:{RESET}\n"
+                f"{YELLOW}  1. Railway Dashboard → Service → Variables{RESET}\n"
+                f"{YELLOW}  2. Update SUPABASE_DB_URL to use port 6543{RESET}\n"
+                f"{YELLOW}  3. Redeploy{RESET}\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        if not is_pooler:
+            logger.critical("[CRITICAL] Production runtime must use Supabase pooler hostname.")
+            _log_banner("CRITICAL: NOT USING POOLER HOST", RED)
+            print(
+                f"{RED}⛔ FATAL: Prod using Direct Connection. Host must contain 'pooler'.{RESET}\n"
+                f"\n"
+                f"{RED}Current host: {hostname or 'unknown'}{RESET}\n"
+                f"{RED}Required: Host containing 'pooler' (e.g., aws-0-us-east-1.pooler.supabase.com){RESET}\n"
+                f"\n"
+                f"{RED}Direct connections (db.<project>.supabase.co) bypass the connection pooler{RESET}\n"
+                f"{RED}and can exhaust the database connection limit.{RESET}\n"
+                f"\n"
+                f"{YELLOW}IMMEDIATE ACTION:{RESET}\n"
+                f"{YELLOW}  1. Supabase Dashboard → Settings → Database → Connection string{RESET}\n"
+                f"{YELLOW}  2. Use the 'Connection Pooler' string (Mode: Transaction){RESET}\n"
+                f"{YELLOW}  3. Update SUPABASE_DB_URL in Railway and redeploy{RESET}\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    elif port != 6543:
+        logger.warning(
+            f"⚠️  Runtime using direct connection (port {port}) instead of pooler (6543). "
+            "This may cause connection exhaustion under load."
+        )
+
+    # =========================================================================
+    # CHECK 4: SSL Enforcement (FATAL if missing in prod)
+    # =========================================================================
+    sslmode = _parse_db_sslmode(db_url)
+    normalized_ssl = sslmode.lower() if sslmode else None
+
+    if is_prod and normalized_ssl != "require":
+        logger.critical("[CRITICAL] Production runtime must set sslmode=require.")
+        _log_banner("CRITICAL: SSL MODE INCORRECT", RED)
+        printable = normalized_ssl or "missing"
+        print(
+            f"{RED}[CRITICAL] Production database connections must include sslmode=require.{RESET}\n"
+            f"\n"
+            f"{RED}Current sslmode: {printable}{RESET}\n"
+            f"{RED}Required sslmode: require{RESET}\n"
+            f"\n"
+            f"{RED}Unencrypted or misconfigured connections expose credentials in transit.{RESET}\n"
+            f"\n"
+            f"{YELLOW}IMMEDIATE ACTION:{RESET}\n"
+            f"{YELLOW}  1. Railway Dashboard → Service → Variables{RESET}\n"
+            f"{YELLOW}  2. Append ?sslmode=require to SUPABASE_DB_URL{RESET}\n"
+            f"{YELLOW}  3. Redeploy{RESET}\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # =========================================================================
+    # SUCCESS: All checks passed
+    # =========================================================================
+    if port == 6543 and is_pooler:
+        print(
+            f"{GREEN}✅ Runtime Config Verified (Pooler: 6543, Host: pooler, SSL: {sslmode or 'default'}){RESET}",
+            file=sys.stderr,
+        )
+        logger.info(
+            f"Runtime Config Verified (Pooler: 6543, Host: {hostname}, SSL: {sslmode or 'default'})"
+        )
+    elif port == 6543:
+        print(
+            f"{GREEN}✅ Runtime Config Verified (Pooler: 6543, SSL: {sslmode or 'default'}){RESET}",
+            file=sys.stderr,
+        )
+        logger.info(f"Runtime Config Verified (Pooler: 6543, SSL: {sslmode or 'default'})")
+    else:
+        logger.info(
+            f"Runtime config OK: port={port}, host={hostname}, sslmode={sslmode or 'default'}, env={env}"
+        )
 
 
 # Auto-validate if this module is run directly
