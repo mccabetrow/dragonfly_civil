@@ -12,3 +12,8 @@ tools/verify_db_auth.py
 # Config generators - read from .env files, placeholders in comments
 scripts/generate_vercel_config.ps1
 scripts/generate_vercel_env.ps1
+
+# Test files - use fake placeholder credentials (testuser/testpass), not real secrets
+tests/test_bootstrap_resilience.py:postgres-connection-string:34
+tests/test_bootstrap_resilience.py:postgres-connection-string:353
+tests/test_bootstrap_resilience.py:postgres-connection-string:369

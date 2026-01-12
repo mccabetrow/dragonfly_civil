@@ -1,100 +1,50 @@
 #!/usr/bin/env python3
-"""
-Dragonfly Engine - Uvicorn Launcher
-
-A robust entry point for production deployments that safely handles
-environment variables and prevents crashes from misconfiguration.
-
-Usage:
-    python -m tools.run_uvicorn
-
-Environment Variables:
-    PORT            - Server port (default: 8080)
-    HOST            - Server host (default: 0.0.0.0)
-    UVICORN_APP     - ASGI app path (default: backend.main:app)
-    WEB_CONCURRENCY - Worker count (default: 1, minimum: 1)
-    LOG_LEVEL       - Uvicorn log level (default: info)
-
-Author: Dragonfly DevOps
-"""
+"""Crash-proof Uvicorn launcher for Railway / production deployments."""
 
 from __future__ import annotations
 
 import os
 import sys
 
+import uvicorn
 
-def get_int_env(name: str, default: int, minimum: int | None = None) -> int:
-    """
-    Safely read an integer from environment variable.
 
-    Handles empty strings, non-numeric values, and enforces minimum.
-    """
-    raw = os.environ.get(name, "").strip()
-
-    if not raw:
-        return default
+def _parse_port(value: str) -> int:
+    """Convert a PORT string to an int or exit with an error message."""
 
     try:
-        value = int(raw)
+        return int(value)
     except ValueError:
-        print(f"WARNING: {name}={raw!r} is not a valid integer, using default={default}")
-        return default
-
-    if minimum is not None and value < minimum:
-        print(f"WARNING: {name}={value} is below minimum={minimum}, using {minimum}")
-        return minimum
-
-    return value
+        print(f"[FATAL] Invalid PORT={value!r}. Must be integer.", file=sys.stderr)
+        sys.exit(1)
 
 
-def get_str_env(name: str, default: str) -> str:
-    """Safely read a string from environment variable."""
-    raw = os.environ.get(name, "").strip()
-    return raw if raw else default
+def _parse_workers(value: str) -> int:
+    """Ensure WEB_CONCURRENCY resolves to a positive integer."""
+
+    try:
+        return max(1, int(value))
+    except ValueError:
+        return 1
 
 
 def main() -> None:
-    """Launch Uvicorn with safe environment variable handling."""
-    # Import uvicorn here to fail fast if not installed
-    try:
-        import uvicorn
-    except ImportError:
-        print("ERROR: uvicorn is not installed. Run: pip install uvicorn")
-        sys.exit(1)
+    """Resolve configuration from env vars and boot uvicorn."""
 
-    # Read configuration from environment
-    port = get_int_env("PORT", default=8080, minimum=1)
-    host = get_str_env("HOST", default="0.0.0.0")
-    app = get_str_env("UVICORN_APP", default="backend.main:app")
-    workers = get_int_env("WEB_CONCURRENCY", default=1, minimum=1)
-    log_level = get_str_env("LOG_LEVEL", default="info").lower()
+    host = os.getenv("HOST", "0.0.0.0")
+    port = _parse_port(os.getenv("PORT", "8080"))
+    app = os.getenv("UVICORN_APP", "backend.main:app")
+    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    workers = _parse_workers(os.getenv("WEB_CONCURRENCY", "1"))
 
-    # Validate log level
-    valid_log_levels = ("critical", "error", "warning", "info", "debug", "trace")
-    if log_level not in valid_log_levels:
-        print(f"WARNING: LOG_LEVEL={log_level!r} invalid, using 'info'")
-        log_level = "info"
+    print(f"🚀 Starting Uvicorn: {app} on {host}:{port} (Workers: {workers})")
 
-    # Print startup banner
-    print("=" * 60)
-    print("  DRAGONFLY UVICORN LAUNCHER")
-    print("=" * 60)
-    print(f"  App:     {app}")
-    print(f"  Host:    {host}")
-    print(f"  Port:    {port}")
-    print(f"  Workers: {workers}")
-    print(f"  Log:     {log_level}")
-    print("=" * 60)
-
-    # Launch uvicorn with Railway/proxy-friendly settings
     uvicorn.run(
         app,
         host=host,
         port=port,
-        workers=workers,
         log_level=log_level,
-        access_log=True,
+        workers=workers,
         proxy_headers=True,
         forwarded_allow_ips="*",
     )

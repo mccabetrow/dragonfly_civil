@@ -56,33 +56,69 @@ _PROJECT_ROOT: Path | None = None
 
 
 def _find_project_root() -> Path:
-    """Find the project root directory (contains .env.dev or pyproject.toml)."""
+    """
+    Find the project root directory (contains .env.dev or pyproject.toml).
+
+    PRODUCTION SAFETY:
+        This function NEVER raises exceptions. If filesystem operations fail
+        (e.g., in a container with restricted permissions), it returns a safe
+        fallback path instead of crashing.
+    """
     global _PROJECT_ROOT
     if _PROJECT_ROOT is not None:
         return _PROJECT_ROOT
 
-    # Start from current working directory
-    search_paths = [
-        Path.cwd(),
-        Path(__file__).parent.parent.parent,  # backend/core -> backend -> project_root
-    ]
+    # Build search paths safely - any of these could fail in containers
+    search_paths: list[Path] = []
+
+    try:
+        search_paths.append(Path.cwd())
+    except (OSError, FileNotFoundError):
+        # Working directory doesn't exist or isn't accessible
+        pass
+
+    try:
+        # backend/core -> backend -> project_root
+        search_paths.append(Path(__file__).parent.parent.parent)
+    except (OSError, TypeError):
+        # __file__ could be None in some edge cases
+        pass
+
+    # If we have no search paths, use a safe fallback
+    if not search_paths:
+        _PROJECT_ROOT = Path("/app")  # Railway/Docker default
+        logger.debug("No valid search paths found, using /app fallback")
+        return _PROJECT_ROOT
 
     markers = [".env.dev", ".env.prod", "pyproject.toml", "supabase"]
 
     for start in search_paths:
-        current = start.resolve()
+        try:
+            current = start.resolve()
+        except (OSError, FileNotFoundError):
+            continue
+
         for _ in range(5):  # Max 5 levels up
             for marker in markers:
-                if (current / marker).exists():
-                    _PROJECT_ROOT = current
-                    return current
+                try:
+                    if (current / marker).exists():
+                        _PROJECT_ROOT = current
+                        return current
+                except (OSError, PermissionError):
+                    # Can't check this marker, try next
+                    continue
+
             parent = current.parent
             if parent == current:
                 break
             current = parent
 
-    # Fallback to cwd
-    _PROJECT_ROOT = Path.cwd()
+    # Fallback: use first available search path or /app
+    try:
+        _PROJECT_ROOT = Path.cwd()
+    except (OSError, FileNotFoundError):
+        _PROJECT_ROOT = Path("/app")
+
     return _PROJECT_ROOT
 
 
@@ -111,43 +147,90 @@ def _parse_env_from_argv() -> str | None:
     return None
 
 
+def _normalize_env_name(raw: str | None) -> str | None:
+    """Normalize environment names to canonical identifiers."""
+
+    if not raw:
+        return None
+
+    value = raw.strip().lower()
+
+    if value in {"prod", "production"}:
+        return "prod"
+
+    if value in {"dev", "development"}:
+        return "dev"
+
+    return None
+
+
 def _load_dotenv_file(env_file: Path) -> int:
     """
     Load environment variables from a dotenv file.
+
+    PRODUCTION SAFETY:
+        This function NEVER raises exceptions. If the file doesn't exist,
+        can't be read, or has parsing errors, it returns -1 and the caller
+        falls back to system environment variables.
+
+    SECURITY: Excludes SUPABASE_MIGRATE_DB_URL to prevent migration credentials
+    from leaking into runtime environments. Migration scripts use load_env.ps1 directly.
 
     Args:
         env_file: Path to the .env.{env} file
 
     Returns:
-        Number of variables loaded
-
-    Raises:
-        FileNotFoundError: If the env file doesn't exist
+        Number of variables loaded, or -1 if file doesn't exist or can't be loaded
     """
+    # Variables that should NEVER be loaded into runtime (migration credentials)
+    EXCLUDED_VARS = {"SUPABASE_MIGRATE_DB_URL"}
+
     try:
-        from dotenv import load_dotenv
-    except ImportError as e:
-        raise ImportError(
-            "python-dotenv is required for environment loading. "
-            "Install with: pip install python-dotenv"
-        ) from e
-
-    # STRICT: No fallback - file MUST exist
-    if not env_file.exists():
-        raise FileNotFoundError(
-            f"Environment file not found: {env_file}\n"
-            f"Expected: .env.dev or .env.prod in project root.\n"
-            f"Searched: {env_file.parent}"
+        from dotenv import dotenv_values
+    except ImportError:
+        logger.warning(
+            "python-dotenv not installed; skipping %s and relying on system variables.",
+            env_file.name,
         )
+        return -1
 
-    # Load with override=True to force these values into os.environ
-    load_dotenv(env_file, override=True)
+    # Check if file exists - wrapped in try/except for safety
+    try:
+        file_exists = env_file.exists()
+    except (OSError, PermissionError) as exc:
+        logger.warning(
+            "Cannot check if %s exists (%s), relying on system variables.",
+            env_file.name,
+            exc,
+        )
+        return -1
 
-    # Count loaded vars (for logging)
-    from dotenv import dotenv_values
+    if not file_exists:
+        # File doesn't exist - this is normal in production
+        return -1
 
-    values = dotenv_values(env_file)
-    return len([v for v in values.values() if v is not None])
+    # Read values from file - wrapped in try/except for safety
+    try:
+        values = dotenv_values(env_file)
+    except Exception as exc:
+        logger.warning(
+            "Failed to parse %s (%s), relying on system variables.",
+            env_file.name,
+            exc,
+        )
+        return -1
+
+    # Load into os.environ, excluding dangerous vars
+    loaded_count = 0
+    for key, value in values.items():
+        if key in EXCLUDED_VARS:
+            logger.debug("Skipping %s (excluded from runtime)", key)
+            continue
+        if value is not None:
+            os.environ[key] = value
+            loaded_count += 1
+
+    return loaded_count
 
 
 def bootstrap_environment(
@@ -158,10 +241,15 @@ def bootstrap_environment(
     """
     Bootstrap the environment with strict precedence.
 
+    PRODUCTION SAFETY (INDESTRUCTIBLE):
+        This function NEVER crashes due to missing files. In production
+        containers where .env files don't exist, it gracefully falls back
+        to system environment variables and continues startup.
+
     Precedence (highest to lowest):
         1. cli_override parameter (for programmatic control)
         2. CLI args (--env prod or -e prod)
-        3. System env var DRAGONFLY_ACTIVE_ENV
+        3. System env var DRAGONFLY_ACTIVE_ENV or ENVIRONMENT or DRAGONFLY_ENV
         4. Default: 'dev'
 
     Args:
@@ -173,9 +261,16 @@ def bootstrap_environment(
         The environment name ('dev' or 'prod')
 
     Raises:
-        FileNotFoundError: If .env.{env} file doesn't exist
-        ValueError: If environment name is invalid
+        ValueError: If environment name is invalid (not 'dev' or 'prod')
+
+    Note:
+        If .env.{env} file is missing, logs a warning and continues.
+        This is expected in Railway/production where variables come from
+        the platform, not local files.
     """
+    # Emit early startup signal for Railway log visibility
+    print("[BOOTSTRAP] Dragonfly environment bootstrap starting...", flush=True)
+
     # Step 1: Determine target environment
     env_name: str
 
@@ -191,8 +286,21 @@ def bootstrap_environment(
             env_name = os.environ[ENV_MARKER]
             source = f"env var ({ENV_MARKER})"
         else:
-            env_name = "dev"
-            source = "default"
+            fallback_env = None
+            fallback_source = None
+            for candidate in ("ENVIRONMENT", "DRAGONFLY_ENV", "SUPABASE_MODE"):
+                normalized = _normalize_env_name(os.environ.get(candidate))
+                if normalized:
+                    fallback_env = normalized
+                    fallback_source = f"env var ({candidate})"
+                    break
+
+            if fallback_env:
+                env_name = fallback_env
+                source = fallback_source or "environment variable"
+            else:
+                env_name = "dev"
+                source = "default"
 
     # Step 2: Validate environment name
     env_name = env_name.lower().strip()
@@ -205,8 +313,26 @@ def bootstrap_environment(
     # Step 4: Construct target filename
     env_file = root / f".env.{env_name}"
 
-    # Step 5: Load the env file (STRICT - no fallback)
+    # Step 5: Load the env file if it exists (graceful fallback to system vars)
     var_count = _load_dotenv_file(env_file)
+
+    if var_count == -1:
+        # File doesn't exist - this is OK in Railway/production where
+        # environment variables come from the platform, not .env files
+        print(
+            f"[BOOTSTRAP] ⚠️ Env file not found ({env_file.name}). "
+            "Relying on System Environment Variables.",
+            flush=True,
+        )
+        logger.warning(
+            f"Env file not found ({env_file.name}), relying on system variables. "
+            "This is expected in Railway/production environments."
+        )
+    else:
+        print(
+            f"[BOOTSTRAP] ✅ Loaded config from {env_file.name} ({var_count} vars)",
+            flush=True,
+        )
 
     # Step 6: Set the environment marker
     os.environ[ENV_MARKER] = env_name
@@ -245,6 +371,24 @@ def _print_startup_banner(
     else:
         env_badge = "\033[92m[DEV]\033[0m"  # Green
 
+    # Handle missing env file case
+    if var_count == -1:
+        config_source = "SYSTEM_ENV"
+        env_file_display = "(system vars)"
+        var_count_display = "N/A"
+    else:
+        config_source = f"FILE:{env_file.name}"
+        env_file_display = env_file.name
+        var_count_display = str(var_count)
+
+    # Get git SHA for boot fingerprinting
+    git_sha = get_git_sha()
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BOOT DIAGNOSTIC LINE - Railway-parseable single line for log aggregation
+    # ═══════════════════════════════════════════════════════════════════════════
+    print(f"[BOOT] Mode: {env_name.upper()} | Config Source: {config_source} | SHA: {git_sha}")
+
     print(
         f"\n"
         f"╔══════════════════════════════════════════════════════════════════╗\n"
@@ -252,8 +396,9 @@ def _print_startup_banner(
         f"╠══════════════════════════════════════════════════════════════════╣\n"
         f"║  Environment: {env_badge:<44}║\n"
         f"║  Source:      {source:<44}║\n"
-        f"║  Env File:    {env_file.name:<44}║\n"
-        f"║  Variables:   {var_count:<44}║\n"
+        f"║  Env File:    {env_file_display:<44}║\n"
+        f"║  Variables:   {var_count_display:<44}║\n"
+        f"║  Git SHA:     {git_sha:<44}║\n"
         f"║  DB Host:     {db_host[:44]:<44}║\n"
         f"╚══════════════════════════════════════════════════════════════════╝\n"
     )
