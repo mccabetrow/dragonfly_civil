@@ -197,6 +197,11 @@ def load_environment(
     """
     Load environment configuration with strict precedence.
 
+    PRODUCTION SAFETY (CRASH-PROOF):
+        This function NEVER raises FileNotFoundError. In Railway/production
+        where .env files don't exist, it gracefully falls back to system
+        environment variables and continues startup.
+
     Precedence (highest to lowest):
         1. Explicit `env` parameter
         2. CLI --env argument
@@ -213,7 +218,11 @@ def load_environment(
 
     Raises:
         RuntimeError: If prod environment has dev credentials
-        FileNotFoundError: If required env file is missing in prod mode
+
+    Note:
+        If .env.{env} file is missing, logs a warning and continues.
+        This is expected in Railway/production where variables come from
+        the platform, not local files.
     """
     # Step 1: Determine target environment
     if env is None:
@@ -248,18 +257,20 @@ def load_environment(
     # Step 3: Clear Pydantic cache before loading new environment
     _clear_pydantic_cache()
 
-    # Step 4: Load the target env file
+    # Step 4: Load the target env file (if it exists)
     env_file = project_root / f".env.{env}"
 
-    if env == "prod" and not env_file.exists():
-        raise FileNotFoundError(
-            f"Production environment file not found: {env_file}\n"
-            "Create .env.prod with production credentials before running in prod mode."
+    # PRODUCTION SAFETY: Do NOT raise if file is missing.
+    # In Railway/production, environment variables come from the platform,
+    # not local .env files. The file is optional.
+    loaded_count = 0
+    if env_file.exists():
+        loaded_count = _load_dotenv_file(env_file, override=True)
+        logger.info(f"✅ Loaded config from {env_file.name} ({loaded_count} vars)")
+    else:
+        logger.warning(
+            f"⚠️ Env file not found ({env_file.name}). " "Relying on System Environment Variables."
         )
-
-    # ISOLATION: Do NOT load .env when targeting prod
-    # Only load the explicit .env.{env} file
-    loaded_count = _load_dotenv_file(env_file, override=True)
 
     # Step 5: Set environment markers
     os.environ[ENV_MARKER] = env
