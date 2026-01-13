@@ -19,9 +19,14 @@ ENVIRONMENT LOADING:
 # =============================================================================
 # CRITICAL: Configuration Guard - Must run FIRST before any other imports
 # =============================================================================
-from backend.core.config_guard import validate_db_config, validate_production_config
+from backend.core.config_guard import (
+    validate_db_config,
+    validate_production_config,
+    validate_runtime_config,
+)
 
-validate_production_config()  # Crashes if misconfigured in production
+validate_runtime_config()  # Phase 0/1: Strict pooler, SSL, and credential leak checks
+validate_production_config()  # Additional production safety checks
 # =============================================================================
 
 # Must be second - fixes Windows asyncio compatibility with psycopg3
@@ -87,7 +92,16 @@ from .api.routers.ingest_v2 import router as ingest_v2_router  # noqa: E402
 from .api.routers.intake import router as intake_router  # noqa: E402
 from .api.routers.integrity import router as integrity_router  # noqa: E402
 from .api.routers.intelligence import router as intelligence_router  # noqa: E402
-from .api.routers.metrics import router as metrics_router  # noqa: E402
+
+# Optional metrics module - graceful degradation if missing
+try:
+    from .api.routers.metrics import router as metrics_router  # noqa: E402
+except ImportError:
+    metrics_router = None  # type: ignore[assignment, misc]
+    import logging as _metrics_log
+
+    _metrics_log.warning("⚠️ Metrics module not found. Skipping metrics endpoints.")
+
 from .api.routers.offers import router as offers_router  # noqa: E402
 from .api.routers.ops_guardian import router as ops_guardian_router  # noqa: E402
 from .api.routers.packets import router as packets_router  # noqa: E402
@@ -111,14 +125,25 @@ from .middleware.correlation import CorrelationMiddleware  # noqa: E402
 from .middleware.metrics import MetricsMiddleware  # noqa: E402
 from .middleware.version import VersionMiddleware, get_version_info  # noqa: E402
 from .scheduler import init_scheduler  # noqa: E402
-from .utils.logging import setup_logging  # noqa: E402
+from .utils.logging import get_log_metadata, setup_logging  # noqa: E402
 
 # Configure logging before anything else
 setup_logging(service_name="dragonfly-api")
 logger = logging.getLogger(__name__)
+_LOG_METADATA = get_log_metadata()
+
+
+def _version_log_extra() -> dict[str, str]:
+    """Create a fresh copy of version metadata for log records."""
+
+    return dict(_LOG_METADATA)
+
 
 # Log environment at module load
-logger.info(f"🚀 Dragonfly booting in [{_env_name.upper()}] mode")
+logger.info(
+    f"🚀 Dragonfly booting in [{_env_name.upper()}] mode",
+    extra=_version_log_extra(),
+)
 
 # Validate required environment variables at import time
 # Fail fast if critical vars are missing
@@ -270,7 +295,14 @@ def create_app() -> FastAPI:
         allow_credentials=True,  # Required for cross-origin auth
         allow_methods=["*"],
         allow_headers=["*"],  # Accept all headers including X-API-Key
-        expose_headers=["Content-Disposition", "X-Dragonfly-SHA", "X-Request-ID"],
+        expose_headers=[
+            "Content-Disposition",
+            "X-Request-ID",
+            "X-Dragonfly-SHA",
+            "X-Dragonfly-SHA-Short",
+            "X-Dragonfly-Env",
+            "X-Dragonfly-Version",
+        ],
     )
 
     # 2. SecurityMiddleware: Rate limiting for abuse detection (always active in prod)
@@ -427,7 +459,8 @@ def create_app() -> FastAPI:
     app.include_router(system_router, prefix="/api", tags=["system"])  # internal: /v1/system
 
     # Observability - Lightweight metrics endpoint (requires API key)
-    app.include_router(metrics_router, prefix="/api", tags=["observability"])  # /api/metrics
+    if metrics_router is not None:
+        app.include_router(metrics_router, prefix="/api", tags=["observability"])  # /api/metrics
 
     # Webhooks - external service callbacks (Proof.com, etc.)
     app.include_router(webhooks_router, prefix="/api", tags=["webhooks"])  # internal: /v1/webhooks

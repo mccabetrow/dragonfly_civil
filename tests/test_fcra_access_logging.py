@@ -16,8 +16,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from conftest import get_test_client, skip_if_no_db
 from postgrest.exceptions import APIError
+
+from tests.conftest import get_test_client, skip_if_no_db
 
 # Mark as integration (PostgREST) + legacy (optional FCRA schema)
 pytestmark = [pytest.mark.integration, pytest.mark.legacy]

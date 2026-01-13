@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Validate production SUPABASE_DB_URL contract."""
+"""
+Validate production SUPABASE_DB_URL contract.
+
+Usage:
+    python -m tools.validate_prod_dsn                    # reads from SUPABASE_DB_URL env
+    python -m tools.validate_prod_dsn "postgresql://..." # reads from CLI arg
+    echo "postgresql://..." | python -m tools.validate_prod_dsn --stdin
+"""
 from __future__ import annotations
 
 import os
@@ -9,14 +16,18 @@ from urllib.parse import parse_qs, urlparse
 
 def _fatal(message: str) -> None:
     """Print a single-line operator friendly error and exit."""
-    print(f"[VALIDATE_PROD_DSN] FATAL: {message}")
+    print(f"❌ INVALID: {message}")
     sys.exit(1)
 
 
-def _validate_supabase_dsn(url: str) -> None:
-    """Validate that the provided Supabase DSN satisfies production constraints."""
+def validate_supabase_dsn(url: str) -> list[str]:
+    """
+    Validate that the provided Supabase DSN satisfies production constraints.
+
+    Returns list of violations (empty if valid).
+    """
     if not url:
-        raise ValueError("SUPABASE_DB_URL is not set")
+        return ["SUPABASE_DB_URL is not set or empty"]
 
     parsed = urlparse(url)
 
@@ -28,31 +39,59 @@ def _validate_supabase_dsn(url: str) -> None:
 
     violations: list[str] = []
 
-    if "pooler.supabase.com" not in host.lower():
-        violations.append("host must include pooler.supabase.com")
+    # Host validation: must be pooler, not direct
+    if "db." in host.lower():
+        violations.append(f"Host '{host}' is DIRECT connection (db.*). Use pooler.supabase.com")
+    elif "pooler.supabase.com" not in host.lower() and "aws-0" not in host.lower():
+        violations.append(f"Host '{host}' must contain pooler.supabase.com or aws-0")
 
-    if port != 6543:
-        violations.append("port must be 6543")
+    # Port validation: must be 6543 (transaction pooler)
+    if port == 5432:
+        violations.append("Port 5432 is DIRECT connection. Use port 6543 (transaction pooler)")
+    elif port != 6543:
+        violations.append(f"Port {port} is invalid. Must be 6543 (transaction pooler)")
 
+    # SSL validation: must be sslmode=require
     if sslmode != "require":
-        violations.append("sslmode must be require")
+        violations.append(f"sslmode='{sslmode}' is invalid. Must be sslmode=require")
 
-    if not (username.startswith("postgres.") and len(username.split(".", 1)[-1]) > 0):
-        violations.append("username must be postgres.<project_ref>")
+    # Username validation (optional but recommended)
+    if username and not (username.startswith("postgres.") and len(username.split(".", 1)[-1]) > 0):
+        violations.append(f"Username '{username}' should be postgres.<project_ref>")
 
-    if violations:
-        raise ValueError("; ".join(violations))
+    return violations
 
 
 def main() -> int:
-    url = os.environ.get("SUPABASE_DB_URL", "").strip()
+    """Entry point supporting env var, CLI arg, or stdin input."""
+    url: str = ""
 
-    try:
-        _validate_supabase_dsn(url)
-    except ValueError as exc:
-        _fatal(str(exc))
+    # Priority: CLI arg > stdin flag > env var
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--stdin":
+            url = sys.stdin.read().strip()
+        elif sys.argv[1] == "--help" or sys.argv[1] == "-h":
+            print(__doc__)
+            return 0
+        else:
+            url = sys.argv[1]
+    else:
+        url = os.environ.get("SUPABASE_DB_URL", "").strip()
 
-    print("[VALIDATE_PROD_DSN] OK: pooler contract satisfied")
+    if not url:
+        print("Usage: python -m tools.validate_prod_dsn <dsn>")
+        print("       python -m tools.validate_prod_dsn  # reads SUPABASE_DB_URL env")
+        print("       echo '<dsn>' | python -m tools.validate_prod_dsn --stdin")
+        return 1
+
+    violations = validate_supabase_dsn(url)
+
+    if violations:
+        for v in violations:
+            print(f"❌ INVALID: {v}")
+        return 1
+
+    print("✅ VALID TRANSACTION POOLER DSN")
     return 0
 
 
