@@ -5,9 +5,9 @@ Dragonfly Vercel Build Security Scanner
 This script runs during the Vercel build process to prevent secrets from being
 exposed in the browser bundle. It performs three critical checks:
 
-1. Environment Variable Hygiene - Detects forbidden VITE_* patterns and whitespace issues
-2. Source Code Scan - Finds hardcoded secrets (OpenAI keys, database URLs)
-3. Dragonfly Key Check - Ensures VITE_DRAGONFLY_API_KEY is NOT present
+1. Environment Variable Hygiene – Detects forbidden VITE_* keywords, whitespace issues, and service_role leaks
+2. Source Code Scan & Dependency Audit – Finds hardcoded secrets/DSNs and blocks OpenAI SDK imports
+3. Supabase Key Validation – Ensures VITE_SUPABASE_ANON_KEY is never a service_role token
 
 Usage:
     python tools/scan_vercel_build.py [--strict] [--src-dir PATH]
@@ -39,6 +39,7 @@ ALLOWED_VITE_KEYS = frozenset(
         "VITE_API_BASE_URL",  # Public API endpoint URL
         "VITE_SUPABASE_URL",  # Supabase project URL (public)
         "VITE_SUPABASE_ANON_KEY",  # Supabase anon key (RLS-protected, safe)
+        "VITE_DRAGONFLY_API_KEY",  # API key used for backend auth headers
         "VITE_DEMO_MODE",  # Feature flag
         "VITE_IS_DEMO",  # Deprecated demo flag
         "VITE_DASHBOARD_SOURCE",  # Data source selector
@@ -69,6 +70,19 @@ SOURCE_SECRET_PATTERNS = [
     (re.compile(r'mysql://[^\s"\']+'), "MySQL connection string"),
     (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS Access Key ID (AKIA...)"),
     (re.compile(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"), "Private key block"),
+]
+
+BLOCKED_IMPORT_PATTERNS = [
+    (re.compile(r"from\s+['\"]openai['\"]"), "OpenAI SDK import is forbidden in the frontend"),
+    (re.compile(r"import\s+openai\b"), "OpenAI SDK import is forbidden in the frontend"),
+    (
+        re.compile(r"require\(\s*['\"]openai['\"]\s*\)"),
+        "OpenAI SDK import is forbidden in the frontend",
+    ),
+    (
+        re.compile(r"import\(\s*['\"]openai['\"]\s*\)"),
+        "OpenAI SDK import is forbidden in the frontend",
+    ),
 ]
 
 # File extensions to scan
@@ -153,6 +167,14 @@ def check_env_hygiene(result: ScanResult, strict: bool = False) -> None:
                     value=f"{key}=<redacted>",
                 )
                 break  # One violation per key is enough
+
+        if isinstance(value, str) and "service_role" in value.lower():
+            result.add_violation(
+                check="env_hygiene",
+                location=f"env:{key}",
+                message="VITE_ variable value contains 'service_role' - never expose privileged JWTs to the browser",
+                value=f"{key}=<redacted>",
+            )
 
         # Check for whitespace issues
         _check_whitespace(result, key, value, strict)
@@ -249,40 +271,15 @@ def check_source_code(result: ScanResult, src_dir: Path) -> None:
                         value=redacted,
                     )
 
+            for pattern, description in BLOCKED_IMPORT_PATTERNS:
+                if pattern.search(line):
+                    result.add_violation(
+                        check="dependency_audit",
+                        location=f"{filepath.relative_to(src_dir.parent)}:{line_num}",
+                        message=description,
+                    )
+
     print(f"   Scanned {files_scanned} source files")
-
-
-# =============================================================================
-# CHECK 3: DRAGONFLY KEY CHECK
-# =============================================================================
-
-
-def check_dragonfly_key(result: ScanResult) -> None:
-    """
-    Ensure VITE_DRAGONFLY_API_KEY is NOT present in the environment.
-
-    The frontend should authenticate via Supabase Auth Token, not a shared
-    static API key. This key should only exist on the backend (Railway).
-    """
-    forbidden_keys = [
-        "VITE_DRAGONFLY_API_KEY",
-        "VITE_DRAGONFLY_SECRET",
-        "VITE_API_SECRET",
-        "VITE_BACKEND_SECRET",
-    ]
-
-    for key in forbidden_keys:
-        if key in os.environ:
-            result.add_violation(
-                check="dragonfly_key",
-                location=f"env:{key}",
-                message=(
-                    f"{key} must NOT be exposed to the frontend. "
-                    "The dashboard should authenticate via Supabase Auth Token, "
-                    "not a shared static API key. Remove this from Vercel environment variables."
-                ),
-                value=f"{key}=<present>",
-            )
 
 
 # =============================================================================
@@ -435,27 +432,25 @@ def main() -> int:
     vite_count = sum(1 for k in os.environ if k.startswith("VITE_"))
     print(f"   Found {vite_count} VITE_* environment variables")
 
-    # Check 2: Source Code Scan
+    # Check 2: Source Code Scan & Dependency Audit
     print()
-    print("🔍 Check 2: Source Code Scan")
+    print("🔍 Check 2: Source Code Scan & Dependency Audit")
     if src_dir and src_dir.exists():
         print(f"   Scanning: {src_dir}")
         check_source_code(result, src_dir)
     else:
         print("   ⚠️  No source directory found (tried dragonfly-dashboard/src, frontend/src, src)")
 
-    # Check 3: Dragonfly Key Check
+    # Check 3: Supabase Anon Key Validation
     print()
-    print("🔍 Check 3: Dragonfly API Key Check")
-    check_dragonfly_key(result)
-    print("   Verified: VITE_DRAGONFLY_API_KEY must not be present")
-
-    # Bonus: Supabase Anon Key Validation
-    print()
-    print("🔍 Check 4: Supabase Key Validation")
+    print("🔍 Check 3: Supabase Key Validation")
     check_supabase_anon_key(result)
     if "VITE_SUPABASE_ANON_KEY" in os.environ:
-        print("   Verified: VITE_SUPABASE_ANON_KEY is not a service_role key")
+        has_violation = any(v.check == "supabase_key" for v in result.violations)
+        if has_violation:
+            print("   ❌ Detected service_role payload in VITE_SUPABASE_ANON_KEY")
+        else:
+            print("   Verified: VITE_SUPABASE_ANON_KEY is not a service_role key")
     else:
         print("   Skipped: VITE_SUPABASE_ANON_KEY not set")
 

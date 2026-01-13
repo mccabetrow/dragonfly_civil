@@ -126,7 +126,7 @@ Railway automatically injects these — **do not set manually**:
 
 ### 3.1 API Service (`dragonfly-api`)
 
-**Start command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+**Start command:** `python -m tools.run_uvicorn`
 
 | Variable                    | Source  | Required  |
 | --------------------------- | ------- | --------- |

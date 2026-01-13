@@ -105,6 +105,22 @@ const SOURCE_FORBIDDEN_PATTERNS = [
     pattern: /import\.meta\.env\.OPENAI_API_KEY/i, 
     reason: 'Attempting to access OpenAI API key in frontend code',
   },
+  {
+    pattern: /from\s+['"]openai['"]/i,
+    reason: 'OpenAI SDK import detected - move AI calls to the backend',
+  },
+  {
+    pattern: /import\s+openai\b/i,
+    reason: 'OpenAI SDK import detected - this package is forbidden in browser bundles',
+  },
+  {
+    pattern: /require\(\s*['"]openai['"]\s*\)/i,
+    reason: 'OpenAI SDK require() detected - remove server-only dependencies from frontend',
+  },
+  {
+    pattern: /import\(\s*['"]openai['"]\s*\)/i,
+    reason: 'Dynamic OpenAI SDK import detected - this leaks API usage to the client',
+  },
 ];
 
 /**
@@ -132,6 +148,17 @@ const ALLOWED_VITE_VARS = [
   'VITE_MOCK_MODE',           // Mock mode for testing
 ];
 
+const ALLOWED_VITE_VAR_SET = new Set(ALLOWED_VITE_VARS);
+
+const FORBIDDEN_VITE_KEYWORDS = [
+  'SECRET',
+  'KEY',
+  'TOKEN',
+  'PASSWORD',
+  'OPENAI',
+  'SERVICE_ROLE',
+];
+
 /**
  * File extensions to scan in src/
  */
@@ -147,6 +174,40 @@ const SKIP_PATTERNS = [
   /\.cache/,
   /coverage/,
 ];
+
+const violations = [];
+const warnings = [];
+
+function isAllowedViteVar(key) {
+  return ALLOWED_VITE_VAR_SET.has(key);
+}
+
+function containsForbiddenKeyword(key) {
+  if (!key) return false;
+  const upper = key.toUpperCase();
+  return FORBIDDEN_VITE_KEYWORDS.some(keyword => upper.includes(keyword));
+}
+
+function ensureAnonKeyIsAnon(value, context) {
+  if (!value) return;
+
+  try {
+    const parts = value.split('.');
+    if (parts.length !== 3) return;
+
+    const payload = Buffer.from(parts[1], 'base64').toString('utf8');
+    if (payload.includes('service_role')) {
+      violations.push({
+        file: context.file,
+        line: context.line,
+        match: context.match,
+        reason: 'VITE_SUPABASE_ANON_KEY is a service_role JWT! Use the anon/public key instead.',
+      });
+    }
+  } catch {
+    // Ignore decode failures
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
@@ -235,9 +296,6 @@ function getEnvFiles() {
 // ═══════════════════════════════════════════════════════════════════════════
 // SCANNING FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════
-
-const violations = [];
-const warnings = [];
 
 /**
  * Scan a file for forbidden patterns
@@ -331,48 +389,31 @@ function scanEnvFile(filePath) {
     
     // Check for forbidden keys that should never be in VITE_ prefix
     if (key.startsWith('VITE_')) {
-      // Check if this VITE_ var is allowed
-      if (!ALLOWED_VITE_VARS.includes(key)) {
-        // Check if it contains sensitive keywords
-        const hasSensitiveKeyword = /SECRET|PASSWORD|PRIVATE|SERVICE_ROLE/i.test(key);
-        if (hasSensitiveKeyword) {
-          violations.push({
-            file: relPath,
-            line: lineNum + 1,
-            match: key,
-            reason: `Forbidden VITE_ variable: ${key} contains sensitive keyword and will be exposed to browser`,
-          });
-        } else {
-          warnings.push({
-            file: relPath,
-            line: lineNum + 1,
-            match: key,
-            reason: `Unknown VITE_ variable: ${key} - add to ALLOWED_VITE_VARS if intentional`,
-          });
-        }
+      const allowedVar = isAllowedViteVar(key);
+      const hasKeyword = containsForbiddenKeyword(key);
+
+      if (!allowedVar && hasKeyword) {
+        violations.push({
+          file: relPath,
+          line: lineNum + 1,
+          match: key,
+          reason: `Forbidden VITE_ variable: ${key} contains sensitive keyword and will be exposed to the browser`,
+        });
+      } else if (!allowedVar) {
+        warnings.push({
+          file: relPath,
+          line: lineNum + 1,
+          match: key,
+          reason: `Unknown VITE_ variable: ${key} - add to ALLOWED_VITE_VARS if intentional`,
+        });
       }
-      
-      // Check if the VALUE looks like a service_role key (not anon)
-      // Supabase JWTs are base64-encoded, so we decode the payload to check
+
       if (key === 'VITE_SUPABASE_ANON_KEY') {
-        try {
-          // JWT format: header.payload.signature
-          const parts = value.split('.');
-          if (parts.length === 3) {
-            // Decode the payload (second part)
-            const payload = Buffer.from(parts[1], 'base64').toString('utf8');
-            if (payload.includes('service_role')) {
-              violations.push({
-                file: relPath,
-                line: lineNum + 1,
-                match: `${key}=<jwt-with-service_role>`,
-                reason: 'VITE_SUPABASE_ANON_KEY is a service_role JWT! Use the anon/public key instead.',
-              });
-            }
-          }
-        } catch {
-          // Not a valid JWT, skip decode check
-        }
+        ensureAnonKeyIsAnon(value, {
+          file: relPath,
+          line: lineNum + 1,
+          match: `${key}=<jwt-with-service_role>`,
+        });
       }
     }
     
@@ -446,6 +487,33 @@ function checkRequiredEnvVars() {
   }
 }
 
+function checkRuntimeViteVars() {
+  const runtimeVars = Object.entries(process.env).filter(([key]) => key.startsWith('VITE_'));
+  
+  for (const [key, rawValue] of runtimeVars) {
+    const value = typeof rawValue === 'string' ? rawValue : '';
+    const allowedVar = isAllowedViteVar(key);
+    const hasKeyword = containsForbiddenKeyword(key);
+    
+    if (!allowedVar && hasKeyword) {
+      violations.push({
+        file: 'environment',
+        line: 0,
+        match: `${key}=<runtime>`,
+        reason: `Forbidden runtime VITE_ variable detected: ${key} contains sensitive keyword`,
+      });
+    }
+    
+    if (key === 'VITE_SUPABASE_ANON_KEY') {
+      ensureAnonKeyIsAnon(value, {
+        file: 'environment',
+        line: 0,
+        match: 'process.env.VITE_SUPABASE_ANON_KEY',
+      });
+    }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN
 // ═══════════════════════════════════════════════════════════════════════════
@@ -482,6 +550,11 @@ console.log('');
 console.log('🔍 Checking environment configuration...');
 checkRequiredEnvVars();
 console.log('   ✓ Environment check complete');
+
+console.log('');
+console.log('🛡️  Inspecting runtime VITE_* variables...');
+checkRuntimeViteVars();
+console.log('   ✓ Runtime VITE_* scan complete');
 
 // 4. Report results
 console.log('');

@@ -7,6 +7,7 @@ This prevents PowerShell/CI NativeCommandError caused by INFO on stderr.
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -174,3 +175,39 @@ class TestLoggingStreams:
                 root_logger.removeHandler(handler)
             for handler in original_handlers:
                 root_logger.addHandler(handler)
+
+    def test_json_formatter_applies_version_metadata(self, monkeypatch):
+        """JSONFormatter should include sha/env metadata from resolver."""
+        import backend.middleware.version as version_module
+        import backend.utils.logging as logging_utils
+
+        metadata = {
+            "env": "stage",
+            "sha": "1234567890abcdef1234567890abcdef12345678",
+            "sha_short": "12345678",
+            "version": "9.9.9-test",
+            "sha_source": "RAILWAY_GIT_COMMIT_SHA",
+        }
+
+        monkeypatch.setattr(logging_utils, "_LOG_DEFAULTS_READY", False)
+        monkeypatch.setattr(logging_utils, "_LOG_DEFAULTS", dict(logging_utils._LOG_DEFAULTS))
+        monkeypatch.setattr(version_module, "get_version_info", lambda: metadata)
+
+        formatter = logging_utils.JSONFormatter(service_name="unit-test")
+        record = logging.LogRecord(
+            name="unit",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=10,
+            msg="sha-check",
+            args=(),
+            exc_info=None,
+        )
+
+        payload = json.loads(formatter.format(record))
+
+        assert payload["sha"] == metadata["sha"]
+        assert payload["sha_short"] == metadata["sha_short"]
+        assert payload["env"] == metadata["env"]
+        assert payload["version"] == metadata["version"]
+        assert payload["service"] == "unit-test"

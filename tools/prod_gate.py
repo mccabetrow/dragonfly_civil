@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.core.logging import configure_worker_logging
 from src.supabase_client import get_supabase_db_url, get_supabase_env
+from tools.validate_prod_dsn import validate_supabase_dsn
 
 # Configure logging
 logger = configure_worker_logging("prod_gate")
@@ -424,6 +425,69 @@ def check_evaluator(skip: bool = False) -> CheckResult:
 # =============================================================================
 # PROD MODE CHECKS (Strict Production Blockers)
 # =============================================================================
+
+
+def check_prod_dsn(env: str, skip: bool = False) -> CheckResult:
+    """
+    Check SUPABASE_DB_URL meets production DSN contract.
+
+    Contract requirements:
+    1. Host: *.pooler.supabase.com (Transaction Pooler)
+    2. Port: 6543 (NOT 5432)
+    3. SSL:  sslmode=require (explicit)
+
+    This check runs BEFORE any network calls to catch misconfiguration early.
+    """
+    if skip:
+        return CheckResult(
+            name="DSN Contract",
+            passed=True,
+            message="Skipped by user request",
+            skipped=True,
+        )
+
+    # Only enforce in prod mode
+    if env != "prod":
+        return CheckResult(
+            name="DSN Contract",
+            passed=True,
+            message="Skipped in dev mode (strict DSN contract not required)",
+            skipped=True,
+        )
+
+    logger.info("Validating production DSN contract...")
+
+    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL", "")
+
+    if not db_url:
+        return CheckResult(
+            name="DSN Contract",
+            passed=False,
+            message="SUPABASE_DB_URL is not set",
+            remediation="Set SUPABASE_DB_URL in Railway service variables",
+        )
+
+    violations = validate_supabase_dsn(db_url)
+
+    if violations:
+        # Truncate to avoid leaking sensitive info
+        summary = "; ".join(v[:80] for v in violations[:3])
+        return CheckResult(
+            name="DSN Contract",
+            passed=False,
+            message=f"DSN violates production contract: {summary}",
+            remediation=(
+                "Run 'python -m tools.validate_prod_dsn --runbook' for fix instructions. "
+                "Use Supabase Dashboard → Settings → Database → Transaction mode."
+            ),
+            details={"violation_count": len(violations)},
+        )
+
+    return CheckResult(
+        name="DSN Contract",
+        passed=True,
+        message="DSN meets production contract (pooler:6543, sslmode=require)",
+    )
 
 
 def check_api_health(env: str, skip: bool = False) -> CheckResult:
@@ -1108,6 +1172,9 @@ def run_prod_gate(skips: set[str]) -> GateReport:
         timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
         environment=env,
     )
+
+    # DSN contract check FIRST - fail fast before any network calls
+    report.add(check_prod_dsn(env, "dsn" in skips))
 
     # Production checks - database first (fail fast)
     report.add(check_db_connectivity(env, "db" in skips))

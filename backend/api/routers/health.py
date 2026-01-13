@@ -28,6 +28,7 @@ from ... import __version__
 from ...api import ApiResponse, api_response, degraded_response
 from ...config import get_settings
 from ...db import check_db_ready, fetch_val, get_pool, get_pool_health, get_supabase_client
+from ...middleware.version import get_version_info
 
 # Default timeouts for health checks (seconds)
 HEALTH_DB_TIMEOUT = 5.0
@@ -213,6 +214,8 @@ async def root_readiness_check() -> JSONResponse:
     Security: Error details are LOGGED but never exposed in the response.
     This prevents information leakage about internal infrastructure.
     """
+    version_info = get_version_info()
+
     try:
         pool = await get_pool()
         if pool is None:
@@ -237,7 +240,15 @@ async def root_readiness_check() -> JSONResponse:
         )
 
     except asyncio.TimeoutError:
-        logger.error("Readiness check failed: Database query timed out (>2s)")
+        logger.error(
+            "Readiness check failed: Database query timed out (>2s)",
+            extra={
+                "probe": "readyz_root",
+                "classification": "db_timeout",
+                "env": version_info.get("env"),
+                "sha": version_info.get("sha_short"),
+            },
+        )
         return JSONResponse(
             status_code=503,
             content={
@@ -247,10 +258,16 @@ async def root_readiness_check() -> JSONResponse:
         )
 
     except Exception as exc:
-        # Log the SPECIFIC exception for debugging
+        # Log the SPECIFIC exception for debugging (redacted from response)
         logger.error(
             f"Readiness check failed: {type(exc).__name__}: {exc}",
             exc_info=True,
+            extra={
+                "probe": "readyz_root",
+                "classification": "db_error",
+                "env": version_info.get("env"),
+                "sha": version_info.get("sha_short"),
+            },
         )
         # Return GENERIC reason to prevent information leakage
         return JSONResponse(

@@ -80,6 +80,46 @@ jobs:
           GITLEAKS_CONFIG: .gitleaks.toml
 
   # ===========================================================================
+  # Frontend Security Scan - blocks PRs that leak secrets to Vite builds
+  # ===========================================================================
+  frontend-security:
+    name: Frontend Security Gate
+    runs-on: ubuntu-latest
+    needs: secrets-scan
+
+    defaults:
+      run:
+        working-directory: dragonfly-dashboard
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: dragonfly-dashboard/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend security checks
+        env:
+          VITE_API_BASE_URL: "https://ci.dragonfly.app/api"
+          VITE_SUPABASE_URL: "https://placeholder.supabase.co"
+          VITE_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlhdCI6MTYwOTk5OTk5OX0.dummy_signature_ci"
+          VITE_DRAGONFLY_API_KEY: "df_prod_ci_placeholder"
+          VITE_DASHBOARD_SOURCE: "ci"
+        run: npm run check-security
+
+  # ===========================================================================
   # Lint & Format Check
   # ===========================================================================
   lint:

@@ -1,14 +1,28 @@
 # backend/core/db.py
 """
-Dragonfly Civil - Async Database Pool with Resilient Connection Handling
+Dragonfly Civil - "Polite" Async Database Pool
 
 DESIGN GOALS:
 =============
 1. LAZY LOADING: Pool is NOT instantiated in __init__. Only when start() is called.
 2. EXPONENTIAL BACKOFF WITH JITTER: Connection retries with 1s → 2s → 4s → 8s... up to 30s max.
-3. QUIET LOGGING: Avoid noisy logs during outages that look like a DDoS attack.
-4. ENV-DRIVEN POOL SIZE: Read DB_POOL_SIZE from environment (default: 5 for API, 1 for workers).
-5. SSL ENFORCEMENT: Always ensures sslmode=require for production security.
+3. KILL SWITCH: Immediate sys.exit(1) on authentication failures to prevent Supabase lockouts.
+4. QUIET LOGGING: Avoid noisy logs during outages that look like a DDoS attack.
+5. ENV-DRIVEN POOL SIZE: Read DB_POOL_SIZE from environment (default: 1 for workers, 5 for API).
+6. SSL ENFORCEMENT: Always ensures sslmode=require for production security.
+
+CRITICAL - THE "KILL SWITCH":
+==============================
+Supabase pooler (PgBouncer) triggers "server_login_retry" lockouts after repeated
+failed authentication attempts. This locks the ENTIRE PROJECT for up to 30 minutes.
+
+To prevent this, we IMMEDIATELY exit on:
+- "password authentication failed"
+- "FATAL:" (PostgreSQL FATAL errors include auth failures)
+- Role/database does not exist
+
+DO NOT RETRY invalid credentials. Log CRITICAL and sys.exit(1).
+Network errors (connection refused, timeout) are safe to retry with backoff.
 
 Usage:
     db = Database(url=dsn)
@@ -49,9 +63,75 @@ MAX_RETRY_DELAY = 30.0  # Cap at 30 seconds
 MAX_RETRY_ATTEMPTS = 10  # Give up after 10 attempts (~2 minutes total)
 JITTER_FACTOR = 0.3  # Add up to 30% jitter to prevent thundering herd
 
-# Default pool sizes
-DEFAULT_POOL_SIZE = 5  # For API servers
-WORKER_POOL_SIZE = 1  # For worker processes (single connection)
+# Default pool sizes - WORKERS GET 1 CONNECTION (polite to Supabase limits)
+DEFAULT_API_POOL_SIZE = 5  # For API servers
+DEFAULT_WORKER_POOL_SIZE = 1  # For worker processes (single connection)
+
+# Authentication failure patterns - IMMEDIATE EXIT to prevent lockouts
+# These patterns trigger sys.exit(1) on FIRST occurrence - NO RETRIES
+AUTH_FAILURE_PATTERNS = (
+    "password authentication failed",
+    "fatal:",  # PostgreSQL FATAL errors (includes auth, shutdown, etc.)
+    "authentication failed",
+    "no pg_hba.conf entry",
+    "server_login_retry",  # Supabase-specific lockout indicator
+)
+
+# Config/setup failures that also shouldn't be retried
+CONFIG_FAILURE_PATTERNS = (
+    r"role .* does not exist",
+    r"database .* does not exist",
+)
+
+# Network failures - safe to retry with backoff
+NETWORK_FAILURE_PATTERNS = (
+    "connection refused",
+    "could not connect to server",
+    "connection timed out",
+    "timeout expired",
+    "network is unreachable",
+    "could not translate host name",
+    "temporary failure in name resolution",
+)
+
+
+# =============================================================================
+# Worker Detection
+# =============================================================================
+
+
+def _is_worker_process() -> bool:
+    """
+    Detect if we're running as a worker process (should use minimal pool).
+
+    Workers only need 1 connection. API servers can use more.
+    Detection order:
+    1. WORKER_MODE env var (explicit)
+    2. DB_POOL_SIZE env var (if set to 1)
+    3. Process name heuristics (worker, celery, ingest, etc.)
+    """
+    # Explicit env var takes precedence
+    if os.getenv("WORKER_MODE", "").lower() in ("1", "true", "yes"):
+        return True
+
+    # If DB_POOL_SIZE is explicitly 1, treat as worker
+    pool_size = os.getenv("DB_POOL_SIZE", "")
+    if pool_size == "1":
+        return True
+
+    # Heuristics: check if invoked as a worker module
+    script = sys.argv[0] if sys.argv else ""
+    worker_patterns = (
+        "worker",
+        "celery",
+        "rq",
+        "dramatiq",
+        "ingest",
+        "watcher",
+        "scheduler",
+        "cron",
+    )
+    return any(p in script.lower() for p in worker_patterns)
 
 
 # =============================================================================
@@ -160,33 +240,39 @@ class DatabaseConnectionError(RuntimeError):
 
 class Database:
     """
-    Lazy-loaded async PostgreSQL connection pool with exponential backoff.
+    Lazy-loaded async PostgreSQL connection pool with "polite" retry behavior.
 
     The pool is NOT instantiated in __init__. It is only created and opened
     when start() is explicitly called. Connection failures are retried with
     exponential backoff to avoid hammering the database during outages.
 
+    THE KILL SWITCH:
+    ================
+    Authentication failures trigger IMMEDIATE sys.exit(1) to prevent
+    Supabase "server_login_retry" lockouts. DO NOT RETRY bad credentials.
+
     Pool Size Configuration:
-        - Read from DB_POOL_SIZE environment variable
-        - Default: 5 for API servers, 1 for workers
+        - Workers: max_size=1 (detected via WORKER_MODE or heuristics)
+        - API servers: max_size=5 (or DB_POOL_SIZE env var)
         - min_size is always 1 (conservative)
 
     Logging Strategy:
         - First attempt: INFO "🔌 Connecting..."
         - Retries: WARNING "⚠️ Connection failed. Retrying in Xs..."
         - Success: INFO "✅ Database Connected (Pool Size: N)"
+        - Auth failure: CRITICAL + sys.exit(1)
         - Exhausted: ERROR with full traceback
 
     Attributes:
         url: PostgreSQL connection string (DSN)
         min_size: Minimum connections to keep in pool (always 1)
-        max_size: Maximum connections allowed (from DB_POOL_SIZE)
+        max_size: Maximum connections allowed (from DB_POOL_SIZE or auto-detect)
         pool: The underlying AsyncConnectionPool (None until start())
 
     Example::
 
         db = Database(url="<dsn>")
-        await db.start()
+        await db.start()  # Opens pool, exits on auth failure
         async with db.get_connection() as conn:
             await conn.execute("SELECT 1")
         await db.stop()
@@ -200,6 +286,7 @@ class Database:
         "max_lifetime",
         "pool",
         "_app_name",
+        "_is_worker",
     )
 
     def __init__(
@@ -218,7 +305,7 @@ class Database:
         Args:
             url: PostgreSQL DSN (connection string)
             min_size: Minimum idle connections (default: 1, conservative)
-            max_size: Maximum connections (default: from DB_POOL_SIZE env or 5)
+            max_size: Maximum connections (default: 1 for workers, 5 for API)
             timeout: Seconds to wait for a connection from pool (default: 30)
             max_lifetime: Recycle connections after this many seconds (default: 1800)
             app_name: PostgreSQL application_name (default: auto-generated)
@@ -231,8 +318,9 @@ class Database:
         self.timeout = timeout
         self.max_lifetime = max_lifetime
         self.pool: Optional[AsyncConnectionPool] = None  # NOT instantiated here
+        self._is_worker = _is_worker_process()
 
-        # Read pool size from environment
+        # Determine pool size: explicit > env var > auto-detect
         if max_size is not None:
             self.max_size = max_size
         else:
@@ -241,22 +329,27 @@ class Database:
                 try:
                     self.max_size = int(env_pool_size)
                 except ValueError:
+                    default = DEFAULT_WORKER_POOL_SIZE if self._is_worker else DEFAULT_API_POOL_SIZE
                     logger.warning(
-                        f"Invalid DB_POOL_SIZE '{env_pool_size}', using default {DEFAULT_POOL_SIZE}"
+                        f"Invalid DB_POOL_SIZE '{env_pool_size}', using default {default}"
                     )
-                    self.max_size = DEFAULT_POOL_SIZE
+                    self.max_size = default
             else:
-                self.max_size = DEFAULT_POOL_SIZE
+                # Auto-detect: workers get 1, API gets 5
+                self.max_size = (
+                    DEFAULT_WORKER_POOL_SIZE if self._is_worker else DEFAULT_API_POOL_SIZE
+                )
 
         # Generate safe application name (no spaces/dots for PostgreSQL option parsing)
         if app_name:
             self._app_name = app_name.replace(".", "_").replace(" ", "_").replace("-", "_")
         else:
-            # Default: dragonfly_backend
-            self._app_name = "dragonfly_backend"
+            mode = "worker" if self._is_worker else "api"
+            self._app_name = f"dragonfly_{mode}"
 
         logger.debug(
             f"Database configured (pool not yet open) | "
+            f"mode={'worker' if self._is_worker else 'api'} "
             f"min_size={self.min_size} max_size={self.max_size} app_name={self._app_name}"
         )
 
@@ -265,7 +358,7 @@ class Database:
         """Return True if the pool is open and ready for connections."""
         return self.pool is not None
 
-    async def start(self) -> None:
+    async def start(self, *, max_retries: int | None = None) -> None:
         """
         Instantiate and open the connection pool with exponential backoff + jitter.
 
@@ -280,6 +373,10 @@ class Database:
         - SSL enforcement: sslmode=require added if not present
         - Jitter: 0-30% random delay to prevent thundering herd
         - Structured logging: Single event on success/failure with metrics
+
+        Args:
+            max_retries: Maximum connection attempts. If None (default), uses
+                         MAX_RETRY_ATTEMPTS (10). Set to 1 in tests for fast failure.
 
         Logging Strategy:
         - First attempt: INFO
@@ -304,8 +401,9 @@ class Database:
         delay = INITIAL_RETRY_DELAY
         last_error: Optional[Exception] = None
         pool: Optional[AsyncConnectionPool] = None
+        effective_max_retries = max_retries if max_retries is not None else MAX_RETRY_ATTEMPTS
 
-        while attempt < MAX_RETRY_ATTEMPTS:
+        while attempt < effective_max_retries:
             attempt += 1
 
             try:
@@ -356,22 +454,47 @@ class Database:
                 last_error = e
                 error_str = str(e).lower()
 
-                # SAFETY: Detect fatal auth errors and abort immediately
-                # to prevent Supabase server_login_retry lockout
-                fatal_patterns = [
-                    "password authentication failed",
-                    "authentication failed",
-                    "role .* does not exist",
-                    "database .* does not exist",
-                ]
-                for pattern in fatal_patterns:
-                    if re.search(pattern, error_str):
-                        logger.critical(
-                            "⛔ FATAL: Authentication/authorization error detected. "
-                            "ABORTING to prevent account lockout. "
-                            f"Error: {type(e).__name__}: {e}"
-                        )
-                        sys.exit(1)
+                # ═══════════════════════════════════════════════════════════════
+                # THE KILL SWITCH - IMMEDIATE EXIT ON AUTH FAILURES
+                # ═══════════════════════════════════════════════════════════════
+                # Supabase pooler triggers "server_login_retry" lockout after
+                # repeated bad auth. This locks the ENTIRE PROJECT for 30 minutes.
+                # DO NOT RETRY - exit immediately on first auth failure.
+
+                # Check for auth failure patterns (case-insensitive)
+                is_auth_failure = any(pattern in error_str for pattern in AUTH_FAILURE_PATTERNS)
+
+                # Check for config failures (role/database doesn't exist) - use regex
+                is_config_failure = any(
+                    re.search(pattern, error_str) for pattern in CONFIG_FAILURE_PATTERNS
+                )
+
+                if is_auth_failure or is_config_failure:
+                    # Log CRITICAL and EXIT IMMEDIATELY
+                    logger.critical(
+                        f"⛔ FATAL: {'Authentication' if is_auth_failure else 'Configuration'} "
+                        f"error detected - EXITING to prevent Supabase lockout\n"
+                        f"   Host: {dsn_info.get('host')}\n"
+                        f"   Port: {dsn_info.get('port')}\n"
+                        f"   User: {dsn_info.get('user')}\n"
+                        f"   Error: {type(e).__name__}: {e}\n"
+                        f"   Action: Check SUPABASE_DB_URL credentials and database settings"
+                    )
+                    # Print to stderr for visibility in container logs
+                    print(
+                        f"\n{'=' * 70}\n"
+                        f"  ⛔ FATAL: DATABASE AUTHENTICATION FAILURE\n"
+                        f"{'=' * 70}\n\n"
+                        f"  Error: {str(e)[:200]}\n\n"
+                        f"  Host: {dsn_info.get('host')}\n"
+                        f"  Port: {dsn_info.get('port')}\n"
+                        f"  User: {dsn_info.get('user')}\n\n"
+                        f"  ACTION: Check SUPABASE_DB_URL credentials.\n"
+                        f"  Exiting immediately to prevent server_login_retry lockout.\n\n"
+                        f"{'=' * 70}\n",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
 
                 # Close any partially opened pool
                 if pool is not None:
@@ -381,14 +504,15 @@ class Database:
                         pass  # Ignore close errors
                     pool = None
 
-                if attempt < MAX_RETRY_ATTEMPTS:
+                # Network errors are safe to retry with backoff
+                if attempt < effective_max_retries:
                     # Add jitter to prevent thundering herd
                     jitter = random.uniform(0, delay * JITTER_FACTOR)
                     actual_delay = delay + jitter
 
                     # Log retry warning (quiet - single line, no stack trace)
                     logger.warning(
-                        f"⚠️ DB Connection failed (attempt {attempt}/{MAX_RETRY_ATTEMPTS}). "
+                        f"⚠️ DB Connection failed (attempt {attempt}/{effective_max_retries}). "
                         f"Retrying in {actual_delay:.1f}s... ({type(e).__name__}: {e})"
                     )
                     await asyncio.sleep(actual_delay)
@@ -583,7 +707,9 @@ def get_database() -> Database:
     The instance is created lazily on first call, but the pool
     is NOT opened until start() is called.
 
-    Pool size is read from DB_POOL_SIZE environment variable.
+    Pool Size:
+        - Workers (WORKER_MODE=1 or heuristics): max_size=1
+        - API servers: max_size=5 (or DB_POOL_SIZE env var)
 
     Returns:
         Database: The singleton database instance
@@ -598,10 +724,13 @@ def get_database() -> Database:
         if not url:
             raise ValueError("SUPABASE_DB_URL environment variable is not set")
 
+        # Pool size is auto-detected by Database.__init__:
+        # - Workers: max_size=1 (detected via WORKER_MODE or process name)
+        # - API: max_size=5 (or DB_POOL_SIZE env var)
         _default_db = Database(
             url=url,
             min_size=1,  # Conservative: always start with 1
-            # max_size read from DB_POOL_SIZE by Database.__init__
+            # max_size auto-detected by Database.__init__ based on worker mode
             timeout=30.0,
             max_lifetime=1800.0,
         )

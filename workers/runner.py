@@ -15,7 +15,7 @@ from .handlers import (
 )
 from .queue_client import QueueClient, QueueRpcNotFound
 
-configure_logging()
+configure_logging(service_name="dragonfly-worker")
 logger = logging.getLogger(__name__)
 
 JobHandler = Callable[[Dict[str, Any]], Awaitable[bool]]

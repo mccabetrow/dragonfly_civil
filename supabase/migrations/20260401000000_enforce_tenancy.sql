@@ -756,14 +756,28 @@ RAISE NOTICE '🛡️ Hardened RLS on public.tasks';
 END IF;
 END $$;
 -- -----------------------------------------------------------------------------
--- public.events - STRICT org isolation
+-- public.events - STRICT org isolation (guarded on org_id column)
 -- -----------------------------------------------------------------------------
-DO $$ BEGIN IF EXISTS (
+DO $$ BEGIN IF NOT EXISTS (
     SELECT 1
     FROM information_schema.tables
     WHERE table_schema = 'public'
         AND table_name = 'events'
-) THEN DROP POLICY IF EXISTS "events_org_isolation" ON public.events;
+) THEN RETURN;
+END IF;
+IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+        AND table_name = 'events'
+        AND column_name = 'org_id'
+) THEN RAISE NOTICE '⚠ Skipping events RLS - org_id column does not exist';
+-- Still create service_role bypass policy
+DROP POLICY IF EXISTS "events_service_role_bypass" ON public.events;
+CREATE POLICY "events_service_role_access" ON public.events FOR ALL TO service_role USING (true) WITH CHECK (true);
+RETURN;
+END IF;
+DROP POLICY IF EXISTS "events_org_isolation" ON public.events;
 DROP POLICY IF EXISTS "events_service_role_bypass" ON public.events;
 CREATE POLICY "events_strict_org_isolation" ON public.events FOR ALL USING (
     org_id IN (
@@ -776,7 +790,6 @@ CREATE POLICY "events_strict_org_isolation" ON public.events FOR ALL USING (
 );
 CREATE POLICY "events_service_role_access" ON public.events FOR ALL TO service_role USING (true) WITH CHECK (true);
 RAISE NOTICE '🛡️ Hardened RLS on public.events';
-END IF;
 END $$;
 -- -----------------------------------------------------------------------------
 -- public.plaintiff_contacts - STRICT org isolation (via parent plaintiffs)

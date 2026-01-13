@@ -18,11 +18,11 @@ You are the Lead Staff Engineer for Dragonfly Civil, a judgment-enforcement oper
 
 ## Key Services on Railway
 
-| Service              | Start Command                                          | Purpose              |
-| -------------------- | ------------------------------------------------------ | -------------------- |
-| `dragonfly-api`      | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` | Main API             |
-| `ingest-worker`      | `python -m backend.workers.ingest_processor`           | CSV/data ingestion   |
-| `enforcement-worker` | `python -m backend.workers.enforcement_engine`         | Enforcement pipeline |
+| Service              | Start Command                                  | Purpose              |
+| -------------------- | ---------------------------------------------- | -------------------- |
+| `dragonfly-api`      | `python -m tools.run_uvicorn`                  | Main API             |
+| `ingest-worker`      | `python -m backend.workers.ingest_processor`   | CSV/data ingestion   |
+| `enforcement-worker` | `python -m backend.workers.enforcement_engine` | Enforcement pipeline |
 
 ---
 

@@ -77,7 +77,7 @@ async def system_status(
 
     Workers are considered 'online' if they sent a heartbeat within the last 60 seconds.
     """
-    pool = get_pool()
+    pool = await get_pool()
 
     try:
         async with pool.connection() as conn:

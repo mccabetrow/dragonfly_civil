@@ -80,10 +80,64 @@ CREATE TABLE IF NOT EXISTS public.events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE public.events IS '{"description": "Domain events for case state machine", "sensitivity": "MEDIUM", "retention": "7_years"}';
-CREATE INDEX IF NOT EXISTS idx_events_case_id ON public.events(case_id);
-CREATE INDEX IF NOT EXISTS idx_events_org_id ON public.events(org_id);
-CREATE INDEX IF NOT EXISTS idx_events_type ON public.events(type);
-CREATE INDEX IF NOT EXISTS idx_events_created_at ON public.events(created_at DESC);
+-- Guard event indexes on column existence
+DO $$ BEGIN IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+        AND table_name = 'events'
+        AND column_name = 'case_id'
+) THEN IF NOT EXISTS (
+    SELECT 1
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+        AND indexname = 'idx_events_case_id'
+) THEN CREATE INDEX idx_events_case_id ON public.events(case_id);
+END IF;
+END IF;
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+        AND table_name = 'events'
+        AND column_name = 'org_id'
+) THEN IF NOT EXISTS (
+    SELECT 1
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+        AND indexname = 'idx_events_org_id'
+) THEN CREATE INDEX idx_events_org_id ON public.events(org_id);
+END IF;
+END IF;
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+        AND table_name = 'events'
+        AND column_name = 'type'
+) THEN IF NOT EXISTS (
+    SELECT 1
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+        AND indexname = 'idx_events_type'
+) THEN CREATE INDEX idx_events_type ON public.events(type);
+END IF;
+END IF;
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+        AND table_name = 'events'
+        AND column_name = 'created_at'
+) THEN IF NOT EXISTS (
+    SELECT 1
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+        AND indexname = 'idx_events_created_at'
+) THEN CREATE INDEX idx_events_created_at ON public.events(created_at DESC);
+END IF;
+END IF;
+END $$;
 -- ============================================================================
 -- PART 5: Playbooks Table
 -- ============================================================================
@@ -188,15 +242,23 @@ ALTER TABLE public.events FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.playbooks FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.tasks FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.playbook_executions FORCE ROW LEVEL SECURITY;
--- Events RLS
-DROP POLICY IF EXISTS "events_org_isolation" ON public.events;
-CREATE POLICY "events_org_isolation" ON public.events FOR ALL USING (
+-- Events RLS (guarded on column existence)
+DO $$ BEGIN DROP POLICY IF EXISTS "events_org_isolation" ON public.events;
+DROP POLICY IF EXISTS "events_service_role_bypass" ON public.events;
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+        AND table_name = 'events'
+        AND column_name = 'org_id'
+) THEN CREATE POLICY "events_org_isolation" ON public.events FOR ALL USING (
     org_id IN (
         SELECT tenant.user_org_ids()
     )
 );
-DROP POLICY IF EXISTS "events_service_role_bypass" ON public.events;
+END IF;
 CREATE POLICY "events_service_role_bypass" ON public.events FOR ALL TO service_role USING (true) WITH CHECK (true);
+END $$;
 -- Playbooks RLS
 DROP POLICY IF EXISTS "playbooks_org_isolation" ON public.playbooks;
 CREATE POLICY "playbooks_org_isolation" ON public.playbooks FOR ALL USING (

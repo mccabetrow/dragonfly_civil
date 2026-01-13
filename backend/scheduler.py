@@ -47,7 +47,10 @@ async def heartbeat_job() -> None:
     """
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    logger.info(f"💓 Heartbeat: Dragonfly Engine alive at {now}")
+    logger.info(
+        "Heartbeat: Dragonfly Engine alive",
+        extra={"heartbeat_time": now, "job": "heartbeat"},
+    )
 
     # In production, optionally notify Discord on startup (not every heartbeat)
     # This is just a placeholder - real jobs would do actual work
@@ -60,7 +63,7 @@ async def daily_budget_snapshot_job() -> None:
 
     TODO: Implement actual budget calculation
     """
-    logger.info("📊 Running daily budget snapshot...")
+    logger.info("Running daily budget snapshot", extra={"job": "budget_snapshot"})
 
     try:
         # Import here to avoid circular imports
@@ -71,7 +74,10 @@ async def daily_budget_snapshot_job() -> None:
 
         if budget:
             total = budget.get("budgets", {}).get("total_daily", 0)
-            logger.info(f"📊 Daily budget computed: ${total:,.2f}")
+            logger.info(
+                "Daily budget computed",
+                extra={"job": "budget_snapshot", "total_daily": total},
+            )
 
             # Notify Discord if configured
             settings = get_settings()

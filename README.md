@@ -52,14 +52,6 @@ dragonfly_civil/
 9. Confirm processed files move to `data_processed/` (errors land in `data_error/`).
 10. Run `supabase db push` only when you add or change migrations.
 
-## n8n Workflow Stub
-
-1. Open the n8n editor and go to **Settings → Import**.
-2. Choose `n8n/flows/ingestion_stub.json` and import the workflow.
-3. Replace the placeholder Supabase URL and keys in the HTTP Request node with environment references or credentials (do not hard-code secrets).
-4. Set up n8n credentials for Supabase with the service role key and update the node to use them.
-5. Activate the workflow once your Supabase project values are configured.
-
 ## Runbook: Handling `data_error/` Files
 
 - **Investigate**: Open the accompanying `.err.json` file in `data_error/` to review the failure reason and the chunk preview.

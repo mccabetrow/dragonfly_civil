@@ -1,31 +1,27 @@
-"""Logging configuration helpers for the Dragonfly project."""
+"""Logging configuration helpers for the Dragonfly project.
+
+Workers and CLI tools should use this module to get consistent structured logging.
+"""
 
 import logging
 import os
+from typing import Optional
 
 
-def _resolve_level(level_name: str) -> int:
-    return getattr(logging, level_name.upper(), logging.INFO)
+def configure_logging(service_name: Optional[str] = None) -> None:
+    """
+    Configure root logging using the central JSON formatter.
 
+    For workers, call: configure_logging(service_name="dragonfly-worker")
+    """
+    # Import here to avoid circular imports at module load time
+    from backend.utils.logging import setup_logging
 
-def configure_logging() -> None:
-    """Configure root logging using LOG_LEVEL and a concise format."""
-    level = _resolve_level(os.getenv("LOG_LEVEL", "INFO"))
-    formatter = _build_formatter()
-    root_logger = logging.getLogger()
-
-    if root_logger.handlers:
-        root_logger.setLevel(level)
-        for handler in root_logger.handlers:
-            handler.setLevel(level)
-            handler.setFormatter(formatter)
-        return
-
-    logging.basicConfig(level=level)
-    for handler in logging.getLogger().handlers:
-        handler.setFormatter(formatter)
+    effective_service = service_name or os.getenv("DRAGONFLY_SERVICE", "dragonfly-worker")
+    setup_logging(service_name=effective_service)
 
 
 def _build_formatter() -> logging.Formatter:
+    """Legacy formatter for edge cases where JSON isn't desired."""
     pattern = "%(asctime)s %(levelname)s run_id=%(run_id)s file=%(file)s %(message)s"
     return logging.Formatter(pattern, defaults={"run_id": "-", "file": "-"})

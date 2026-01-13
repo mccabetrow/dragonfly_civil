@@ -50,10 +50,36 @@ def pytest_configure(config: pytest.Config) -> None:
     Sets SUPABASE_MODE=dev by default to ensure tests never accidentally
     hit production. This runs BEFORE any test collection.
 
+    Mocks validate_runtime_config to prevent sys.exit(1) in tests.
+
     Registers custom markers:
       - integration: Tests that require external services (PostgREST, Pooler, Realtime)
       - legacy: Tests for deprecated or optional DB features
     """
+    # Clear SUPABASE_MIGRATE_DB_URL FIRST before any imports can see it
+    # This var should NEVER be present in runtime/tests, only in migration scripts
+    if "SUPABASE_MIGRATE_DB_URL" in os.environ:
+        del os.environ["SUPABASE_MIGRATE_DB_URL"]
+
+    # Mock config_guard.validate_runtime_config and validate_db_config to prevent sys.exit(1) in tests
+    # This must happen before any imports that might call it
+    try:
+        import backend.core.config_guard as config_guard_module
+
+        # Store originals for tests that need them
+        config._original_validate_runtime_config = config_guard_module.validate_runtime_config
+        config._original_validate_db_config = config_guard_module.validate_db_config
+
+        # Replace with no-ops for general tests
+        config_guard_module.validate_runtime_config = lambda: None
+        config_guard_module.validate_db_config = lambda: None
+
+        # NOTE: We can't import backend.main here as it triggers bootstrap on import
+        # The autouse fixture _clear_migrate_url_and_patch_guards will patch
+        # backend.main and backend.db at test time
+    except ImportError:
+        pass  # Module not available, skip mocking
+
     # Register custom markers to avoid pytest warnings
     config.addinivalue_line(
         "markers",
@@ -66,6 +92,51 @@ def pytest_configure(config: pytest.Config) -> None:
 
     if "SUPABASE_MODE" not in os.environ:
         os.environ["SUPABASE_MODE"] = "dev"
+
+
+@pytest.fixture(autouse=True)
+def _clear_migrate_url_and_patch_guards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
+    """
+    Autouse fixture that runs before EVERY test to:
+    1. Clear SUPABASE_MIGRATE_DB_URL (may be re-added by bootstrap loading .env files)
+    2. Re-patch validate_db_config in all modules (may have been reimported)
+
+    This ensures tests never hit the sys.exit(1) in config_guard even after
+    create_app() calls bootstrap which loads .env files.
+    """
+    # Clear the dangerous env var
+    monkeypatch.delenv("SUPABASE_MIGRATE_DB_URL", raising=False)
+
+    # Patch the guard functions in all modules that import them
+    def noop() -> None:
+        return None
+
+    try:
+        import backend.core.config_guard as cg
+
+        monkeypatch.setattr(cg, "validate_db_config", noop)
+        monkeypatch.setattr(cg, "validate_runtime_config", noop)
+    except ImportError:
+        pass
+
+    try:
+        import backend.main as main_mod
+
+        monkeypatch.setattr(main_mod, "validate_db_config", noop)
+        monkeypatch.setattr(main_mod, "validate_runtime_config", noop)
+    except ImportError:
+        pass
+
+    try:
+        import backend.db as db_mod
+
+        monkeypatch.setattr(db_mod, "validate_db_config", noop)
+    except ImportError:
+        pass
+
+    yield
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -318,3 +389,41 @@ def test_env():
         os.environ["SUPABASE_MODE"] = original
     elif "SUPABASE_MODE" in os.environ:
         del os.environ["SUPABASE_MODE"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PYTEST FIXTURES: ASYNC DATABASE (with fast-fail for tests)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+async def db():
+    """
+    Fixture providing an async Database instance with fast-fail behavior.
+
+    Uses max_retries=1 to fail immediately if database is unavailable,
+    preventing test hangs in CI environments without database access.
+
+    Usage:
+        async def test_something(db):
+            await db.start(max_retries=1)
+            async with db.get_connection() as conn:
+                await conn.execute("SELECT 1")
+            await db.stop()
+    """
+    from backend.core.db import Database, DatabaseConnectionError
+
+    url = _get_app_db_url()
+    if not url:
+        pytest.skip("Database URL not configured")
+
+    database = Database(url=url, max_size=1)
+    try:
+        await database.start(max_retries=1)
+    except (DatabaseConnectionError, SystemExit) as e:
+        pytest.skip(f"Database not available: {e}")
+
+    try:
+        yield database
+    finally:
+        await database.stop()

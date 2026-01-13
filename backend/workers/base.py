@@ -37,9 +37,10 @@ from __future__ import annotations
 # =============================================================================
 # CRITICAL: Configuration Guard - Must run FIRST before any other imports
 # =============================================================================
-from backend.core.config_guard import validate_production_config
+from backend.core.config_guard import validate_production_config, validate_runtime_config
 
-validate_production_config()  # Crashes if misconfigured in production
+validate_runtime_config()  # Phase 0/1: Strict pooler, SSL, and credential leak checks
+validate_production_config()  # Additional production safety checks
 # =============================================================================
 
 import hashlib

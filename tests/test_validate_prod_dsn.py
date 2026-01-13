@@ -27,13 +27,30 @@ def test_validate_supabase_dsn_happy_path() -> None:
     assert violations == [], f"Expected no violations but got: {violations}"
 
 
+def test_validate_supabase_dsn_valid_different_region() -> None:
+    """Different region pooler DSN is valid."""
+    url = _build_url(host="aws-0-eu-west-1.pooler.supabase.com")
+    violations = validate_prod_dsn.validate_supabase_dsn(url)
+    assert violations == []
+
+
+def test_validate_supabase_dsn_sslmode_uppercase() -> None:
+    """sslmode=REQUIRE (uppercase) should be accepted."""
+    url = _build_url(ssl_clause="sslmode=REQUIRE")
+    violations = validate_prod_dsn.validate_supabase_dsn(url)
+    assert violations == []
+
+
 @pytest.mark.parametrize(
     "url, expected",
     [
-        (_build_url(host="db.supabase.co"), "DIRECT connection"),
-        (_build_url(port=5432), "5432 is DIRECT"),
-        (_build_url(ssl_clause="sslmode"), "sslmode"),
-        (_build_url(username="postgres"), "postgres.<project_ref>"),
+        (_build_url(host="db.abc123.supabase.co"), "DIRECT"),
+        (_build_url(host="some-random-host.com"), "pooler.supabase.com"),
+        (_build_url(port=5432), "5432"),
+        (_build_url(port=5433), "6543"),
+        (_build_url(ssl_clause=""), "sslmode"),
+        (_build_url(ssl_clause="sslmode=disable"), "sslmode"),
+        (_build_url(ssl_clause="sslmode=prefer"), "sslmode"),
     ],
 )
 def test_validate_supabase_dsn_failures(url: str, expected: str) -> None:
@@ -42,6 +59,20 @@ def test_validate_supabase_dsn_failures(url: str, expected: str) -> None:
     assert len(violations) > 0, f"Expected violations for {url}"
     combined = " ".join(violations)
     assert expected in combined, f"Expected '{expected}' in violations: {violations}"
+
+
+def test_validate_supabase_dsn_multiple_violations() -> None:
+    """DSN with all three violations returns all errors."""
+    url = "postgresql://user:pass@db.xyz.supabase.co:5432/postgres"
+    violations = validate_prod_dsn.validate_supabase_dsn(url)
+    assert len(violations) >= 3, f"Expected at least 3 violations but got: {violations}"
+
+
+def test_validate_supabase_dsn_empty_url() -> None:
+    """Empty URL returns violation."""
+    violations = validate_prod_dsn.validate_supabase_dsn("")
+    assert len(violations) >= 1
+    assert any("empty" in v.lower() or "not set" in v.lower() for v in violations)
 
 
 def test_main_exits_when_env_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,3 +91,16 @@ def test_main_succeeds(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFi
     assert validate_prod_dsn.main() == 0
     out = capsys.readouterr().out
     assert "VALID" in out
+
+
+def test_main_fails_on_invalid_dsn(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """main() should exit 1 and print violations for invalid DSN."""
+    bad_url = _build_url(host="db.xyz.supabase.co", port=5432, ssl_clause="")
+    monkeypatch.setenv("SUPABASE_DB_URL", bad_url)
+    monkeypatch.setattr("sys.argv", ["validate_prod_dsn"])
+    result = validate_prod_dsn.main()
+    assert result == 1
+    out = capsys.readouterr().out
+    assert "VIOLATION" in out or "✗" in out

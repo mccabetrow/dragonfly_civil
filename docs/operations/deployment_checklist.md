@@ -131,7 +131,7 @@ In Vercel Project Settings → Environment Variables, add:
 ```
 [ ] FastAPI app exists at: src/api/app.py
 [ ] app = FastAPI() is defined
-[ ] Procfile exists in repo root with uvicorn command
+[ ] Procfile exists in repo root with `web: python -m tools.run_uvicorn`
 [ ] requirements.txt includes: fastapi, uvicorn[standard], gunicorn
 [ ] /healthz endpoint exists in app.py
 ```
@@ -139,7 +139,7 @@ In Vercel Project Settings → Environment Variables, add:
 **Procfile contents:**
 
 ```
-web: uvicorn src.api.app:app --host 0.0.0.0 --port $PORT --workers 3
+web: python -m tools.run_uvicorn
 ```
 
 ## B.2 Connect Repository to Railway
@@ -170,14 +170,12 @@ In Railway Project → Variables tab, add:
 | `SUPABASE_URL`  | `https://xxx.supabase.co`    | Prod Supabase URL      |
 | `SUPABASE_KEY`  | `eyJ...` (service role key)  | For backend operations |
 | `SUPABASE_MODE` | `prod`                       | Environment selector   |
-| `N8N_API_KEY`   | `your-api-key`               | For n8n webhook auth   |
 | `PORT`          | (Railway sets automatically) | Don't set manually     |
 
 ```
 [ ] SUPABASE_URL added
 [ ] SUPABASE_KEY added (service role key for backend)
 [ ] SUPABASE_MODE set to "prod"
-[ ] N8N_API_KEY added
 [ ] Any other settings from src/settings.py
 ```
 

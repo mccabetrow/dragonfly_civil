@@ -32,6 +32,13 @@ create table if not exists ingest.import_runs (
 comment on table ingest.import_runs is 'Tracks ingestion batches for exactly-once processing and crash recovery.';
 comment on column ingest.import_runs.source_batch_id is 'Caller-provided unique identifier (e.g., filename, S3 key).';
 -- ---------------------------------------------------------------------------
+-- Indexes for fast lookups
+-- ---------------------------------------------------------------------------
+create index if not exists idx_import_runs_source_batch_id on ingest.import_runs (source_batch_id);
+create index if not exists idx_import_runs_file_hash on ingest.import_runs (file_hash);
+create index if not exists idx_import_runs_status on ingest.import_runs (status)
+where status in ('pending', 'processing');
+-- ---------------------------------------------------------------------------
 -- Security + RLS
 -- ---------------------------------------------------------------------------
 grant usage on schema ingest to service_role;
@@ -40,4 +47,13 @@ grant select,
     update on table ingest.import_runs to service_role;
 alter table ingest.import_runs enable row level security;
 alter table ingest.import_runs force row level security;
-create policy import_runs_service_role_full on ingest.import_runs for all to service_role using (true) with check (true);
+do $$ begin if not exists (
+    select 1
+    from pg_catalog.pg_policies
+    where schemaname = 'ingest'
+        and tablename = 'import_runs'
+        and policyname = 'import_runs_service_role_full'
+) then execute 'create policy import_runs_service_role_full on ingest.import_runs for all to service_role using (true) with check (true)';
+end if;
+end;
+$$;

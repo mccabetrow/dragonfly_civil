@@ -2,7 +2,7 @@
 
 > **Service:** `dragonfly-engine` (FastAPI backend)  
 > **Host:** Railway (HTTP on PORT)  
-> **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}`  
+> **Start Command:** `python -m tools.run_uvicorn`  
 > **Quick Checklist:** [RAILWAY_DEPLOY_CHECKLIST.md](./RAILWAY_DEPLOY_CHECKLIST.md)
 
 ---
@@ -32,11 +32,11 @@
 
 ### Files That Must Exist
 
-| File               | Purpose        | Content                                                             |
-| ------------------ | -------------- | ------------------------------------------------------------------- |
-| `runtime.txt`      | Python version | `python-3.12.3`                                                     |
-| `Procfile`         | Start command  | `web: uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}` |
-| `requirements.txt` | Dependencies   | Must include `psycopg-pool`                                         |
+| File               | Purpose        | Content                            |
+| ------------------ | -------------- | ---------------------------------- |
+| `runtime.txt`      | Python version | `python-3.12.3`                    |
+| `Procfile`         | Start command  | `web: python -m tools.run_uvicorn` |
+| `requirements.txt` | Dependencies   | Must include `psycopg-pool`        |
 
 ---
 
@@ -70,7 +70,7 @@ Railway auto-detects Python via:
 
 - **`runtime.txt`** – specifies `python-3.12.3`
 - **`requirements.txt`** – pip dependencies (includes `psycopg-pool`)
-- **`Procfile`** – start command (`web: uvicorn backend.main:app …`)
+- **`Procfile`** – start command (`web: python -m tools.run_uvicorn`)
 
 On every push to `main`:
 

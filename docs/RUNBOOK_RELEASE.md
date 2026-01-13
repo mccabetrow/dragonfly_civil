@@ -159,11 +159,11 @@ All five must pass. Any failure = stop and fix.
 
 When you push to `main`, these workflows enforce fail-closed:
 
-| Workflow                | File                                                                                                              | Gates |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------- | ----- |
-| `ci.yml`                | Unit tests, lint (ruff, black, isort)                                                                             |
-| `dragonfly-ci.yml`      | Unit tests, `tools.doctor`, RPC contract tests, config check, schema consistency, n8n validation, dashboard build |
-| `production_deploy.yml` | RPC contract tests, `tools.doctor`, prod secrets, migrations, prod_gate, prod_smoke                               |
+| Workflow                | File                                                                                              | Gates |
+| ----------------------- | ------------------------------------------------------------------------------------------------- | ----- |
+| `ci.yml`                | Unit tests, lint (ruff, black, isort)                                                             |
+| `dragonfly-ci.yml`      | Unit tests, `tools.doctor`, RPC contract tests, config check, schema consistency, dashboard build |
+| `production_deploy.yml` | RPC contract tests, `tools.doctor`, prod secrets, migrations, prod_gate, prod_smoke               |
 
 ### Contract Gate (in production_deploy.yml)
 
@@ -195,8 +195,7 @@ Post-migration validation:
 .\.venv\Scripts\python.exe -m tools.doctor --env prod
 
 # Full prod gate
-$env:SUPABASE_MODE = "prod"
-.\.venv\Scripts\python.exe -m tools.prod_gate --env prod --strict
+./scripts/prod_gate.ps1
 ```
 
 ---

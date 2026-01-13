@@ -58,7 +58,7 @@ Railway runs three services from the same codebase:
 ### Service 1: Backend API
 
 - **Name:** `dragonfly-api`
-- **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+- **Start Command:** `python -m tools.run_uvicorn`
 - **Health Check:** `GET /health`
 - **Region:** US-West (or closest to Supabase)
 - **Env Vars:**

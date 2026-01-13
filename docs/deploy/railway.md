@@ -4,12 +4,12 @@ This document describes deterministic Railway deployments for Dragonfly Civil se
 
 ## Services Overview
 
-| Service            | Railway Name                   | Start Command                                          | Purpose                   |
-| ------------------ | ------------------------------ | ------------------------------------------------------ | ------------------------- |
-| API                | `dragonfly-api`                | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` | Main FastAPI backend      |
-| Ingest Worker      | `dragonfly-worker-ingest`      | `python -m backend.workers.ingest_processor`           | CSV/data ingestion        |
-| Enforcement Worker | `dragonfly-worker-enforcement` | `python -m backend.workers.enforcement_engine`         | Enforcement pipeline      |
-| Simplicity Worker  | `dragonfly-worker-simplicity`  | `python -m backend.workers.simplicity_ingest_worker`   | Simplicity vendor imports |
+| Service            | Railway Name                   | Start Command                                        | Purpose                   |
+| ------------------ | ------------------------------ | ---------------------------------------------------- | ------------------------- |
+| API                | `dragonfly-api`                | `python -m tools.run_uvicorn`                        | Main FastAPI backend      |
+| Ingest Worker      | `dragonfly-worker-ingest`      | `python -m backend.workers.ingest_processor`         | CSV/data ingestion        |
+| Enforcement Worker | `dragonfly-worker-enforcement` | `python -m backend.workers.enforcement_engine`       | Enforcement pipeline      |
+| Simplicity Worker  | `dragonfly-worker-simplicity`  | `python -m backend.workers.simplicity_ingest_worker` | Simplicity vendor imports |
 
 ## Build Configuration
 
@@ -29,7 +29,7 @@ nixPkgs = ["python312", "postgresql"]
 cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]
 
 [start]
-cmd = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+cmd = "python -m tools.run_uvicorn"
 ```
 
 **Each service overrides the start command** in Railway dashboard settings.
@@ -110,7 +110,7 @@ For each service, configure in Railway Dashboard:
 **API Service:**
 
 ```
-uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+python -m tools.run_uvicorn
 ```
 
 **Ingest Worker:**

@@ -7,9 +7,21 @@
 -- Create ops schema if not exists
 CREATE SCHEMA IF NOT EXISTS ops;
 -- ============================================================================
--- VIEW: ops.v_dashboard_stats
--- Consolidates worker health, queue depths, and system status into one query
+-- GUARD: Only create view if workers.heartbeats exists
 -- ============================================================================
+DO $$ BEGIN IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'workers'
+        AND table_name = 'heartbeats'
+) THEN RAISE NOTICE '⚠ Skipping ops.v_dashboard_stats - workers.heartbeats does not exist';
+RETURN;
+END IF;
+-- Drop and recreate the view
+DROP VIEW IF EXISTS ops.v_dashboard_stats CASCADE;
+RAISE NOTICE '✓ Creating ops.v_dashboard_stats with workers.heartbeats dependency';
+END $$;
+-- Only create if table exists (view will fail silently if not)
 CREATE OR REPLACE VIEW ops.v_dashboard_stats AS -- ────────────────────────────────────────────────────────────────────────────
     -- WORKERS: Health status based on heartbeat age
     -- ────────────────────────────────────────────────────────────────────────────

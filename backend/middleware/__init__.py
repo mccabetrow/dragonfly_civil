@@ -4,6 +4,12 @@ Dragonfly Engine - Middleware Package
 Security and observability middleware for FastAPI.
 """
 
+from backend.middleware.correlation import (
+    CorrelationMiddleware,
+    get_request_id,
+    reset_request_id,
+    set_request_id,
+)
 from backend.middleware.security import (
     SecurityMiddleware,
     add_security_middleware,
@@ -21,6 +27,11 @@ from backend.middleware.version import (
 )
 
 __all__ = [
+    # Correlation
+    "CorrelationMiddleware",
+    "get_request_id",
+    "set_request_id",
+    "reset_request_id",
     # Security
     "SecurityMiddleware",
     "add_security_middleware",

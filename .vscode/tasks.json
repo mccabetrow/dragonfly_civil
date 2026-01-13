@@ -352,6 +352,24 @@
       "detail": "⚠️ Full prod deploy (preflight + migrations + dashboard build)"
     },
     {
+      "label": "Dad Go (Prod)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/dad_go.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Operator GO/NO-GO gate (health + go_live_gate + smoke + business checks)"
+    },
+    {
       "label": "Priority Pipeline Snapshot (Dev)",
       "type": "shell",
       "command": "powershell",
@@ -610,24 +628,6 @@
       }
     },
     {
-      "label": "Dev: Validate n8n Flows",
-      "type": "shell",
-      "command": "powershell",
-      "args": [
-        "-NoProfile",
-        "-Command",
-        "$ErrorActionPreference='Stop'; Set-Location '${workspaceFolder}'; $env:SUPABASE_MODE='dev'; ./.venv/Scripts/python.exe -m tools.validate_n8n_flows --env dev"
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
-      }
-    },
-    {
       "label": "Prod Gate (Dev)",
       "type": "shell",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -660,6 +660,32 @@
         "panel": "dedicated"
       },
       "detail": "⚠️ Run all 5 production gate checks against prod (strict mode)"
+    },
+    {
+      "label": "Prod Gate (Dad)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/prod_gate.ps1",
+        "-ProductionUrl",
+        "${input:prodGateBaseUrl}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "SUPABASE_MODE": "prod"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "detail": "Prompts for the prod gate URL (blank uses PROD_GATE_BASE_URL)"
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1004,6 +1030,12 @@
       "id": "simplicityFile",
       "type": "promptString",
       "description": "Path to Simplicity export CSV/JSON"
+    },
+    {
+      "id": "prodGateBaseUrl",
+      "type": "promptString",
+      "description": "Production base URL for prod gate (leave blank to use PROD_GATE_BASE_URL)",
+      "default": ""
     }
   ]
 }

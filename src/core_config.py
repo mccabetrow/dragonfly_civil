@@ -194,23 +194,56 @@ def get_deprecated_keys_used() -> set[str]:
     return _DEPRECATED_KEYS_USED.copy()
 
 
+def _get_optional_env_file() -> str | None:
+    """
+    Get the env file path ONLY if it exists.
+
+    In production (Railway), config comes from system env vars.
+    Local .env files are optional development conveniences.
+
+    Returns:
+        Path to .env file if it exists, None otherwise
+    """
+    from pathlib import Path
+
+    env_file = os.environ.get("ENV_FILE")
+    if env_file:
+        # Explicit ENV_FILE set - only use if exists
+        if Path(env_file).exists():
+            return env_file
+        return None
+
+    # Check for .env.{mode} based on SUPABASE_MODE
+    mode = os.environ.get("SUPABASE_MODE", "dev")
+    default_file = f".env.{mode}"
+    if Path(default_file).exists():
+        return default_file
+
+    # No file found - rely on system env vars (production mode)
+    return None
+
+
 class Settings(BaseSettings):
     """
     Unified application settings for API and workers.
 
-    Loads from environment variables with fallback to env file.
+    Loads from environment variables with OPTIONAL fallback to env file.
 
-    ONE FILE, ONE ENVIRONMENT PATTERN:
+    PRODUCTION BEHAVIOR:
+        In Railway/production, there is no .env file. Config comes strictly
+        from system environment variables. This is the expected behavior.
+
+    LOCAL DEVELOPMENT:
         Set ENV_FILE to point to the correct file:
         - ENV_FILE=.env.dev  → loads development credentials
         - ENV_FILE=.env.prod → loads production credentials
-        - Defaults to .env.dev if ENV_FILE is not set
+        - Defaults to .env.{SUPABASE_MODE} if ENV_FILE is not set
 
     Supports both canonical uppercase and legacy lowercase keys.
     """
 
     model_config = SettingsConfigDict(
-        env_file=os.environ.get("ENV_FILE", ".env.dev"),
+        env_file=_get_optional_env_file(),
         env_file_encoding="utf-8",
         case_sensitive=False,  # Accept both SUPABASE_URL and supabase_url
         populate_by_name=True,
@@ -560,8 +593,13 @@ def get_settings() -> Settings:
 
 
 def reset_settings() -> None:
-    """Clear the cached settings (for testing)."""
-    get_settings.cache_clear()
+    """Clear the cached settings (for testing).
+
+    Handles the case where get_settings has been mocked in tests
+    and doesn't have the cache_clear method.
+    """
+    if hasattr(get_settings, "cache_clear"):
+        get_settings.cache_clear()
 
 
 # =========================================================================

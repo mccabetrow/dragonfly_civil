@@ -3,7 +3,7 @@
 # RAILWAY DEPLOYMENT GUIDE:
 # Each service needs its Start Command set in Railway dashboard:
 #
-#   dragonfly-api:              uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+#   dragonfly-api:              python -m tools.run_uvicorn
 #   dragonfly-worker-ingest:    python -m backend.workers.ingest_processor
 #   dragonfly-worker-enforcement: python -m backend.workers.enforcement_engine
 #
@@ -19,7 +19,7 @@
 #   dragonfly-worker-enforcement: OPENAI_API_KEY (for AI agents)
 # ============================================================================
 
-web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+web: python -m tools.run_uvicorn
 ingest: python -m backend.workers.ingest_processor
 enforcement: python -m backend.workers.enforcement_engine
 simplicity: python -m backend.workers.simplicity_ingest_worker

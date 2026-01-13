@@ -128,15 +128,6 @@ try:
 except ImportError:
     _VERSION = "0.0.0-dev"
 
-# Boot log line (single structured log for observability)
-logger.info(
-    "🚀 Version resolved | sha_short=%s env=%s version=%s source=%s",
-    _GIT_SHA_SHORT,
-    _ENV_NAME,
-    _VERSION,
-    _SHA_SOURCE,
-)
-
 
 def get_version_info() -> dict[str, str]:
     """

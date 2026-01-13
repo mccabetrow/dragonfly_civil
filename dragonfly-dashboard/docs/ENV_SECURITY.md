@@ -11,21 +11,13 @@ This means:
 
 ## Build-Time Security Scan
 
-A security scanner runs automatically before every build (`npm run build`) and will **fail the build** if it detects:
+A reinforced security scanner now runs every time `npm run build` executes. The build script calls `npm run check-security` first, which chains the Node (`scripts/security-scan.mjs`) and Python (`tools/scan_vercel_build.py`) scanners. The build **fails immediately** if any of these conditions are met:
 
-1. **Forbidden patterns** in `.env` files or source code:
-
-   - `service_role` keys (Supabase admin access)
-   - `OPENAI_API_KEY`, `sk-...` patterns
-   - AWS credentials (`AKIA...`, `AWS_SECRET_ACCESS_KEY`)
-   - Private keys or certificates
-   - Database connection strings with embedded passwords
-   - Any `VITE_*SECRET*`, `VITE_*PASSWORD*`, `VITE_*PRIVATE*` variables
-
-2. **Missing required variables** in production (Vercel/CI):
-   - `VITE_API_BASE_URL`
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
+1. **Forbidden VITE\_\* keywords** – any runtime or `.env*` variable that contains `SECRET`, `KEY`, `TOKEN`, `PASSWORD`, `OPENAI`, or `SERVICE_ROLE` is blocked unless it is on the explicit allowlist (`VITE_SUPABASE_ANON_KEY`, `VITE_DRAGONFLY_API_KEY`, etc.).
+2. **OpenAI SDK import** – importing or dynamically loading the `openai` package in `src/` now blocks the build to prevent leaking server-only dependencies.
+3. **Service-role JWT leakage** – if `VITE_SUPABASE_ANON_KEY` decodes to a payload containing `service_role`, the scanners halt the build.
+4. **Hardcoded secrets or DSNs** – patterns such as `sk-...`, `postgres://user:pass@`, AWS keys, private key blocks, or other high-entropy strings in `src/` continue to block the build.
+5. **Missing required runtime config** – when `CI=true` (Vercel/GitHub), the scanners ensure `VITE_API_BASE_URL`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY` are present.
 
 ### Running Manually
 
@@ -33,9 +25,13 @@ A security scanner runs automatically before every build (`npm run build`) and w
 # Run security scan without building
 npm run security:scan
 
-# Full build (includes security scan via prebuild hook)
+# Full build (runs the scanners first)
 npm run build
 ```
+
+### CI Enforcement
+
+GitHub Actions now includes a **Frontend Security Gate** job (`frontend-security`) that runs on every push/PR. It executes `npm run check-security` with safe placeholder variables, ensuring the same scanners block leaks before code reaches Vercel.
 
 ---
 
@@ -92,6 +88,8 @@ VITE_SECRET_KEY=xxx                    # Any VITE_*SECRET* is blocked
 VITE_DATABASE_PASSWORD=xxx             # Any VITE_*PASSWORD* is blocked
 VITE_PRIVATE_KEY=xxx                   # Any VITE_*PRIVATE* is blocked
 ```
+
+> **Keyword blocklist:** Any `VITE_` name that contains `SECRET`, `KEY`, `TOKEN`, `PASSWORD`, `OPENAI`, or `SERVICE_ROLE` will fail the scanners unless it is explicitly allow-listed.
 
 ---
 

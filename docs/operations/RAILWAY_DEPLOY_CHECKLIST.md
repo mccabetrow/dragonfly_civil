@@ -51,7 +51,7 @@
 1. **Check logs** for missing env vars (look for warnings like `DRAGONFLY_API_KEY not set`)
 2. **Verify files exist:**
    - `runtime.txt` = `python-3.12.3`
-   - `Procfile` = `web: uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}`
+   - `Procfile` = `web: python -m tools.run_uvicorn`
    - `requirements.txt` includes `psycopg-pool`
 3. **Rollback** if needed:
    - Dashboard: Service → Deployments → Click on last working → **Rollback**
@@ -83,8 +83,8 @@
 
 ## 📅 Deployment Log
 
-| Date       | Version | Deployer     | Notes                                |
-| ---------- | ------- | ------------ | ------------------------------------ |
-| 2025-01-XX | 0.2.1   | **\_\_\_\_** | **************\_\_\_\_************** |
-|            |         |              |                                      |
-|            |         |              |                                      |
+| Date       | Version | Deployer     | Notes                                    |
+| ---------- | ------- | ------------ | ---------------------------------------- |
+| 2025-01-XX | 0.2.1   | **\_\_\_\_** | ******\*\*******\_\_\_\_******\*\******* |
+|            |         |              |                                          |
+|            |         |              |                                          |

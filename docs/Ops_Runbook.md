@@ -165,11 +165,11 @@ Railway hosts our backend API and background workers. Here's how to monitor them
 
 ### Services to Monitor
 
-| Service Name         | What It Does                       | Start Command                                          |
-| -------------------- | ---------------------------------- | ------------------------------------------------------ |
-| `web` (Backend API)  | Powers the dashboard and API calls | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` |
-| `ingest-worker`      | Processes incoming CSV batches     | `python -m backend.workers.ingest_processor`           |
-| `enforcement-worker` | Runs enforcement actions           | `python -m backend.workers.enforcement_engine`         |
+| Service Name         | What It Does                       | Start Command                                  |
+| -------------------- | ---------------------------------- | ---------------------------------------------- |
+| `web` (Backend API)  | Powers the dashboard and API calls | `python -m tools.run_uvicorn`                  |
+| `ingest-worker`      | Processes incoming CSV batches     | `python -m backend.workers.ingest_processor`   |
+| `enforcement-worker` | Runs enforcement actions           | `python -m backend.workers.enforcement_engine` |
 
 ### How to View Logs
 

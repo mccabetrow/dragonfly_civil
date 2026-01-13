@@ -36,7 +36,17 @@ from pydantic import BaseModel
 
 from backend.core.logging import LogContext, get_logger
 from backend.core.models import JudgmentStatus, QueueJobKind
-from backend.db import get_pool
+
+# NOTE: get_pool is imported lazily to avoid circular import:
+#   backend.db -> backend.core.config_guard -> backend.core.__init__ -> transactions -> backend.db
+
+
+def _get_pool():
+    """Lazy import of get_pool to avoid circular import."""
+    from backend.db import get_pool
+
+    return get_pool
+
 
 logger = get_logger(__name__)
 
@@ -66,7 +76,7 @@ async def TransactionContext(
             await conn.execute("INSERT ...")
             # Commits automatically if no exception
     """
-    pool = await get_pool()
+    pool = await _get_pool()()
 
     async with pool.connection() as conn:
         # Set isolation level
@@ -113,7 +123,7 @@ async def atomic_status_and_enqueue(
     Raises:
         ValueError: If judgment not found or status mismatch
     """
-    pool = await get_pool()
+    pool = await _get_pool()()
 
     async with pool.connection() as conn:
         await conn.set_autocommit(False)
@@ -237,7 +247,7 @@ async def atomic_judgment_update(
     if not updates:
         return False
 
-    pool = await get_pool()
+    pool = await _get_pool()()
 
     # Build SET clause dynamically
     set_parts = []
@@ -329,7 +339,7 @@ async def batch_update_scores(
     Returns:
         Dict with 'updated' and 'failed' counts
     """
-    pool = await get_pool()
+    pool = await _get_pool()()
     updated = 0
     failed = 0
 
@@ -422,7 +432,7 @@ async def update_with_version_check(
     Raises:
         OptimisticLockError: If version check fails
     """
-    pool = await get_pool()
+    pool = await _get_pool()()
 
     set_parts = []
     params: Dict[str, Any] = {

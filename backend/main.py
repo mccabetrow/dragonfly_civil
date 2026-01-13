@@ -96,11 +96,11 @@ from .api.routers.intelligence import router as intelligence_router  # noqa: E40
 # Optional metrics module - graceful degradation if missing
 try:
     from .api.routers.metrics import router as metrics_router  # noqa: E402
-except ImportError:
+except ModuleNotFoundError:
     metrics_router = None  # type: ignore[assignment, misc]
-    import logging as _metrics_log
-
-    _metrics_log.warning("⚠️ Metrics module not found. Skipping metrics endpoints.")
+    logging.getLogger(__name__).warning(
+        "[BOOT] metrics router unavailable; skipping metrics endpoints"
+    )
 
 from .api.routers.offers import router as offers_router  # noqa: E402
 from .api.routers.ops_guardian import router as ops_guardian_router  # noqa: E402
@@ -121,7 +121,20 @@ from .core.middleware import (
 )
 from .core.trace_middleware import TraceMiddleware, get_trace_id  # noqa: E402
 from .db import close_db_pool, database, init_db_pool  # noqa: E402
-from .middleware.correlation import CorrelationMiddleware  # noqa: E402
+
+# Optional: Correlation Middleware - graceful degradation if missing
+try:
+    from .middleware.correlation import CorrelationMiddleware  # noqa: E402
+
+    _CORRELATION_MIDDLEWARE_AVAILABLE = True
+except (ImportError, ModuleNotFoundError) as _correlation_err:
+    CorrelationMiddleware = None  # type: ignore[assignment, misc]
+    _CORRELATION_MIDDLEWARE_AVAILABLE = False
+    logging.getLogger(__name__).critical(
+        "[CRITICAL] ⚠️ Correlation Middleware missing. Booting without headers. Error: %s",
+        _correlation_err,
+    )
+
 from .middleware.metrics import MetricsMiddleware  # noqa: E402
 from .middleware.version import VersionMiddleware, get_version_info  # noqa: E402
 from .scheduler import init_scheduler  # noqa: E402
@@ -317,8 +330,13 @@ def create_app() -> FastAPI:
     logger.info("[Middleware] TraceMiddleware added (trace IDs)")
 
     # 0. CorrelationMiddleware (true outermost - ensures X-Request-ID is present)
-    app.add_middleware(CorrelationMiddleware)
-    logger.info("[Middleware] CorrelationMiddleware added (request IDs)")
+    if _CORRELATION_MIDDLEWARE_AVAILABLE and CorrelationMiddleware is not None:
+        app.add_middleware(CorrelationMiddleware)
+        logger.info("[Middleware] CorrelationMiddleware added (request IDs)")
+    else:
+        logger.critical(
+            "[CRITICAL] ⚠️ CorrelationMiddleware not available. Booting without X-Request-ID headers."
+        )
 
     # --- Additional middleware (after core security stack) ---
 

@@ -11,6 +11,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -22,7 +23,9 @@ from pydantic import BaseModel, Field
 
 from ... import __version__
 from ...config import get_settings
+from ...core.trace_middleware import get_trace_id
 from ...db import fetch_val, get_pool, get_supabase_client
+from ...maintenance.schema_guard import get_schema_guard
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,10 @@ REQUIRED_VIEWS = [
     "v_judgment_pipeline",
     "v_enforcement_overview",
 ]
+
+# Hard fail reason shared across readiness probes
+FAILURE_REASON = "not_ready"
+SCHEMA_GUARD_TIMEOUT_SECONDS = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +64,7 @@ class ReadinessResponse(BaseModel):
     ready: bool = Field(..., description="True if all checks pass")
     checks: dict[str, bool] = Field(..., description="Individual check results")
     timestamp: str = Field(..., description="ISO timestamp of check")
+    trace_id: str = Field(..., description="Request trace identifier")
     # Only included on failure - redacted details
     failure_reason: str | None = Field(
         None, description="High-level failure reason (redacted for security)"
@@ -126,8 +134,9 @@ async def readiness_check() -> ReadinessResponse | JSONResponse:
     Returns 200 OK if all checks pass, 503 Service Unavailable with
     redacted failure reason otherwise.
     """
+    trace_id = get_trace_id()
     checks: dict[str, bool] = {}
-    failure_reasons: list[str] = []
+    failure_details: list[str] = []
 
     # Check 1: Database connectivity
     try:
@@ -140,11 +149,11 @@ async def readiness_check() -> ReadinessResponse | JSONResponse:
             checks["database"] = True
         else:
             checks["database"] = False
-            failure_reasons.append("database_pool_unavailable")
+            failure_details.append("database_pool_unavailable")
     except Exception as e:
         logger.warning(f"Readiness: DB connectivity failed - {type(e).__name__}")
         checks["database"] = False
-        failure_reasons.append("database_connection_failed")
+        failure_details.append("database_connection_failed")
 
     # Check 2: Required views exist
     if checks.get("database"):
@@ -168,17 +177,17 @@ async def readiness_check() -> ReadinessResponse | JSONResponse:
 
                         if missing_views:
                             checks["views"] = False
-                            failure_reasons.append("required_views_missing")
+                            failure_details.append("required_views_missing")
                             logger.warning(f"Readiness: Missing views - {missing_views}")
                         else:
                             checks["views"] = True
         except Exception as e:
             logger.warning(f"Readiness: View check failed - {type(e).__name__}")
             checks["views"] = False
-            failure_reasons.append("view_check_failed")
+            failure_details.append("view_check_failed")
     else:
         checks["views"] = False
-        failure_reasons.append("skipped_view_check_no_db")
+        failure_details.append("skipped_view_check_no_db")
 
     # Check 3: Supabase client authentication
     try:
@@ -190,7 +199,29 @@ async def readiness_check() -> ReadinessResponse | JSONResponse:
     except Exception as e:
         logger.warning(f"Readiness: Supabase auth failed - {type(e).__name__}")
         checks["supabase_auth"] = False
-        failure_reasons.append("supabase_auth_failed")
+        failure_details.append("supabase_auth_failed")
+
+    # Check 4: Schema Guard (skip if database already unhealthy)
+    schema_guard_ready = False
+    if checks.get("database"):
+        guard = get_schema_guard()
+        try:
+            drift_detected = await asyncio.wait_for(
+                guard.check_schema_drift(), timeout=SCHEMA_GUARD_TIMEOUT_SECONDS
+            )
+            schema_guard_ready = not drift_detected
+            if drift_detected:
+                failure_details.append("schema_guard_drift_detected")
+                logger.warning("Readiness: Schema guard detected drift")
+        except asyncio.TimeoutError:
+            failure_details.append("schema_guard_timeout")
+            logger.warning("Readiness: Schema guard check timed out")
+        except Exception as exc:
+            failure_details.append("schema_guard_error")
+            logger.warning(f"Readiness: Schema guard check failed - {type(exc).__name__}")
+    checks["schema_guard"] = schema_guard_ready if checks.get("database") else False
+    if not checks.get("database"):
+        failure_details.append("schema_guard_skipped_no_db")
 
     # Build response
     is_ready = all(checks.values()) and len(checks) > 0
@@ -201,6 +232,7 @@ async def readiness_check() -> ReadinessResponse | JSONResponse:
             ready=True,
             checks=checks,
             timestamp=timestamp,
+            trace_id=trace_id,
             failure_reason=None,
         )
     else:
@@ -209,9 +241,12 @@ async def readiness_check() -> ReadinessResponse | JSONResponse:
             ready=False,
             checks=checks,
             timestamp=timestamp,
-            failure_reason=failure_reasons[0] if failure_reasons else "unknown",
+            trace_id=trace_id,
+            failure_reason=FAILURE_REASON,
         )
-        return JSONResponse(
-            status_code=503,
-            content=response.model_dump(),
+        logger.warning(
+            "Readiness: failing checks=%s details=%s",
+            {k: v for k, v in checks.items() if not v},
+            failure_details,
         )
+        return JSONResponse(status_code=503, content=response.model_dump())

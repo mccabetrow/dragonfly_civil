@@ -87,6 +87,9 @@ paths = [
   '''\.venv/''',
   '''node_modules/''',
   '''^\.git/''',
+  # Security scanner scripts contain regex patterns for API keys (intentional)
+  '''tools/security_scanners\.py$''',
+  '''tools/secret_leak_scan\.py$''',
   # Utility scripts that generate/format credentials (use variable interpolation)
   '''scripts/generate_db_strings\.ps1$''',
   '''scripts/generate_vercel_config\.ps1$''',

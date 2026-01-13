@@ -11,7 +11,6 @@ import logging
 import time
 import uuid
 from collections import defaultdict
-from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Callable
 
@@ -19,15 +18,16 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
+from backend.utils import context
+
 logger = logging.getLogger(__name__)
 
-# Context variable for request ID (thread/async safe)
-request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
-
+# Context helper for request ID
 def get_request_id() -> str:
     """Get the current request ID from context."""
-    return request_id_var.get()
+    value = context.get_request_id()
+    return value or ""
 
 
 # =============================================================================
@@ -51,9 +51,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Generate or extract request ID
-        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
-        request_id_var.set(request_id)
+        request_id = context.get_request_id()
+        token = None
+        if not request_id:
+            request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+            token = context.set_request_id(request_id)
 
         # Extract client IP (handle proxies)
         client_ip = request.headers.get(
@@ -62,14 +64,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if "," in client_ip:
             client_ip = client_ip.split(",")[0].strip()
 
-        # Record start time
         start_time = time.perf_counter()
 
-        # Process request
         try:
             response = await call_next(request)
         except Exception as e:
-            # Log unhandled exceptions with request context
             logger.error(
                 f"[{request_id}] Unhandled exception: {type(e).__name__}: {e}",
                 extra={
@@ -80,32 +79,31 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 },
             )
             raise
+        else:
+            duration_ms = (time.perf_counter() - start_time) * 1000
 
-        # Calculate duration
-        duration_ms = (time.perf_counter() - start_time) * 1000
+            log_level = logging.INFO if response.status_code < 400 else logging.WARNING
+            if response.status_code >= 500:
+                log_level = logging.ERROR
 
-        # Log request completion
-        log_level = logging.INFO if response.status_code < 400 else logging.WARNING
-        if response.status_code >= 500:
-            log_level = logging.ERROR
+            logger.log(
+                log_level,
+                f"[{request_id}] {request.method} {request.url.path} -> {response.status_code} ({duration_ms:.1f}ms)",
+                extra={
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "duration_ms": round(duration_ms, 2),
+                    "client_ip": client_ip,
+                },
+            )
 
-        logger.log(
-            log_level,
-            f"[{request_id}] {request.method} {request.url.path} -> {response.status_code} ({duration_ms:.1f}ms)",
-            extra={
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "duration_ms": round(duration_ms, 2),
-                "client_ip": client_ip,
-            },
-        )
-
-        # Add request ID to response headers
-        response.headers["X-Request-ID"] = request_id
-
-        return response
+            response.headers["X-Request-ID"] = request_id
+            return response
+        finally:
+            if token is not None:
+                context.reset_request_id(token)
 
 
 # =============================================================================

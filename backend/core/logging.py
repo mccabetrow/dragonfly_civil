@@ -164,20 +164,45 @@ class StructuredJsonFormatter(logging.Formatter):
         include_timestamp: bool = True,
         include_traceback: bool = True,
         redact_sensitive_data: bool = True,
+        service_name: str = "dragonfly",
     ):
         super().__init__()
         self.include_timestamp = include_timestamp
         self.include_traceback = include_traceback
         self.redact_sensitive_data = redact_sensitive_data
+        self.service_name = service_name
+
+        # Cache version info at init (called once per process lifetime)
+        self._version_info: Dict[str, str] = {}
+        try:
+            from backend.middleware.version import get_version_info
+
+            self._version_info = get_version_info()
+        except Exception:
+            pass
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record as JSON."""
-        # Base log structure
+        """Format log record as JSON with required fields."""
+        # Import here to avoid circular imports
+        from backend.utils.context import get_request_id
+
+        # Resolve request_id from contextvar
+        request_id = get_request_id() or getattr(record, "request_id", None)
+
+        # Base log structure - REQUIRED fields first
         log_dict: Dict[str, Any] = {
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
+            "service": self.service_name,
+            "env": self._version_info.get("env", "unknown"),
+            "sha": self._version_info.get("sha", "unknown"),
+            "sha_short": self._version_info.get("sha_short", "unknown"),
         }
+
+        # Only include request_id if present (workers don't have one)
+        if request_id:
+            log_dict["request_id"] = request_id
 
         # Add timestamp
         if self.include_timestamp:

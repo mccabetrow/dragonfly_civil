@@ -283,6 +283,7 @@ class TestRawSQLGuard:
             "rpc_client.py",  # It's supposed to contain SQL
             "orchestrator.py",  # Batch orchestration requires direct DB access
             "collectability.py",  # Score updates to judgments table
+            "ingest_worker.py",  # Bulk upserts with exactly-once semantics
         }
 
         all_violations = []

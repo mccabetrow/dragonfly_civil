@@ -22,6 +22,10 @@ REQUIRED for API key authentication (X-API-Key header):
   DRAGONFLY_API_KEY        – Read from os.environ ONLY (not file secrets)
                              If missing in prod, logs warning but does not crash
 
+FORBIDDEN in Railway runtime services:
+  SUPABASE_MIGRATE_DB_URL  – Direct Postgres access (port 5432), migration-only
+                             See docs/POLICY_MIGRATE_DB_URL.md
+
 SAFE MODE:
   For diagnostic/preflight scenarios where full Settings validation would fail,
   use load_settings_safe() from backend.core.preflight to get a dict of env
@@ -31,6 +35,9 @@ See src/core_config.py for complete environment variable documentation.
 """
 
 import logging
+
+# Re-export runtime credential guard from config_guard
+from backend.core.config_guard import validate_runtime_config as validate_runtime_credentials
 
 # Re-export preflight utilities for worker startup validation
 from backend.preflight import (
@@ -77,6 +84,8 @@ __all__ = [
     "run_preflight_checks",
     "load_settings_safe",
     "print_diagnostic_env",
+    # Runtime security (re-exported from config_guard)
+    "validate_runtime_credentials",
 ]
 
 

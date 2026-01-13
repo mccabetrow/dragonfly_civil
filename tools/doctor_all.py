@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Callable, List, Sequence, Tuple
+from typing import Any, Callable, List, Sequence, Tuple
 
 import click
 import psycopg
 from psycopg import abc as psycopg_abc
 
+from backend.db import fetch_val, get_pool, init_db_pool
 from scripts import check_prod_schema
-from src.supabase_client import describe_db_url, get_supabase_db_url
+from src.supabase_client import describe_db_url, get_supabase_db_url, get_supabase_env
 
 from . import (
     check_api_health,
@@ -27,6 +29,8 @@ Runner = Callable[[], None]
 
 # Track whether a check passed with tolerated warnings
 _tolerated_warnings: List[str] = []
+
+QUICK_HEARTBEAT_WINDOW = timedelta(minutes=5)
 
 
 def _run_step(name: str, runner: Runner) -> RunResult:
@@ -261,6 +265,151 @@ def _enforcement_case_integrity_runner(env: str) -> Runner:
     return _runner
 
 
+def _quick_env_banner() -> str:
+    env = get_supabase_env()
+    db_url = get_supabase_db_url(env)
+    host, dbname, user = describe_db_url(db_url)
+    click.echo(f"[doctor_all] Quick doctor env={env} host={host} db={dbname} user={user}")
+    return env
+
+
+async def _ensure_db_ready() -> None:
+    await init_db_pool()
+    pool = await get_pool()
+    if pool is None:
+        raise RuntimeError("Database connection pool unavailable (set SUPABASE_DB_URL)")
+
+    result = await fetch_val("SELECT 1;")
+    if result != 1:
+        raise RuntimeError(f"SELECT 1 returned {result}")
+
+
+async def _fetch_rows_async(
+    query: str,
+    params: Sequence[Any] | None = None,
+) -> List[tuple]:
+    pool = await get_pool()
+    if pool is None:
+        raise RuntimeError("Database connection pool is not initialized")
+
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(query, params or [])
+            rows = await cur.fetchall()
+            return list(rows) if rows else []
+
+
+def _normalize_to_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _format_age(now: datetime, timestamp: datetime | None) -> str:
+    if timestamp is None:
+        return "unknown"
+    delta = now - timestamp
+    total_seconds = int(max(delta.total_seconds(), 0))
+    minutes, seconds = divmod(total_seconds, 60)
+    if minutes:
+        return f"{minutes}m{seconds:02d}s"
+    return f"{seconds}s"
+
+
+async def _check_worker_heartbeats(now: datetime) -> List[str]:
+    query = """
+        SELECT worker_name, last_heartbeat
+        FROM workers.heartbeats
+        ORDER BY last_heartbeat ASC NULLS FIRST;
+    """
+    try:
+        rows = await _fetch_rows_async(query)
+    except Exception as exc:
+        message = f"workers.heartbeats query failed: {exc}"
+        click.echo(f"[doctor_all] ⚠️ {message}")
+        return [message]
+
+    if not rows:
+        message = "workers.heartbeats has no rows; workers may be offline"
+        click.echo(f"[doctor_all] ⚠️ {message}")
+        return [message]
+
+    threshold = now - QUICK_HEARTBEAT_WINDOW
+    stale: List[tuple[str, datetime | None]] = []
+    for worker_name, last_heartbeat in rows:
+        heartbeat_utc = _normalize_to_utc(last_heartbeat)
+        if heartbeat_utc is None or heartbeat_utc < threshold:
+            stale.append((worker_name or "(unknown)", heartbeat_utc))
+
+    if not stale:
+        latest = _normalize_to_utc(rows[-1][1])
+        readable = _fmt_ts(latest) if latest else "-"
+        click.echo(f"[doctor_all] ✅ Worker heartbeats fresh (latest {readable})")
+        return []
+
+    details = ", ".join(
+        f"{name}: { _fmt_ts(ts) if ts else 'missing' } ({_format_age(now, ts)} old)"
+        for name, ts in stale
+    )
+    message = f"{len(stale)} worker heartbeat(s) stale (>5m): {details}"
+    click.echo(f"[doctor_all] ⚠️ {message}")
+    return [message]
+
+
+async def _check_dead_letter_backlog() -> List[str]:
+    query = """
+        SELECT name, SUM(message_count)::bigint AS total_messages
+        FROM pgmq.q_dead_letter
+        GROUP BY name
+        HAVING SUM(message_count) > 0
+        ORDER BY total_messages DESC;
+    """
+    try:
+        rows = await _fetch_rows_async(query)
+    except Exception as exc:
+        message = f"pgmq.q_dead_letter query failed: {exc}"
+        click.echo(f"[doctor_all] ⚠️ {message}")
+        return [message]
+
+    if not rows:
+        click.echo("[doctor_all] ✅ Dead-letter queues empty.")
+        return []
+
+    details = ", ".join(f"{name or '(unknown)'}={int(total)}" for name, total in rows)
+    message = f"Dead-letter backlog detected: {details}"
+    click.echo(f"[doctor_all] ⚠️ {message}")
+    return [message]
+
+
+async def _run_quick_doctor() -> int:
+    try:
+        env = _quick_env_banner()
+    except RuntimeError as exc:
+        click.echo(f"[doctor_all] ❌ Config Invalid: {exc}", err=True)
+        return 1
+
+    try:
+        await _ensure_db_ready()
+    except Exception as exc:
+        click.echo(f"[doctor_all] ❌ Database connection failed: {exc}", err=True)
+        return 1
+
+    click.echo("[doctor_all] ✅ Database connectivity verified.")
+
+    now = datetime.now(timezone.utc)
+    warnings: List[str] = []
+    warnings.extend(await _check_worker_heartbeats(now))
+    warnings.extend(await _check_dead_letter_backlog())
+
+    if warnings:
+        click.echo("[doctor_all] Quick doctor completed with warnings.")
+    else:
+        click.echo("[doctor_all] Quick doctor completed clean.")
+    return 0
+
+
 @click.command()
 @click.option(
     "--env",
@@ -331,6 +480,15 @@ def main(
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 1:
+        try:
+            exit_code = asyncio.run(_run_quick_doctor())
+        except KeyboardInterrupt:
+            click.echo("[doctor_all] Quick doctor interrupted", err=True)
+            raise SystemExit(130)
+        else:
+            raise SystemExit(exit_code)
+
     try:
         main()
     except SystemExit:

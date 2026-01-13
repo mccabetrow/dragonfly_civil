@@ -247,10 +247,6 @@ python -m backend.workers.ingest_trigger
 Copy-Item "data_in/validated_batch.csv" -Destination "data_in/live/"
 ```
 
-**Option C: Via n8n Workflow**
-
-- Trigger the `plaintiff-ingest` workflow in n8n dashboard
-
 #### 4.3 Monitor Ingest Progress
 
 ```powershell

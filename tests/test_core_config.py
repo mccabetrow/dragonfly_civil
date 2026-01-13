@@ -210,22 +210,39 @@ class TestStartupDiagnostics:
 
     def test_handles_invalid_settings_gracefully(self, caplog, monkeypatch):
         """Doesn't crash if settings fail to load."""
+        import importlib
+
+        # Reimport src.core_config to get fresh module (in case other tests
+        # cleared it from sys.modules and broke the logger reference)
+        import src.core_config
+
+        importlib.reload(src.core_config)
+        fresh_log_startup_diagnostics = src.core_config.log_startup_diagnostics
 
         # Mock get_settings to raise an exception
         def mock_get_settings():
             raise RuntimeError("Test error: cannot load settings")
 
-        import src.core_config
-
         monkeypatch.setattr(src.core_config, "get_settings", mock_get_settings)
 
-        with caplog.at_level(logging.ERROR):
-            # This should not raise, just log an error
-            log_startup_diagnostics("TestService")
+        # Ensure logger propagates to root (required after other tests may have
+        # modified logging configuration)
+        test_logger = logging.getLogger("src.core_config")
+        original_propagate = test_logger.propagate
+        test_logger.propagate = True
 
-        # The function should have caught the error and logged it
-        assert "TestService" in caplog.text
-        assert "Failed to load settings" in caplog.text
+        try:
+            with caplog.at_level(logging.ERROR, logger="src.core_config"):
+                # This should not raise, just log an error
+                fresh_log_startup_diagnostics("TestService")
+
+            # The function should have caught the error and logged it
+            assert (
+                "TestService" in caplog.text
+            ), f"Expected 'TestService' in caplog, got: {caplog.text!r}"
+            assert "Failed to load settings" in caplog.text
+        finally:
+            test_logger.propagate = original_propagate
 
 
 # =============================================================================

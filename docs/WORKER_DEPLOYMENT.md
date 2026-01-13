@@ -60,14 +60,14 @@
 
 ### Production Services
 
-| Service Name                   | Start Command                                          | Queue(s) Consumed        | Purpose                   |
-| ------------------------------ | ------------------------------------------------------ | ------------------------ | ------------------------- |
-| `dragonfly-api`                | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` | N/A (REST API)           | FastAPI backend           |
-| `dragonfly-worker-ingest`      | `python -m backend.workers.ingest_processor`           | `q_ingest_raw`           | CSV import processing     |
-| `dragonfly-worker-enforcement` | `python -m backend.workers.enforcement_engine`         | `q_enforcement_*`        | AI enforcement pipelines  |
-| `dragonfly-worker-simplicity`  | `python -m backend.workers.simplicity_ingest_worker`   | `q_simplicity_*`         | Simplicity vendor imports |
-| `dragonfly-worker-score`       | `python -m backend.workers.collectability`             | `q_score_collectability` | Collectability scoring    |
-| `dragonfly-worker-comms`       | `python -m backend.workers.outbox_processor`           | `q_comms_outbound`       | Outbound communications   |
+| Service Name                   | Start Command                                        | Queue(s) Consumed        | Purpose                   |
+| ------------------------------ | ---------------------------------------------------- | ------------------------ | ------------------------- |
+| `dragonfly-api`                | `python -m tools.run_uvicorn`                        | N/A (REST API)           | FastAPI backend           |
+| `dragonfly-worker-ingest`      | `python -m backend.workers.ingest_processor`         | `q_ingest_raw`           | CSV import processing     |
+| `dragonfly-worker-enforcement` | `python -m backend.workers.enforcement_engine`       | `q_enforcement_*`        | AI enforcement pipelines  |
+| `dragonfly-worker-simplicity`  | `python -m backend.workers.simplicity_ingest_worker` | `q_simplicity_*`         | Simplicity vendor imports |
+| `dragonfly-worker-score`       | `python -m backend.workers.collectability`           | `q_score_collectability` | Collectability scoring    |
+| `dragonfly-worker-comms`       | `python -m backend.workers.outbox_processor`         | `q_comms_outbound`       | Outbound communications   |
 
 ### Naming Convention
 
@@ -202,7 +202,7 @@ In Railway dashboard, create each worker as a separate service:
 ```bash
 # Service 1: API
 Name: dragonfly-api
-Start Command: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+Start Command: python -m tools.run_uvicorn
 
 # Service 2: Ingest Worker
 Name: dragonfly-worker-ingest

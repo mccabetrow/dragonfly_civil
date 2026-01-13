@@ -133,13 +133,6 @@ If Supabase is down:
 - Verify API keys in Railway env vars
 - Test from a different network
 
-### 3.4 n8n Workflow Issues
-
-```powershell
-# Validate n8n flow configurations
-./.venv/Scripts/python.exe -m tools.validate_n8n_flows --env prod
-```
-
 ---
 
 ## 4. Resolution
@@ -252,8 +245,7 @@ Error codes follow the pattern `DFE-{CATEGORY}-{NUMBER}`:
 | ----------- | ------------------- | ------------------ |
 | DFE-VND-001 | Supabase API error  | Yes                |
 | DFE-VND-002 | Railway API error   | Yes                |
-| DFE-VND-003 | n8n webhook error   | Yes                |
-| DFE-VND-004 | Vendor rate limited | Yes (with backoff) |
+| DFE-VND-003 | Vendor rate limited | Yes (with backoff) |
 
 ### Authentication Errors (DFE-AUTH-\*)
 

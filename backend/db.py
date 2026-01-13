@@ -18,7 +18,10 @@ from .asyncio_compat import ensure_selector_policy_on_windows
 ensure_selector_policy_on_windows()
 
 import asyncio  # noqa: E402
+import logging as stdlib_logging
+import os  # noqa: E402
 import random  # noqa: E402
+import sys  # noqa: E402
 import time  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
@@ -34,7 +37,9 @@ from supabase import Client, create_client  # noqa: E402
 
 from . import __version__  # noqa: E402
 from .config import get_settings  # noqa: E402
+from .core.config_guard import validate_db_config  # noqa: E402
 from .dsn_sanitizer import DSNSanitizationError, sanitize_dsn  # noqa: E402
+from .utils.logging import get_log_metadata  # noqa: E402
 
 # NOTE: settings is loaded lazily via get_settings() inside functions
 # to avoid triggering Pydantic validation at import time
@@ -42,6 +47,43 @@ from .dsn_sanitizer import DSNSanitizationError, sanitize_dsn  # noqa: E402
 # ---------------------------------------------------------------------------
 # Pool Health State
 # ---------------------------------------------------------------------------
+
+# ═══════════════════════════════════════════════════════════════════════════
+# AUTH FAILURE DETECTION via psycopg.pool log interception
+# ═══════════════════════════════════════════════════════════════════════════
+# psycopg_pool logs auth failures to the psycopg.pool logger, but raises only
+# a generic timeout to the caller. We intercept these logs to detect auth
+# failures and trigger the KILL SWITCH even when main thread sees a timeout.
+
+
+_auth_failure_signal_detected = False  # Module-level flag set by log handler
+
+
+class _AuthFailureDetector(stdlib_logging.Handler):
+    """Detect auth failures from psycopg.pool log messages."""
+
+    def emit(self, record: stdlib_logging.LogRecord) -> None:
+        global _auth_failure_signal_detected
+        msg = record.getMessage().lower()
+        # Check for auth failure keywords in pool log messages
+        auth_keywords = [
+            "server_login_retry",
+            "password authentication failed",
+            "authentication failed",
+            "no pg_hba.conf entry",
+            "fatal:",
+        ]
+        for keyword in auth_keywords:
+            if keyword in msg:
+                _auth_failure_signal_detected = True
+                # Log at error level when we detect auth failures
+                logger.error(f"🚨 Auth failure detected in pool logs: {msg[:200]}")
+                return
+
+
+# Attach handler to psycopg.pool logger
+_pool_logger = stdlib_logging.getLogger("psycopg.pool")
+_pool_logger.addHandler(_AuthFailureDetector())
 
 
 @dataclass
@@ -57,6 +99,9 @@ class PoolHealthState:
 
 
 _pool_health = PoolHealthState()
+
+# Attach version metadata to loguru logger for parity with stdlib logs
+logger = logger.bind(**get_log_metadata())
 
 # Async connection pool for database operations
 _db_pool: Optional[AsyncConnectionPool] = None
@@ -94,24 +139,82 @@ def get_supabase_client() -> Client:
 # Low-level DB connection management (psycopg async)
 # ---------------------------------------------------------------------------
 
-# Retry configuration for pool initialization
-MAX_RETRY_ATTEMPTS = 6
-MAX_TOTAL_WAIT_SECONDS = 60.0
-BASE_DELAY_SECONDS = 1.0
-READINESS_CHECK_TIMEOUT = 2.0  # 2s timeout for readiness probe SELECT 1
-
 # ═══════════════════════════════════════════════════════════════════════════
-# POOL CONFIGURATION - High-Volume Ingestion Ready
+# POOL CONFIGURATION - Polite, Environment-Aware
 # ═══════════════════════════════════════════════════════════════════════════
-# These values are tuned for production plaintiff ingestion workloads.
-# Pool is kept lean to avoid exhausting Supabase connection limits.
+# Workers only need 1 connection; API servers can use more.
+# Detects environment via WORKER_MODE env var or process name heuristics.
 
-POOL_MIN_SIZE = 2  # Minimum idle connections
-POOL_MAX_SIZE = 10  # Maximum connections (keep lean for Supabase)
+
+def _detect_worker_mode() -> bool:
+    """Detect if we're running as a worker (small pool) vs API (larger pool)."""
+    import sys
+
+    # Explicit env var takes precedence
+    if os.getenv("WORKER_MODE", "").lower() in ("1", "true", "yes"):
+        return True
+
+    # Heuristics: check if invoked as a worker module
+    script = sys.argv[0] if sys.argv else ""
+    worker_patterns = (
+        "worker",
+        "celery",
+        "rq",
+        "dramatiq",
+        "ingest",
+        "watcher",
+        "scheduler",
+    )
+    return any(p in script.lower() for p in worker_patterns)
+
+
+_IS_WORKER = _detect_worker_mode()
+
+# Pool sizing: workers get minimal pool, API servers get more headroom
+POOL_MIN_SIZE = 1 if _IS_WORKER else 2
+POOL_MAX_SIZE = 1 if _IS_WORKER else 5  # Reduced from 10 → 5 for Supabase limits
 POOL_TIMEOUT = 30.0  # Seconds to wait for connection from pool
 POOL_RECYCLE = 1800  # Recycle connections every 30 minutes
 CONNECT_TIMEOUT = 5  # TCP connect timeout (fail fast if DB is down)
 STATEMENT_TIMEOUT_MS = 10000  # Kill queries taking > 10 seconds
+
+# Retry configuration with exponential backoff
+# Polite backoff: 1s → 2s → 4s → 8s → 16s → 30s (capped)
+MAX_RETRY_ATTEMPTS = 6  # Initial startup attempts ≈ 60s total wait
+MAX_TOTAL_WAIT_SECONDS = 60.0  # Hard cap on total retry time for startup
+BASE_DELAY_SECONDS = 1.0  # Initial delay
+MAX_DELAY_SECONDS = 30.0  # Cap individual retry delay
+JITTER_FACTOR = 0.2  # Add ±20% jitter to prevent thundering herd
+
+# Authentication failure handling: IMMEDIATE EXIT to prevent lockouts
+# Supabase pooler triggers "server_login_retry" after repeated bad auth
+# See: https://supabase.com/docs/guides/platform/going-into-prod#pooler-considerations
+AUTH_FAILURE_KEYWORDS = frozenset(
+    [
+        "server_login_retry",
+        "password authentication failed",
+        "no pg_hba.conf entry",
+        "authentication failed",
+        "fatal:",  # PostgreSQL FATAL errors
+        "role",  # "role X does not exist" (paired with "does not exist")
+    ]
+)
+
+# Network failure handling: POLITE BACKOFF with infinite retry in production
+NETWORK_FAILURE_KEYWORDS = frozenset(
+    [
+        "connection refused",
+        "could not connect to server",
+        "connection timed out",
+        "timeout expired",
+        "network is unreachable",
+        "could not translate host name",
+        "ssl syscall error",
+    ]
+)
+
+# Readiness check configuration
+READINESS_CHECK_TIMEOUT = 2.0  # 2s timeout for readiness probe SELECT 1
 
 
 def _parse_dsn_for_logging(dsn: str) -> dict[str, str | None]:
@@ -173,11 +276,55 @@ def _ensure_sslmode(dsn: str) -> str:
         return dsn
 
 
+def _classify_db_init_error(exc: Exception) -> str:
+    """Classify database init errors for retry strategy.
+
+    Returns one of:
+        - "auth_failure": authentication/authorization issues → KILL SWITCH (exit 1)
+        - "network": transient network/connection problems → POLITE BACKOFF
+        - "other": everything else → treat as network (retry)
+
+    KILL SWITCH POLICY:
+        Auth failures trigger IMMEDIATE sys.exit(1) to prevent Supabase pooler
+        "server_login_retry" lockouts. Bad credentials should NEVER be retried.
+
+    POLITE BACKOFF POLICY:
+        Network failures use exponential backoff (1s → 2s → 4s → ... → 30s cap)
+        with infinite retry in production for resilience against transient issues.
+    """
+    global _auth_failure_signal_detected
+
+    # Check if psycopg.pool log handler detected auth failure
+    # This catches cases where pool workers fail with auth errors but the
+    # main thread only sees a generic timeout exception
+    if _auth_failure_signal_detected:
+        return "auth_failure"
+
+    message = str(exc).lower()
+
+    # Auth-related failures: KILL SWITCH - exit immediately
+    for marker in AUTH_FAILURE_KEYWORDS:
+        if marker in message:
+            # Special case: "role" needs "does not exist" context
+            if marker == "role" and "does not exist" not in message:
+                continue
+            return "auth_failure"
+
+    # Network/connectivity problems: POLITE BACKOFF
+    for marker in NETWORK_FAILURE_KEYWORDS:
+        if marker in message:
+            return "network"
+
+    # Default: treat unknown errors as network (retry)
+    return "other"
+
+
 async def init_db_pool(app: Any | None = None) -> None:
     """
     Initialize async PostgreSQL connection pool with robust retry logic.
 
     Called from FastAPI startup. Implements:
+    - Environment-aware pool sizing (workers: 1, API: 5)
     - DSN sanitization (rejects quotes, internal whitespace, malformed values)
     - Exponential backoff retry (6 attempts, max 60s total)
     - SSL enforcement (sslmode=require)
@@ -195,7 +342,21 @@ async def init_db_pool(app: Any | None = None) -> None:
     if _db_pool is not None:
         return
 
+    # Enforce runtime DB policies before touching the database
+    validate_db_config()
+
     settings = get_settings()  # Lazy load
+
+    # Log pool mode at startup
+    pool_mode = "worker" if _IS_WORKER else "api"
+    logger.info(
+        f"DB pool mode: {pool_mode}",
+        extra={
+            "pool_mode": pool_mode,
+            "pool_min_size": POOL_MIN_SIZE,
+            "pool_max_size": POOL_MAX_SIZE,
+        },
+    )
 
     if not settings.supabase_db_url:
         logger.warning("SUPABASE_DB_URL is not set; skipping DB init")
@@ -216,8 +377,10 @@ async def init_db_pool(app: Any | None = None) -> None:
                 stripped_parts.append("trailing")
             logger.warning(
                 f"DSN whitespace stripped ({' and '.join(stripped_parts)})",
-                original_length=sanitized.original_length,
-                sanitized_length=sanitized.sanitized_length,
+                extra={
+                    "original_length": sanitized.original_length,
+                    "sanitized_length": sanitized.sanitized_length,
+                },
             )
 
     except DSNSanitizationError as e:
@@ -225,7 +388,7 @@ async def init_db_pool(app: Any | None = None) -> None:
         error_msg = f"DSN sanitization failed: {e.message}"
         logger.critical(
             error_msg,
-            safe_components=e.safe_dsn_info,
+            extra={"safe_components": e.safe_dsn_info},
         )
         _pool_health.last_error = error_msg
         _pool_health.healthy = False
@@ -240,14 +403,16 @@ async def init_db_pool(app: Any | None = None) -> None:
     dsn_info = _parse_dsn_for_logging(dsn)
     logger.info(
         "Database connection parameters",
-        host=dsn_info.get("host"),
-        port=dsn_info.get("port"),
-        dbname=dsn_info.get("dbname"),
-        user=dsn_info.get("user"),
-        sslmode=dsn_info.get("sslmode"),
+        extra={
+            "db_host": dsn_info.get("host"),
+            "db_port": dsn_info.get("port"),
+            "db_name": dsn_info.get("dbname"),
+            "db_user": dsn_info.get("user"),
+            "db_sslmode": dsn_info.get("sslmode"),
+        },
     )
 
-    # Exponential backoff retry loop
+    # Exponential backoff retry loop with immediate exit on auth failures
     start_time = time.monotonic()
     last_error: Exception | None = None
 
@@ -276,6 +441,23 @@ async def init_db_pool(app: Any | None = None) -> None:
 
             # Create pool with open=False to avoid deprecation warning
             # Pool is explicitly opened below via await pool.open()
+            #
+            # NOTE: Supabase Transaction Pooler (PgBouncer on port 6543) does NOT support
+            # the "options" startup parameter. We must omit it when using the pooler.
+            # Direct connections (port 5432) can use options for statement_timeout.
+            db_port = dsn_info.get("port", "6543")
+            using_pooler = str(db_port) == "6543"
+
+            conn_kwargs: dict[str, str | int] = {
+                "application_name": app_name,
+                "connect_timeout": CONNECT_TIMEOUT,  # Fail fast if DB unreachable
+            }
+            # Only add options parameter for direct connections (not pooler)
+            if not using_pooler:
+                conn_kwargs["options"] = f"-c statement_timeout={STATEMENT_TIMEOUT_MS}"
+            else:
+                logger.info("Pooler detected (port 6543): skipping 'options' parameter")
+
             pool = AsyncConnectionPool(
                 dsn,
                 min_size=POOL_MIN_SIZE,
@@ -283,11 +465,7 @@ async def init_db_pool(app: Any | None = None) -> None:
                 timeout=POOL_TIMEOUT,  # Wait for connection from pool
                 max_lifetime=POOL_RECYCLE,  # Recycle stale connections
                 open=False,  # Explicit lifecycle - no auto-open in constructor
-                kwargs={
-                    "application_name": app_name,
-                    "connect_timeout": CONNECT_TIMEOUT,  # Fail fast if DB unreachable
-                    "options": f"-c statement_timeout={STATEMENT_TIMEOUT_MS}",  # Kill long queries
-                },
+                kwargs=conn_kwargs,
             )
             # Explicitly open the pool (required when open=False)
             await pool.open()
@@ -311,26 +489,81 @@ async def init_db_pool(app: Any | None = None) -> None:
             _pool_health.last_check_at = time.monotonic()
 
             logger.info(
-                f"✅ Database pool initialized OK (attempt {attempt}, {init_duration:.0f}ms total)"
+                "✅ DB Connected",
+                extra={
+                    "attempt": attempt,
+                    "init_duration_ms": round(init_duration),
+                },
             )
             return
 
         except Exception as e:
             last_error = e
+            category = _classify_db_init_error(e)
             _pool_health.last_error = f"{type(e).__name__}: {str(e)[:200]}"
             _pool_health.healthy = False
 
-            logger.warning(f"DB pool init attempt {attempt} failed: {type(e).__name__}: {e}")
+            # ═══════════════════════════════════════════════════════════════════
+            # KILL SWITCH: Auth failures → Exit immediately (NEVER retry)
+            # ═══════════════════════════════════════════════════════════════════
+            if category == "auth_failure":
+                logger.critical(
+                    "⛔ AUTH FATAL: Credentials rejected. Exiting immediately.",
+                    extra={
+                        "classification": "auth_failure",
+                        "guidance": "Check SUPABASE_DB_URL credentials, username, password",
+                        "attempt": attempt,
+                        "db_host": dsn_info.get("host"),
+                        "db_port": dsn_info.get("port"),
+                        "db_user": dsn_info.get("user"),
+                        "error_type": type(e).__name__,
+                        "error_msg": str(e)[:300],
+                    },
+                )
+                print(
+                    f"\n{'=' * 70}\n"
+                    f"  ⛔ AUTH FATAL: Credentials rejected. Exiting immediately.\n"
+                    f"{'=' * 70}\n\n"
+                    f"  Error: {str(e)[:200]}\n\n"
+                    f"  Host: {dsn_info.get('host')}\n"
+                    f"  Port: {dsn_info.get('port')}\n"
+                    f"  User: {dsn_info.get('user')}\n\n"
+                    f"  ACTION: Verify SUPABASE_DB_URL credentials in Railway/env.\n"
+                    f"  Exiting NOW to prevent server_login_retry lockout.\n\n"
+                    f"{'=' * 70}\n",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            # ═══════════════════════════════════════════════════════════════════
+            # POLITE BACKOFF: Network/transient errors → Exponential retry
+            # ═══════════════════════════════════════════════════════════════════
+            logger.warning(
+                f"DB pool init attempt {attempt} failed: {category}",
+                extra={
+                    "attempt": attempt,
+                    "error_type": type(e).__name__,
+                    "error_msg": str(e)[:200],
+                    "classification": category,
+                },
+            )
 
             if attempt < MAX_RETRY_ATTEMPTS:
-                # Exponential backoff with jitter
+                # Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s (capped)
                 delay = BASE_DELAY_SECONDS * (2 ** (attempt - 1))
-                jitter = random.uniform(0, delay * 0.3)
-                actual_delay = min(delay + jitter, MAX_TOTAL_WAIT_SECONDS - elapsed)
+                delay = min(delay, MAX_DELAY_SECONDS)  # Cap at 30s
+                jitter = random.uniform(-delay * JITTER_FACTOR, delay * JITTER_FACTOR)
+                actual_delay = max(0.5, delay + jitter)  # Minimum 0.5s
 
-                if actual_delay > 0:
+                # Respect time budget during startup
+                remaining = MAX_TOTAL_WAIT_SECONDS - elapsed
+                if remaining > 0:
+                    actual_delay = min(actual_delay, remaining)
                     logger.info(f"DB pool init: waiting {actual_delay:.1f}s before retry")
                     await asyncio.sleep(actual_delay)
+                else:
+                    logger.warning("DB pool init: time budget exhausted during startup")
+                    break
 
     # All retries exhausted
     total_elapsed = time.monotonic() - start_time

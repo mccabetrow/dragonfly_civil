@@ -83,7 +83,7 @@ Configure in Railway → Service → Settings → Start Command:
 ### dragonfly-api
 
 ```bash
-uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+python -m tools.run_uvicorn
 ```
 
 ### dragonfly-worker-ingest

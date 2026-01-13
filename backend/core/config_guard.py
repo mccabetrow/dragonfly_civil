@@ -288,8 +288,15 @@ def _parse_db_sslmode(url: Optional[str]) -> Optional[str]:
 
 
 def _enforce_prod_pooler_contract() -> None:
-    """Exit immediately if production runtime DB URL violates pooler contract."""
+    """Exit immediately if production runtime DB URL violates pooler contract.
 
+    Production DSN Contract (all REQUIRED):
+    1. Host MUST contain '.pooler.supabase.com' (or aws-*.pooler.supabase.com)
+    2. Port MUST be 6543 (transaction pooler)
+    3. sslmode MUST be 'require' (explicit encryption)
+
+    If ANY condition is violated, prints operator-friendly FATAL block and exits.
+    """
     if not (_is_production() and is_runtime_mode()):
         return
 
@@ -301,30 +308,70 @@ def _enforce_prod_pooler_contract() -> None:
     host = _parse_db_host(db_url) or ""
     port = _parse_db_port(db_url)
     sslmode = _parse_db_sslmode(db_url)
+    host_lower = host.lower()
 
     violations: list[str] = []
+    remediations: list[str] = []
 
-    if ".pooler.supabase.com" not in host.lower():
-        violations.append(f"host={host or 'missing'}")
+    # CHECK 1: Host must be pooler, not direct
+    is_pooler_host = ".pooler.supabase.com" in host_lower or (
+        host_lower.startswith("aws-") and ".pooler.supabase.com" in host_lower
+    )
+    if not is_pooler_host:
+        violations.append(f"host='{host or 'missing'}' (expected *.pooler.supabase.com)")
+        remediations.append(
+            "Use Supabase Dashboard → Settings → Database → Connection string → "
+            "'Transaction Pooler' mode"
+        )
 
+    # CHECK 2: Port must be 6543
     if port != 6543:
-        violations.append(f"port={port or 'missing'}")
+        violations.append(f"port={port or 'missing'} (expected 6543)")
+        remediations.append("Change port from 5432 to 6543 in SUPABASE_DB_URL")
 
-    if sslmode != "require":
-        violations.append(f"sslmode={sslmode or 'missing'}")
+    # CHECK 3: sslmode must be explicitly 'require'
+    if sslmode is None or sslmode.lower() != "require":
+        violations.append(f"sslmode='{sslmode or 'missing'}' (expected 'require')")
+        remediations.append("Append ?sslmode=require to SUPABASE_DB_URL")
 
     if violations:
-        message = (
-            "⛔ SUPABASE_DB_URL invalid for prod runtime - require *.pooler.supabase.com:6543?sslmode=require "
-            f"(violations: {', '.join(violations)})"
-        )
-        # Prominent operator-visible log (grep for this in Railway)
+        # Print operator-friendly FATAL block
+        border = "═" * 70
+        print(f"\n{RED}{BOLD}{border}", file=sys.stderr)
+        print("  ⛔ FATAL: PRODUCTION DSN CONTRACT VIOLATION", file=sys.stderr)
+        print(f"{border}{RESET}\n", file=sys.stderr)
+
         print(
-            f"{RED}[CONFIG_GUARD] ⛔ FATAL: {message}{RESET}",
-            file=sys.stderr,
+            f"{RED}SUPABASE_DB_URL does not meet production requirements.{RESET}\n", file=sys.stderr
         )
-        logger.critical(f"DB URL contract violation: {', '.join(violations)}")
-        sys.exit(message)
+        print(
+            f"{RED}Required: *.pooler.supabase.com:6543?sslmode=require{RESET}\n", file=sys.stderr
+        )
+
+        print(f"{YELLOW}Violations:{RESET}", file=sys.stderr)
+        for v in violations:
+            print(f"  • {v}", file=sys.stderr)
+
+        print(f"\n{YELLOW}How to fix:{RESET}", file=sys.stderr)
+        for r in remediations:
+            print(f"  → {r}", file=sys.stderr)
+
+        print(f"\n{YELLOW}Railway Clickpath:{RESET}", file=sys.stderr)
+        print("  1. Supabase Dashboard → Settings → Database", file=sys.stderr)
+        print(
+            "  2. Copy 'Transaction' mode connection string (NOT Session/Direct)", file=sys.stderr
+        )
+        print("  3. Railway Dashboard → Service → Variables → SUPABASE_DB_URL", file=sys.stderr)
+        print("  4. Paste new DSN, ensure port=6543 & sslmode=require", file=sys.stderr)
+        print("  5. Redeploy", file=sys.stderr)
+
+        print(f"\n{RED}{BOLD}APPLICATION STARTUP BLOCKED{RESET}\n", file=sys.stderr)
+
+        logger.critical(
+            f"Production DSN contract violation: {', '.join(violations)}",
+            extra={"violations": violations, "host": host, "port": port, "sslmode": sslmode},
+        )
+        sys.exit(1)
 
 
 def _log_banner(title: str, color: str = RED) -> None:
