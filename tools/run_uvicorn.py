@@ -9,36 +9,34 @@ import sys
 import uvicorn
 
 
-def _parse_port(value: str) -> int:
-    """Convert a PORT string to an int or exit with an error message."""
+def main() -> None:
+    """Robust entry point for Railway with defensive env handling."""
 
+    # 1. Host Defaults
+    host = os.getenv("HOST", "0.0.0.0")
+
+    # 2. Port Safety (The Fix for 'str is not int')
+    port_raw = os.getenv("PORT", "8080")
     try:
-        return int(value)
+        port = int(port_raw)
     except ValueError:
-        print(f"[FATAL] Invalid PORT={value!r}. Must be integer.", file=sys.stderr)
+        print(f"[FATAL] Invalid PORT={port_raw!r}. Must be integer.", file=sys.stderr)
         sys.exit(1)
 
-
-def _parse_workers(value: str) -> int:
-    """Ensure WEB_CONCURRENCY resolves to a positive integer."""
-
-    try:
-        return max(1, int(value))
-    except ValueError:
-        return 1
-
-
-def main() -> None:
-    """Resolve configuration from env vars and boot uvicorn."""
-
-    host = os.getenv("HOST", "0.0.0.0")
-    port = _parse_port(os.getenv("PORT", "8080"))
+    # 3. App Import Path
     app = os.getenv("UVICORN_APP", "backend.main:app")
+
+    # 4. Worker Configuration
     log_level = os.getenv("LOG_LEVEL", "info").lower()
-    workers = _parse_workers(os.getenv("WEB_CONCURRENCY", "1"))
+    workers_raw = os.getenv("WEB_CONCURRENCY", "1")
+    try:
+        workers = max(1, int(workers_raw))
+    except ValueError:
+        workers = 1
 
     print(f"🚀 Starting Uvicorn: {app} on {host}:{port} (Workers: {workers})")
 
+    # 5. Launch
     uvicorn.run(
         app,
         host=host,
