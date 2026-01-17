@@ -18,10 +18,17 @@ SINGLE STARTUP LOG LINE (for log aggregation):
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 
 import uvicorn
+
+# Fix Windows console encoding for emoji characters
+# Railway (Linux) uses UTF-8, Windows may use cp1252 which can't handle emojis
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 
 def _get_sha_short() -> str:
