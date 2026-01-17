@@ -61,6 +61,55 @@ jobs:
         run: pytest -q -m "not integration and not e2e" --tb=short
 
   # ===========================================================================
+  # Contract & Gate Tests - Fail fast on critical regressions
+  # ===========================================================================
+  contract-gate-tests:
+    name: Contract & Gate Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run targeted pytest suite
+        env:
+          SUPABASE_URL: "https://placeholder.supabase.co"
+          SUPABASE_SERVICE_ROLE_KEY: "placeholder-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          SUPABASE_DB_URL: "postgresql://placeholder:placeholder@localhost:5432/placeholder"
+          SUPABASE_PROJECT_REF: "placeholder"
+        run: |
+          set -euo pipefail
+          echo "Running critical contract, tooling, and auth gate tests"
+          pytest -q -x \
+            tests/test_route_contract.py \
+            tests/test_tools_certify_prod.py \
+            tests/test_port_binding.py \
+            tests/test_auth_lockout_circuit_breaker.py \
+            --tb=short || {
+              echo "::error::Critical contract/tool/auth tests failed — fix before merging."
+              exit 1
+            }
+
+  # ===========================================================================
   # Secret Detection - MUST PASS BEFORE ANY OTHER JOB
   # ===========================================================================
   secrets-scan:

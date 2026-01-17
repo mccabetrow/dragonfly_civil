@@ -360,7 +360,10 @@ class TestPolicyConstants:
 class TestProductionPoolerContract:
     """Tests for mandatory pooler host enforcement in production."""
 
-    def test_direct_host_rejected_in_prod_runtime(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_direct_connection_port_5432_rejected_in_prod(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Direct connection (port 5432) should be rejected in production."""
         import backend.core.config_guard as guard
 
         monkeypatch.setenv("DRAGONFLY_ENV", "prod")
@@ -368,6 +371,28 @@ class TestProductionPoolerContract:
         monkeypatch.setenv("DRAGONFLY_EXECUTION_MODE", "runtime")
         guard._reset_execution_mode_cache()
 
+        # Port 5432 is direct connection - should fail
+        monkeypatch.setenv(
+            "SUPABASE_DB_URL",
+            "postgresql://user:pass@db.fake.supabase.co:5432/postgres?sslmode=require",
+        )
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "k" * 120)
+        monkeypatch.setenv("DRAGONFLY_API_KEY", "unit-test")
+        monkeypatch.delenv("SUPABASE_MIGRATE_DB_URL", raising=False)
+
+        with pytest.raises(SystemExit):
+            guard.validate_production_config()
+
+    def test_dedicated_pooler_accepted_in_prod(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Dedicated pooler (db.<ref>.supabase.co:6543) should be accepted in production."""
+        import backend.core.config_guard as guard
+
+        monkeypatch.setenv("DRAGONFLY_ENV", "prod")
+        monkeypatch.setenv("ENVIRONMENT", "prod")
+        monkeypatch.setenv("DRAGONFLY_EXECUTION_MODE", "runtime")
+        guard._reset_execution_mode_cache()
+
+        # Port 6543 with db.* host is dedicated pooler - should pass
         monkeypatch.setenv(
             "SUPABASE_DB_URL",
             "postgresql://user:pass@db.fake.supabase.co:6543/postgres?sslmode=require",
@@ -376,7 +401,5 @@ class TestProductionPoolerContract:
         monkeypatch.setenv("DRAGONFLY_API_KEY", "unit-test")
         monkeypatch.delenv("SUPABASE_MIGRATE_DB_URL", raising=False)
 
-        with pytest.raises(SystemExit) as exc:
-            guard.validate_production_config()
-
-        assert ".pooler.supabase.com" in str(exc.value)
+        # Should NOT raise - dedicated pooler is valid
+        guard.validate_production_config()

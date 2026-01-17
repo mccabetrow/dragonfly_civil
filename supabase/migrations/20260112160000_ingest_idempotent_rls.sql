@@ -89,12 +89,44 @@ RAISE NOTICE '  Added claimed_at column';
 END IF;
 END $$;
 -- ===========================================================================
--- STEP 4: Create indexes if not exist
+-- STEP 4: Create indexes if columns exist (defensive - schema may vary)
 -- ===========================================================================
-CREATE INDEX IF NOT EXISTS idx_import_runs_batch_id ON ingest.import_runs (batch_id);
-CREATE INDEX IF NOT EXISTS idx_import_runs_status ON ingest.import_runs (status);
-CREATE INDEX IF NOT EXISTS idx_import_runs_started_at ON ingest.import_runs (started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_import_runs_source ON ingest.import_runs (source_type, source_reference);
+DO $$ BEGIN -- Only create batch_id index if column exists
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'ingest'
+        AND table_name = 'import_runs'
+        AND column_name = 'batch_id'
+) THEN CREATE INDEX IF NOT EXISTS idx_import_runs_batch_id ON ingest.import_runs (batch_id);
+END IF;
+-- Only create source_type index if column exists
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'ingest'
+        AND table_name = 'import_runs'
+        AND column_name = 'source_type'
+) THEN CREATE INDEX IF NOT EXISTS idx_import_runs_source ON ingest.import_runs (source_type, source_reference);
+END IF;
+-- status and started_at should exist in most schemas
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'ingest'
+        AND table_name = 'import_runs'
+        AND column_name = 'status'
+) THEN CREATE INDEX IF NOT EXISTS idx_import_runs_status ON ingest.import_runs (status);
+END IF;
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'ingest'
+        AND table_name = 'import_runs'
+        AND column_name = 'started_at'
+) THEN CREATE INDEX IF NOT EXISTS idx_import_runs_started_at ON ingest.import_runs (started_at DESC);
+END IF;
+END $$;
 -- Unique constraint for idempotency (if column exists and constraint doesn't)
 DO $$ BEGIN IF EXISTS (
     SELECT 1

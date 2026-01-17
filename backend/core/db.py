@@ -1,27 +1,25 @@
 # backend/core/db.py
 """
-Dragonfly Civil - "Polite" Async Database Pool
+Dragonfly Civil - "Polite" Async Database Pool (Indestructible Boot)
 
 DESIGN GOALS:
 =============
 1. LAZY LOADING: Pool is NOT instantiated in __init__. Only when start() is called.
 2. EXPONENTIAL BACKOFF WITH JITTER: Connection retries with 1s → 2s → 4s → 8s... up to 30s max.
-3. KILL SWITCH: Immediate sys.exit(1) on authentication failures to prevent Supabase lockouts.
-4. QUIET LOGGING: Avoid noisy logs during outages that look like a DDoS attack.
-5. ENV-DRIVEN POOL SIZE: Read DB_POOL_SIZE from environment (default: 1 for workers, 5 for API).
-6. SSL ENFORCEMENT: Always ensures sslmode=require for production security.
+3. INDESTRUCTIBLE BOOT: API processes NEVER exit on DB failures - they enter degraded mode.
+4. KILL SWITCH (Workers only): Workers exit on auth failures to prevent lockout amplification.
+5. QUIET LOGGING: Avoid noisy logs during outages that look like a DDoS attack.
+6. ENV-DRIVEN POOL SIZE: Read DB_POOL_SIZE from environment (default: 1 for workers, 5 for API).
+7. SSL ENFORCEMENT: Always ensures sslmode=require for production security.
 
-CRITICAL - THE "KILL SWITCH":
-==============================
+CRITICAL - THE "KILL SWITCH" (Workers Only):
+==============================================
 Supabase pooler (PgBouncer) triggers "server_login_retry" lockouts after repeated
 failed authentication attempts. This locks the ENTIRE PROJECT for up to 30 minutes.
 
-To prevent this, we IMMEDIATELY exit on:
-- "password authentication failed"
-- "FATAL:" (PostgreSQL FATAL errors include auth failures)
-- Role/database does not exist
+For WORKERS: IMMEDIATELY exit on auth failures to prevent lockout spiral.
+For API: NEVER exit - enter degraded mode so /health still responds.
 
-DO NOT RETRY invalid credentials. Log CRITICAL and sys.exit(1).
 Network errors (connection refused, timeout) are safe to retry with backoff.
 
 Usage:
@@ -48,6 +46,9 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from loguru import logger
 from psycopg_pool import AsyncConnectionPool
+
+# Import db_state for Indestructible Boot pattern
+from . import db_state as db_state_module
 
 if TYPE_CHECKING:
     from psycopg import AsyncConnection
@@ -441,6 +442,10 @@ class Database:
                 elapsed_ms = (time.monotonic() - start_time) * 1000
                 self.pool = pool
 
+                # Set global connectivity flag (Indestructible Boot pattern)
+                db_state_module.is_db_connected = True
+                db_state_module.db_state.mark_connected(init_duration_ms=elapsed_ms)
+
                 # Structured success log with all context
                 logger.info(
                     f"✅ Database Connected | "
@@ -470,10 +475,51 @@ class Database:
                 )
 
                 if is_auth_failure or is_config_failure:
-                    # Log CRITICAL and EXIT IMMEDIATELY
+                    # ═══════════════════════════════════════════════════════════
+                    # INDESTRUCTIBLE BOOT: API processes NEVER exit
+                    # Workers exit immediately to prevent lockout spiral
+                    # ═══════════════════════════════════════════════════════════
+                    error_type = "Authentication" if is_auth_failure else "Configuration"
+                    error_class = "auth_failure" if is_auth_failure else "config_failure"
+
+                    # Check if this is an API process (should NOT exit)
+                    if not db_state_module.db_state.should_exit_on_auth_failure():
+                        # API MODE: Enter degraded mode, DO NOT sys.exit()
+                        logger.critical(
+                            f"❌ Database connection failed: {error_type} error\n"
+                            f"   Host: {dsn_info.get('host')}\n"
+                            f"   Port: {dsn_info.get('port')}\n"
+                            f"   User: {dsn_info.get('user')}\n"
+                            f"   Error: {type(e).__name__}: {e}\n"
+                            f"   Mode: DEGRADED - API will serve /health but DB operations will fail"
+                        )
+                        # Set global flags for degraded mode
+                        db_state_module.is_db_connected = False
+                        db_state_module.db_state.mark_failed(
+                            error=str(e)[:500],
+                            error_class=error_class,
+                            next_retry_delay_s=db_state_module.AUTH_FAILURE_MIN_DELAY_S,
+                        )
+                        # Print warning to stderr but DO NOT exit
+                        print(
+                            f"\n{'=' * 70}\n"
+                            f"  ⚠️ DATABASE {error_type.upper()} FAILURE - DEGRADED MODE\n"
+                            f"{'=' * 70}\n\n"
+                            f"  Error: {str(e)[:200]}\n\n"
+                            f"  Host: {dsn_info.get('host')}\n"
+                            f"  Port: {dsn_info.get('port')}\n\n"
+                            f"  The API will continue running in degraded mode.\n"
+                            f"  /health will return 200, /readyz will return 503.\n"
+                            f"  Fix credentials and restart to restore full functionality.\n\n"
+                            f"{'=' * 70}\n",
+                            file=sys.stderr,
+                        )
+                        return  # Allow boot to continue
+
+                    # WORKER MODE: Exit immediately to prevent lockout spiral
                     logger.critical(
-                        f"⛔ FATAL: {'Authentication' if is_auth_failure else 'Configuration'} "
-                        f"error detected - EXITING to prevent Supabase lockout\n"
+                        f"⛔ FATAL: {error_type} error detected - "
+                        f"EXITING to prevent Supabase lockout\n"
                         f"   Host: {dsn_info.get('host')}\n"
                         f"   Port: {dsn_info.get('port')}\n"
                         f"   User: {dsn_info.get('user')}\n"
@@ -530,7 +576,24 @@ class Database:
                         f"error={type(e).__name__}: {e}"
                     )
 
-        # All retries exhausted
+        # ═══════════════════════════════════════════════════════════════════════
+        # INDESTRUCTIBLE BOOT: API processes enter degraded mode instead of raising
+        # ═══════════════════════════════════════════════════════════════════════
+        if not db_state_module.db_state.should_exit_on_auth_failure():
+            # API MODE: Set degraded state and return (don't raise)
+            db_state_module.is_db_connected = False
+            db_state_module.db_state.mark_failed(
+                error=str(last_error)[:500] if last_error else "Connection exhausted",
+                error_class="network_failure",
+                next_retry_delay_s=30.0,
+            )
+            logger.warning(
+                f"❌ Database connection exhausted after {attempt} attempts. "
+                f"API entering degraded mode - /health OK, /readyz 503"
+            )
+            return  # Allow boot to continue
+
+        # Worker mode: raise exception
         raise DatabaseConnectionError(attempt, last_error or RuntimeError("Unknown error"))
 
     async def stop(self) -> None:
@@ -707,6 +770,11 @@ def get_database() -> Database:
     The instance is created lazily on first call, but the pool
     is NOT opened until start() is called.
 
+    DSN Guard:
+        Before creating the database instance, the DSN is validated
+        against the current environment using dsn_guard.validate_dsn_for_environment().
+        This prevents cross-environment data corruption.
+
     Pool Size:
         - Workers (WORKER_MODE=1 or heuristics): max_size=1
         - API servers: max_size=5 (or DB_POOL_SIZE env var)
@@ -716,6 +784,7 @@ def get_database() -> Database:
 
     Raises:
         ValueError: If SUPABASE_DB_URL is not configured
+        DSNEnvironmentMismatchError: If DSN doesn't match environment
     """
     global _default_db
 
@@ -723,6 +792,17 @@ def get_database() -> Database:
         url = os.environ.get("SUPABASE_DB_URL")
         if not url:
             raise ValueError("SUPABASE_DB_URL environment variable is not set")
+
+        # =======================================================================
+        # DSN GUARD: Zero Drift Policy Enforcement
+        # Validate DSN matches expected environment BEFORE creating pool
+        # =======================================================================
+        from backend.core.dsn_guard import validate_dsn_for_environment
+
+        environment = os.environ.get(
+            "SUPABASE_MODE", os.environ.get("ENV", os.environ.get("ENVIRONMENT", "dev"))
+        )
+        validate_dsn_for_environment(url, environment, fatal_on_mismatch=True)
 
         # Pool size is auto-detected by Database.__init__:
         # - Workers: max_size=1 (detected via WORKER_MODE or process name)

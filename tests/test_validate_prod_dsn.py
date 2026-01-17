@@ -44,11 +44,17 @@ def test_validate_supabase_dsn_sslmode_uppercase() -> None:
 @pytest.mark.parametrize(
     "url, expected",
     [
-        (_build_url(host="db.abc123.supabase.co"), "DIRECT"),
-        (_build_url(host="some-random-host.com"), "pooler.supabase.com"),
+        # Direct connection (port 5432) should fail
+        (_build_url(host="db.abc123.supabase.co", port=5432), "5432"),
+        # Random host should fail
+        (_build_url(host="some-random-host.com"), "pooler"),
+        # Port 5432 on any host should fail
         (_build_url(port=5432), "5432"),
+        # Non-standard port should fail
         (_build_url(port=5433), "6543"),
+        # Missing sslmode should fail
         (_build_url(ssl_clause=""), "sslmode"),
+        # Wrong sslmode should fail
         (_build_url(ssl_clause="sslmode=disable"), "sslmode"),
         (_build_url(ssl_clause="sslmode=prefer"), "sslmode"),
     ],
@@ -61,11 +67,18 @@ def test_validate_supabase_dsn_failures(url: str, expected: str) -> None:
     assert expected in combined, f"Expected '{expected}' in violations: {violations}"
 
 
-def test_validate_supabase_dsn_multiple_violations() -> None:
-    """DSN with all three violations returns all errors."""
-    url = "postgresql://user:pass@db.xyz.supabase.co:5432/postgres"
+def test_validate_supabase_dsn_dedicated_pooler_valid() -> None:
+    """Dedicated pooler (db.<ref>.supabase.co:6543) should be valid."""
+    url = _build_url(host="db.abc123.supabase.co", port=6543)
     violations = validate_prod_dsn.validate_supabase_dsn(url)
-    assert len(violations) >= 3, f"Expected at least 3 violations but got: {violations}"
+    assert violations == [], f"Expected no violations but got: {violations}"
+
+
+def test_validate_supabase_dsn_multiple_violations() -> None:
+    """DSN with multiple violations returns all errors."""
+    url = "postgresql://user:pass@some-random-host.com:5432/postgres"
+    violations = validate_prod_dsn.validate_supabase_dsn(url)
+    assert len(violations) >= 2, f"Expected at least 2 violations but got: {violations}"
 
 
 def test_validate_supabase_dsn_empty_url() -> None:

@@ -121,15 +121,23 @@ EXPOSE 8000
 # HEALTHCHECK
 # -----------------------------------------------------------------------------
 # For API deployments, check the /health endpoint every 30 seconds.
+# Uses PORT env var (Railway-assigned) with fallback to 8000 for local.
 # Workers should override this or use --no-healthcheck.
 # -----------------------------------------------------------------------------
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl --fail http://localhost:8000/health || exit 1
+    CMD curl --fail http://localhost:${PORT:-8000}/health || exit 1
 
 # -----------------------------------------------------------------------------
 # DEFAULT COMMAND
 # -----------------------------------------------------------------------------
-# Default: Run the FastAPI API server with uvicorn
+# Default: Run the FastAPI API server via the run_uvicorn launcher.
+# This enforces strict PORT binding and provides structured startup logs.
+#
 # Override for workers: docker run <image> python -m workers.runner
+#
+# NOTE: We use python -m tools.run_uvicorn instead of raw uvicorn because:
+#   1. Strict PORT enforcement in production (fail fast if missing)
+#   2. Single startup log line for log aggregation
+#   3. Git SHA traceability in startup output
 # -----------------------------------------------------------------------------
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "tools.run_uvicorn"]

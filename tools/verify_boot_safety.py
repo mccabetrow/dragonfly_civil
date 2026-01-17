@@ -34,12 +34,12 @@ def main() -> int:
         print("[1/3] Importing backend.main...")
         from backend import main as backend_main
 
-        print("      ✓ backend.main imported successfully")
+        print("      OK backend.main imported successfully")
 
     except ModuleNotFoundError as e:
-        print(f"      ✗ ModuleNotFoundError: {e}")
+        print(f"      X ModuleNotFoundError: {e}")
         print()
-        print("❌ BOOT SAFETY FAILED")
+        print("BOOT SAFETY FAILED")
         print("   The API would crash on startup with this error.")
         print()
         print("Traceback:")
@@ -47,9 +47,9 @@ def main() -> int:
         return 1
 
     except Exception as e:
-        print(f"      ✗ Unexpected Error: {type(e).__name__}: {e}")
+        print(f"      X Unexpected Error: {type(e).__name__}: {e}")
         print()
-        print("❌ BOOT SAFETY FAILED (unexpected error)")
+        print("BOOT SAFETY FAILED (unexpected error)")
         traceback.print_exc()
         return 1
 
@@ -59,16 +59,16 @@ def main() -> int:
         app = getattr(backend_main, "app", None)
 
         if app is None:
-            print("      ✗ 'app' object not found in backend.main")
+            print("      X 'app' object not found in backend.main")
             print()
-            print("❌ BOOT SAFETY FAILED")
+            print("BOOT SAFETY FAILED")
             print("   Uvicorn expects backend.main:app to exist.")
             return 1
 
-        print(f"      ✓ app exists: {type(app).__name__}")
+        print(f"      OK app exists: {type(app).__name__}")
 
     except Exception as e:
-        print(f"      ✗ Error accessing app: {e}")
+        print(f"      X Error accessing app: {e}")
         traceback.print_exc()
         return 1
 
@@ -76,13 +76,13 @@ def main() -> int:
     try:
         print("[3/3] Checking middleware stack...")
         middleware_count = len(getattr(app, "user_middleware", []))
-        print(f"      ✓ {middleware_count} middleware(s) registered")
+        print(f"      OK {middleware_count} middleware(s) registered")
     except Exception:
-        print("      ⚠ Could not count middleware (non-fatal)")
+        print("      WARN Could not count middleware (non-fatal)")
 
     print()
     print("=" * 60)
-    print("  ✅ BOOT SAFETY VERIFIED")
+    print("  BOOT SAFETY VERIFIED")
     print("=" * 60)
     print()
     print("  The API will start successfully on port 8080.")

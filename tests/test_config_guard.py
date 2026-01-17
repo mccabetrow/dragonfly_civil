@@ -51,6 +51,8 @@ def _set_prod_runtime_env(monkeypatch, db_url: str) -> None:
     monkeypatch.setenv("DRAGONFLY_EXECUTION_MODE", "runtime")
     monkeypatch.setenv("ENVIRONMENT", "prod")
     monkeypatch.setenv("SUPABASE_DB_URL", db_url)
+    # Production requires API key
+    monkeypatch.setenv("DRAGONFLY_API_KEY", "test-api-key-for-testing")
 
 
 def _valid_pooler_url() -> str:
@@ -89,13 +91,24 @@ def test_runtime_guard_requires_pooler_port(monkeypatch):
         config_guard.validate_runtime_config()
 
 
-def test_runtime_guard_requires_pooler_hostname(monkeypatch):
-    # Correct port but wrong hostname (direct connection db.*.supabase.co)
-    bad_url = "postgresql://user:pass@db.abcdefg.supabase.co:6543/postgres?sslmode=require"
+def test_runtime_guard_rejects_direct_connection_port_5432(monkeypatch):
+    """Direct connection (db.*.supabase.co:5432) should be rejected."""
+    # Port 5432 is direct connection, should fail
+    bad_url = "postgresql://user:pass@db.abcdefg.supabase.co:5432/postgres?sslmode=require"
     _set_prod_runtime_env(monkeypatch, bad_url)
 
     with pytest.raises(SystemExit):
         config_guard.validate_runtime_config()
+
+
+def test_runtime_guard_accepts_dedicated_pooler(monkeypatch):
+    """Dedicated pooler (db.*.supabase.co:6543) should be accepted."""
+    # Port 6543 with db.*.supabase.co is the dedicated pooler format
+    good_url = "postgresql://user:pass@db.abcdefg.supabase.co:6543/postgres?sslmode=require"
+    _set_prod_runtime_env(monkeypatch, good_url)
+
+    # Should NOT raise - dedicated pooler is valid
+    config_guard.validate_runtime_config()
 
 
 def test_runtime_guard_requires_sslmode_require(monkeypatch):

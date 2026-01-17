@@ -181,18 +181,35 @@ class BaseWorker(ABC):
         Initialize the worker.
 
         Args:
-            db_url: Database connection string. If None, reads from SUPABASE_DB_URL.
+            db_url: Database connection string. If None, reads from DATABASE_URL.
             worker_id: Unique identifier for this worker instance. Auto-generated if None.
             batch_size: Number of messages to fetch per poll. Overrides class default.
             visibility_timeout: Seconds before message becomes visible again. Overrides class default.
             heartbeat_interval: Seconds between heartbeat updates. Overrides class default.
+
+        Single DSN Contract:
+            Canonical: DATABASE_URL (read this only)
+            Deprecated: SUPABASE_DB_URL (maps with warning)
         """
         if not self.queue_name:
             raise ValueError(f"{self.__class__.__name__} must define queue_name")
 
-        self.db_url = db_url or os.environ.get("SUPABASE_DB_URL")
+        # Single DSN Contract: DATABASE_URL is canonical
+        self.db_url = db_url or os.environ.get("DATABASE_URL")
         if not self.db_url:
-            raise ValueError("Database URL required: set SUPABASE_DB_URL or pass db_url")
+            # Deprecation shim: fall back to SUPABASE_DB_URL with warning
+            legacy_url = os.environ.get("SUPABASE_DB_URL")
+            if legacy_url:
+                import warnings
+
+                warnings.warn(
+                    "SUPABASE_DB_URL is deprecated; use DATABASE_URL instead",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                self.db_url = legacy_url
+        if not self.db_url:
+            raise ValueError("Database URL required: set DATABASE_URL or pass db_url")
 
         self.worker_id = worker_id or uuid.uuid4()
         self.worker_name = get_safe_application_name(self.__class__.__name__)

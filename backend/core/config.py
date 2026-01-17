@@ -65,19 +65,19 @@ class Settings(BaseSettings):
 
     # =========================================================================
     # CORE SUPABASE CONFIGURATION
+    # Indestructible Boot: DB URL can be missing/malformed - API enters degraded mode
     # =========================================================================
 
     SUPABASE_URL: str = Field(
-        ...,
+        default="",
         description="Supabase project REST URL",
     )
     SUPABASE_SERVICE_ROLE_KEY: str = Field(
-        ...,
-        min_length=100,
+        default="",
         description="Supabase service role JWT key",
     )
     SUPABASE_DB_URL: str = Field(
-        ...,
+        default="",
         description="Postgres connection string",
     )
 
@@ -144,17 +144,50 @@ class Settings(BaseSettings):
     PORT: int = Field(default=8888)
 
     # =========================================================================
-    # VALIDATION
+    # VALIDATION - INDESTRUCTIBLE BOOT PATTERN
     # =========================================================================
 
     @model_validator(mode="after")
-    def _validate_prod_safety(self) -> "Settings":
+    def _validate_and_set_degraded_mode(self) -> "Settings":
         """
-        Post-init validation: Ensure prod environment doesn't have dev credentials.
+        Post-init validation with Indestructible Boot pattern.
 
-        Raises:
-            RuntimeError: If DRAGONFLY_ENV is 'prod' but DB connects to dev project
+        If DATABASE_URL is missing or malformed:
+        - Log a warning
+        - Set db_state.is_db_connected = False
+        - Continue booting in "Degraded Mode"
+        - DO NOT raise Fatal Error
+
+        For production: Still validate env/credential mismatch as fatal.
         """
+        import backend.core.db_state as db_state_module
+
+        from .db_state import db_state
+
+        # Check if critical DB config is missing
+        if not self.SUPABASE_DB_URL or not self.SUPABASE_DB_URL.strip():
+            logger.warning(
+                "⚠️ SUPABASE_DB_URL not configured - entering DEGRADED MODE\n"
+                "   /health will return 200, /readyz will return 503\n"
+                "   Database operations will fail until configured."
+            )
+            db_state_module.is_db_connected = False
+            db_state.mark_no_config()
+            return self
+
+        # Validate DB URL format
+        if not self.SUPABASE_DB_URL.startswith(("postgresql://", "postgres://")):
+            logger.warning(
+                f"⚠️ SUPABASE_DB_URL has invalid format - entering DEGRADED MODE\n"
+                f"   Expected: postgresql://... or postgres://...\n"
+                f"   Got: {self.SUPABASE_DB_URL[:30]}...\n"
+                f"   Database operations will fail until fixed."
+            )
+            db_state_module.is_db_connected = False
+            db_state.mark_no_config()
+            return self
+
+        # Production-specific validation (credential mismatch is still fatal)
         if self.DRAGONFLY_ENV != "prod":
             return self
 

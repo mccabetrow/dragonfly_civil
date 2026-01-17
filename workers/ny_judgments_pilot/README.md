@@ -4,15 +4,85 @@ Scheduled ingestion worker for NY civil judgment data. Runs on Railway cron, fet
 
 ## Quick Reference
 
-| Item              | Value                                                                                    |
-| ----------------- | ---------------------------------------------------------------------------------------- |
-| **Run Command**   | `python -m workers.ny_judgments_pilot`                                                   |
-| **Required Vars** | `DATABASE_URL`, `ENV`, `SOURCE_SYSTEM`, `PILOT_COUNTY`, `PILOT_COURT`, `PILOT_CASE_TYPE` |
-| **Exit Codes**    | `0`=success, `1`=partial, `2`=config, `3`=db, `4`=source                                 |
+| Item              | Value                                                                      |
+| ----------------- | -------------------------------------------------------------------------- |
+| **Run Command**   | `python -m workers.ny_judgments_pilot`                                     |
+| **Required Vars** | `DATABASE_URL`                                                             |
+| **Optional Vars** | `ENV` (default: dev), `COUNTY` (default: all)                              |
+| **Exit Codes**    | `0`=success, `1`=failure, `2`=config, `3`=scraper-stub, `4`=db-unreachable |
+| **Pilot Scope**   | 1 county (Kings), 1 case type (money_judgment), 12-18 months, daily delta  |
 
 > **⚠️ STRICT POLICY**: This worker uses `DATABASE_URL` and `ENV` only.
 > It does NOT fall back to `SUPABASE_DB_URL` or `ENVIRONMENT`.
-> Deployment must explicitly map these variables.
+> Railway deployment must explicitly map these variables.
+
+---
+
+## Legal/TOS Compliance Checklist
+
+> **DISCLAIMER**: This section provides general best practices for web scraping compliance.
+> Consult legal counsel before deploying any automated data collection system.
+
+### Pre-Deployment Checklist
+
+- [ ] **Terms of Service Review**
+
+  - [ ] Read and document the target portal's Terms of Service
+  - [ ] Identify any clauses prohibiting automated access
+  - [ ] Obtain written authorization if TOS prohibits scraping
+  - [ ] TODO: Review NY eCourts/WebCivil Terms of Service
+
+- [ ] **robots.txt Compliance**
+
+  - [ ] Check `robots.txt` at target domain
+  - [ ] Respect `Disallow` directives for your user-agent
+  - [ ] Honor `Crawl-delay` if specified
+  - [ ] TODO: Verify NY eCourts robots.txt rules
+
+- [ ] **Rate Limiting & Politeness**
+
+  - [ ] Implement request delays (minimum 1-2 seconds between requests)
+  - [ ] Use exponential backoff on errors
+  - [ ] Respect HTTP 429 (Too Many Requests) responses
+  - [ ] Avoid peak hours if possible
+
+- [ ] **Identification**
+
+  - [ ] Set descriptive User-Agent header with contact info
+  - [ ] Example: `DragonflyBot/1.0 (contact@dragonflycivil.com)`
+
+- [ ] **Data Handling**
+
+  - [ ] Only collect publicly available information
+  - [ ] Do not circumvent access controls or authentication
+  - [ ] Do not collect personal data beyond legal/public records
+  - [ ] Implement data retention policies
+
+- [ ] **Legal Review**
+  - [ ] TODO: Review Computer Fraud and Abuse Act (CFAA) implications
+  - [ ] TODO: Review state-specific computer access laws
+  - [ ] TODO: Document legitimate business purpose for data collection
+  - [ ] TODO: Consult with legal counsel before production deployment
+
+### Ongoing Compliance
+
+- [ ] Monitor for TOS changes
+- [ ] Respond promptly to cease-and-desist requests
+- [ ] Maintain logs of all scraping activity
+- [ ] Review scraping patterns quarterly
+
+---
+
+## Modules
+
+| Module         | Purpose                                                   |
+| -------------- | --------------------------------------------------------- |
+| `__main__.py`  | Canonical entrypoint (runs `main.run_sync()`)             |
+| `config.py`    | Pydantic configuration (validates DATABASE_URL)           |
+| `scraper.py`   | Portal scraper (stub - raises ScraperNotImplementedError) |
+| `normalize.py` | Pure, deterministic canonicalization + hashing            |
+| `db.py`        | Database operations (psycopg3 sync, ON CONFLICT)          |
+| `main.py`      | Orchestration (config→connect→idempotency→scrape→insert)  |
 
 ---
 
@@ -22,8 +92,8 @@ This worker is the **first stage** of the judgment ingestion pipeline. It:
 
 1. Fetches raw judgment records from NY eCourts (or configured source)
 2. Normalizes and deduplicates using SHA-256 hashing
-3. Lands records in `judgments_raw` (append-only staging table)
-4. Logs execution metrics to `ingest_runs` for observability
+3. Lands records in `public.judgments_raw` (append-only staging table)
+4. Logs execution metrics to `ingest.import_runs` for observability
 
 **It does NOT:**
 
@@ -332,6 +402,194 @@ workers/ny_judgments_pilot/
 ├── db.py            # All database operations (psycopg3)
 ├── main.py          # Orchestration (no business logic)
 └── README.md        # This file
+```
+
+---
+
+## Operator Verification Queries
+
+Use these SQL queries to verify pipeline health and diagnose issues.
+
+### 1. Recent Ingest Runs
+
+```sql
+-- Last 10 ingest runs with status
+SELECT
+    id,
+    worker_name,
+    status,
+    records_fetched,
+    records_inserted,
+    records_skipped,
+    records_errored,
+    started_at,
+    finished_at,
+    EXTRACT(EPOCH FROM (finished_at - started_at)) AS duration_seconds
+FROM public.ingest_runs
+WHERE worker_name = 'ny_judgments_pilot'
+ORDER BY started_at DESC
+LIMIT 10;
+```
+
+### 2. Daily Ingestion Summary
+
+```sql
+-- Last 7 days aggregated by date
+SELECT
+    DATE(started_at) AS run_date,
+    COUNT(*) AS runs,
+    SUM(records_fetched) AS total_fetched,
+    SUM(records_inserted) AS total_inserted,
+    SUM(records_skipped) AS total_skipped,
+    SUM(records_errored) AS total_errors,
+    AVG(EXTRACT(EPOCH FROM (finished_at - started_at)))::int AS avg_duration_sec
+FROM public.ingest_runs
+WHERE worker_name = 'ny_judgments_pilot'
+  AND started_at > NOW() - INTERVAL '7 days'
+GROUP BY DATE(started_at)
+ORDER BY run_date DESC;
+```
+
+### 3. Failed Runs (Last 24h)
+
+```sql
+-- Recent failures with error details
+SELECT
+    id,
+    started_at,
+    error_message,
+    error_details
+FROM public.ingest_runs
+WHERE worker_name = 'ny_judgments_pilot'
+  AND status = 'failed'
+  AND started_at > NOW() - INTERVAL '24 hours'
+ORDER BY started_at DESC;
+```
+
+### 4. Judgments Raw Landing Zone Status
+
+```sql
+-- Count by status
+SELECT
+    status,
+    COUNT(*) AS count,
+    MIN(created_at) AS oldest,
+    MAX(created_at) AS newest
+FROM public.judgments_raw
+WHERE source_system = 'ny_ecourts'
+GROUP BY status
+ORDER BY count DESC;
+```
+
+### 5. Duplicate Detection Rate
+
+```sql
+-- How many records are being skipped as duplicates?
+SELECT
+    DATE(ir.started_at) AS run_date,
+    SUM(ir.records_inserted) AS inserted,
+    SUM(ir.records_skipped) AS skipped,
+    ROUND(
+        SUM(ir.records_skipped)::numeric / NULLIF(SUM(ir.records_fetched), 0) * 100,
+        2
+    ) AS skip_rate_pct
+FROM public.ingest_runs ir
+WHERE ir.worker_name = 'ny_judgments_pilot'
+  AND ir.started_at > NOW() - INTERVAL '7 days'
+GROUP BY DATE(ir.started_at)
+ORDER BY run_date DESC;
+```
+
+### 6. Dedupe Key Integrity Check
+
+```sql
+-- Verify no duplicate dedupe_keys exist
+SELECT
+    dedupe_key,
+    COUNT(*) AS duplicates
+FROM public.judgments_raw
+GROUP BY dedupe_key
+HAVING COUNT(*) > 1
+LIMIT 10;
+-- Expected: 0 rows (no duplicates)
+```
+
+### 7. Recent Landed Records
+
+```sql
+-- Sample of most recent records
+SELECT
+    id,
+    source_county,
+    external_id,
+    source_url,
+    status,
+    created_at
+FROM public.judgments_raw
+WHERE source_system = 'ny_ecourts'
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+### 8. County Distribution
+
+```sql
+-- Records by county
+SELECT
+    source_county,
+    COUNT(*) AS records,
+    MIN(created_at) AS first_seen,
+    MAX(created_at) AS last_seen
+FROM public.judgments_raw
+WHERE source_system = 'ny_ecourts'
+GROUP BY source_county
+ORDER BY records DESC;
+```
+
+### 9. Content Change Detection
+
+```sql
+-- Find records with same external_id but different content_hash
+-- (indicates record was updated at source)
+SELECT
+    external_id,
+    COUNT(DISTINCT content_hash) AS content_versions
+FROM public.judgments_raw
+WHERE source_system = 'ny_ecourts'
+  AND external_id IS NOT NULL
+GROUP BY external_id
+HAVING COUNT(DISTINCT content_hash) > 1
+LIMIT 10;
+```
+
+### 10. Pipeline Health Dashboard Query
+
+```sql
+-- Single query for dashboard KPIs
+SELECT
+    -- Last run status
+    (SELECT status FROM public.ingest_runs
+     WHERE worker_name = 'ny_judgments_pilot'
+     ORDER BY started_at DESC LIMIT 1) AS last_run_status,
+
+    -- Last run time
+    (SELECT started_at FROM public.ingest_runs
+     WHERE worker_name = 'ny_judgments_pilot'
+     ORDER BY started_at DESC LIMIT 1) AS last_run_at,
+
+    -- Total records landed
+    (SELECT COUNT(*) FROM public.judgments_raw
+     WHERE source_system = 'ny_ecourts') AS total_landed,
+
+    -- Pending processing
+    (SELECT COUNT(*) FROM public.judgments_raw
+     WHERE source_system = 'ny_ecourts' AND status = 'pending') AS pending,
+
+    -- Failed in last 24h
+    (SELECT COUNT(*) FROM public.ingest_runs
+     WHERE worker_name = 'ny_judgments_pilot'
+       AND status = 'failed'
+       AND started_at > NOW() - INTERVAL '24 hours') AS failed_24h;
 ```
 
 ---

@@ -38,6 +38,12 @@ from supabase import Client, create_client  # noqa: E402
 from . import __version__  # noqa: E402
 from .config import get_settings  # noqa: E402
 from .core.config_guard import validate_db_config  # noqa: E402
+from .core.db_state import (  # noqa: E402
+    EXIT_CODE_AUTH_LOCKOUT,
+    ProcessRole,
+    calculate_backoff_delay,
+    db_state,
+)
 from .dsn_sanitizer import DSNSanitizationError, sanitize_dsn  # noqa: E402
 from .utils.logging import get_log_metadata  # noqa: E402
 
@@ -57,17 +63,29 @@ from .utils.logging import get_log_metadata  # noqa: E402
 
 
 _auth_failure_signal_detected = False  # Module-level flag set by log handler
+_lockout_signal_detected = False  # Module-level flag for lockout-specific errors
 
 
 class _AuthFailureDetector(stdlib_logging.Handler):
-    """Detect auth failures from psycopg.pool log messages."""
+    """Detect auth and lockout failures from psycopg.pool log messages."""
 
     def emit(self, record: stdlib_logging.LogRecord) -> None:
-        global _auth_failure_signal_detected
+        global _auth_failure_signal_detected, _lockout_signal_detected
         msg = record.getMessage().lower()
-        # Check for auth failure keywords in pool log messages
-        auth_keywords = [
+
+        # Check for lockout-specific keywords FIRST
+        lockout_keywords = [
             "server_login_retry",
+            "query_wait_timeout",
+        ]
+        for keyword in lockout_keywords:
+            if keyword in msg:
+                _lockout_signal_detected = True
+                logger.error(f"🚨 Lockout detected in pool logs: {msg[:200]}")
+                return
+
+        # Check for auth failure keywords
+        auth_keywords = [
             "password authentication failed",
             "authentication failed",
             "no pg_hba.conf entry",
@@ -76,7 +94,6 @@ class _AuthFailureDetector(stdlib_logging.Handler):
         for keyword in auth_keywords:
             if keyword in msg:
                 _auth_failure_signal_detected = True
-                # Log at error level when we detect auth failures
                 logger.error(f"🚨 Auth failure detected in pool logs: {msg[:200]}")
                 return
 
@@ -186,12 +203,22 @@ BASE_DELAY_SECONDS = 1.0  # Initial delay
 MAX_DELAY_SECONDS = 30.0  # Cap individual retry delay
 JITTER_FACTOR = 0.2  # Add ±20% jitter to prevent thundering herd
 
+# ═══════════════════════════════════════════════════════════════════════════
+# LOCKOUT ERROR DETECTION
+# ═══════════════════════════════════════════════════════════════════════════
+# These patterns indicate Supabase pooler lockout - need 15-minute circuit breaker
+LOCKOUT_KEYWORDS = frozenset(
+    [
+        "server_login_retry",  # Pooler actively rejecting due to repeated bad auth
+        "query_wait_timeout",  # Connection pool exhaustion
+    ]
+)
+
 # Authentication failure handling: IMMEDIATE EXIT to prevent lockouts
 # Supabase pooler triggers "server_login_retry" after repeated bad auth
 # See: https://supabase.com/docs/guides/platform/going-into-prod#pooler-considerations
 AUTH_FAILURE_KEYWORDS = frozenset(
     [
-        "server_login_retry",
         "password authentication failed",
         "no pg_hba.conf entry",
         "authentication failed",
@@ -216,6 +243,12 @@ NETWORK_FAILURE_KEYWORDS = frozenset(
 # Readiness check configuration
 READINESS_CHECK_TIMEOUT = 2.0  # 2s timeout for readiness probe SELECT 1
 
+# Supabase pooler detection patterns
+import re as _re
+
+_SHARED_POOLER_PATTERN = _re.compile(r"^(aws-[a-z0-9-]+)\.pooler\.supabase\.com$")
+_DEDICATED_POOLER_PATTERN = _re.compile(r"^db\.([a-z0-9]+)\.supabase\.co$")
+
 
 def _parse_dsn_for_logging(dsn: str) -> dict[str, str | None]:
     """
@@ -238,6 +271,60 @@ def _parse_dsn_for_logging(dsn: str) -> dict[str, str | None]:
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+def _derive_pooler_metadata(dsn: str) -> dict[str, str | None]:
+    """
+    Derive Supabase pooler metadata from DSN for operator logging.
+
+    Returns dict with pooler_mode, project_ref, user_redacted, region.
+    Never includes secrets.
+    """
+    try:
+        parsed = urlparse(dsn)
+        host = parsed.hostname
+        port = parsed.port
+        user = parsed.username
+
+        pooler_mode = "unknown"
+        project_ref = None
+        user_redacted = None
+        region = None
+
+        if host:
+            # Check shared pooler: aws-0-us-east-1.pooler.supabase.com
+            shared_match = _SHARED_POOLER_PATTERN.match(host)
+            if shared_match:
+                pooler_mode = "shared"
+                region = shared_match.group(1)
+                # For shared pooler, project_ref is in the username: user.project_ref
+                if user and "." in user:
+                    parts = user.split(".", 1)
+                    user_redacted = f"{parts[0]}.***"
+                    project_ref = parts[1]
+                else:
+                    user_redacted = f"{user}.*MISSING*" if user else None
+
+            # Check dedicated/direct: db.<ref>.supabase.co
+            dedicated_match = _DEDICATED_POOLER_PATTERN.match(host)
+            if dedicated_match:
+                project_ref = dedicated_match.group(1)
+                user_redacted = f"{user[:3]}***" if user and len(user) > 3 else "***"
+                if port == 6543:
+                    pooler_mode = "dedicated"
+                elif port == 5432:
+                    pooler_mode = "direct"  # FORBIDDEN
+
+        return {
+            "pooler_mode": pooler_mode,
+            "host": host,
+            "port": str(port) if port else "5432",
+            "user_redacted": user_redacted,
+            "project_ref": project_ref,
+            "region": region,
+        }
+    except Exception:
+        return {"pooler_mode": "unknown", "error": "parse_failed"}
 
 
 def _ensure_sslmode(dsn: str) -> str:
@@ -280,27 +367,43 @@ def _classify_db_init_error(exc: Exception) -> str:
     """Classify database init errors for retry strategy.
 
     Returns one of:
-        - "auth_failure": authentication/authorization issues → KILL SWITCH (exit 1)
+        - "lockout": server_login_retry/query_wait_timeout → CIRCUIT BREAKER (15m)
+        - "auth_failure": authentication/authorization issues → KILL SWITCH (exit 78)
         - "network": transient network/connection problems → POLITE BACKOFF
         - "other": everything else → treat as network (retry)
 
+    LOCKOUT CIRCUIT BREAKER:
+        server_login_retry and query_wait_timeout indicate the Supabase pooler
+        is actively rejecting us. Workers exit with code 78; API enters 15-min
+        degraded mode to allow pooler recovery.
+
     KILL SWITCH POLICY:
-        Auth failures trigger IMMEDIATE sys.exit(1) to prevent Supabase pooler
-        "server_login_retry" lockouts. Bad credentials should NEVER be retried.
+        Auth failures trigger IMMEDIATE exit to prevent Supabase pooler lockouts.
+        Bad credentials should NEVER be retried.
 
     POLITE BACKOFF POLICY:
         Network failures use exponential backoff (1s → 2s → 4s → ... → 30s cap)
         with infinite retry in production for resilience against transient issues.
     """
-    global _auth_failure_signal_detected
+    global _auth_failure_signal_detected, _lockout_signal_detected
+
+    message = str(exc).lower()
+
+    # Lockout errors: CIRCUIT BREAKER - 15 min backoff (or exit for workers)
+    # Check FIRST before auth_failure to catch server_login_retry specifically
+    for marker in LOCKOUT_KEYWORDS:
+        if marker in message:
+            return "lockout"
+
+    # Check if psycopg.pool log handler detected lockout
+    if _lockout_signal_detected:
+        return "lockout"
 
     # Check if psycopg.pool log handler detected auth failure
     # This catches cases where pool workers fail with auth errors but the
     # main thread only sees a generic timeout exception
     if _auth_failure_signal_detected:
         return "auth_failure"
-
-    message = str(exc).lower()
 
     # Auth-related failures: KILL SWITCH - exit immediately
     for marker in AUTH_FAILURE_KEYWORDS:
@@ -412,6 +515,36 @@ async def init_db_pool(app: Any | None = None) -> None:
         },
     )
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # OPERATOR-FACING POOLER METADATA LOG
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Single-line structured log for Supabase pooler identity validation
+    pooler_meta = _derive_pooler_metadata(dsn)
+    logger.info(
+        "[DB] pooler_mode=%s host=%s port=%s user=%s project_ref=%s",
+        pooler_meta.get("pooler_mode", "unknown"),
+        pooler_meta.get("host", "unknown"),
+        pooler_meta.get("port", "unknown"),
+        pooler_meta.get("user_redacted", "***"),
+        pooler_meta.get("project_ref", "unknown"),
+        extra={
+            "pooler_mode": pooler_meta.get("pooler_mode"),
+            "pooler_host": pooler_meta.get("host"),
+            "pooler_port": pooler_meta.get("port"),
+            "pooler_user_redacted": pooler_meta.get("user_redacted"),
+            "pooler_project_ref": pooler_meta.get("project_ref"),
+            "pooler_region": pooler_meta.get("region"),
+        },
+    )
+
+    # Warn if direct connection detected (FORBIDDEN in production)
+    if pooler_meta.get("pooler_mode") == "direct":
+        logger.warning(
+            "[DB] DIRECT CONNECTION DETECTED (port 5432) - FORBIDDEN in production! "
+            "Use port 6543 for pooler.",
+            extra={"pooler_mode": "direct", "port": pooler_meta.get("port")},
+        )
+
     # Exponential backoff retry loop with immediate exit on auth failures
     start_time = time.monotonic()
     last_error: Exception | None = None
@@ -488,8 +621,11 @@ async def init_db_pool(app: Any | None = None) -> None:
             _pool_health.init_duration_ms = init_duration
             _pool_health.last_check_at = time.monotonic()
 
+            # Update global db_state for degraded mode tracking
+            db_state.mark_connected(init_duration)
+
             logger.info(
-                "✅ DB Connected",
+                "DB Connected",
                 extra={
                     "attempt": attempt,
                     "init_duration_ms": round(init_duration),
@@ -504,11 +640,69 @@ async def init_db_pool(app: Any | None = None) -> None:
             _pool_health.healthy = False
 
             # ═══════════════════════════════════════════════════════════════════
-            # KILL SWITCH: Auth failures → Exit immediately (NEVER retry)
+            # LOCKOUT CIRCUIT BREAKER - server_login_retry / query_wait_timeout
+            # ═══════════════════════════════════════════════════════════════════
+            if category == "lockout":
+                error_msg_short = f"{type(e).__name__}: {str(e)[:200]}"
+                backoff_delay = calculate_backoff_delay(db_state.consecutive_failures, category)
+                db_state.mark_failed(error_msg_short, category, backoff_delay)
+
+                logger.critical(
+                    "[DB] READY=false reason=lockout next_retry_in=%ds",
+                    int(backoff_delay),
+                    extra={
+                        "classification": "lockout",
+                        "guidance": "Supabase pooler lockout detected - waiting for recovery",
+                        "attempt": attempt,
+                        "db_host": dsn_info.get("host"),
+                        "db_port": dsn_info.get("port"),
+                        "error_type": type(e).__name__,
+                        "error_msg": str(e)[:300],
+                        "process_role": db_state.process_role.value,
+                        "next_retry_s": int(backoff_delay),
+                    },
+                )
+
+                # WORKERS: Exit immediately with distinct code to prevent lockout amplification
+                # API: Stay alive in degraded mode - /health returns 200, /readyz returns 503
+                if db_state.should_exit_on_auth_failure():
+                    print(
+                        f"\n{'=' * 70}\n"
+                        f"  LOCKOUT DETECTED: Supabase pooler rejecting connections.\n"
+                        f"  Worker exiting with code {EXIT_CODE_AUTH_LOCKOUT}.\n"
+                        f"{'=' * 70}\n\n"
+                        f"  Error: {str(e)[:200]}\n\n"
+                        f"  Host: {dsn_info.get('host')}\n"
+                        f"  Port: {dsn_info.get('port')}\n\n"
+                        f"  This indicates server_login_retry or query_wait_timeout.\n"
+                        f"  ACTION: Wait 15+ minutes for pooler lockout to clear.\n"
+                        f"  Do NOT restart immediately - that amplifies the lockout.\n\n"
+                        f"{'=' * 70}\n",
+                        file=sys.stderr,
+                    )
+                    sys.exit(EXIT_CODE_AUTH_LOCKOUT)
+                else:
+                    # API: Log degraded mode and return (don't exit)
+                    logger.warning(
+                        f"[DB] API degraded mode: lockout detected, next retry in {int(backoff_delay)}s ({int(backoff_delay/60)}m)",
+                        extra={
+                            "process_role": "api",
+                            "next_retry_s": int(backoff_delay),
+                            "error_class": "lockout",
+                        },
+                    )
+                    return  # Exit init loop, API will serve /health (200) but /readyz returns 503
+
+            # ═══════════════════════════════════════════════════════════════════
+            # AUTH FAILURE HANDLING - Role-dependent behavior
             # ═══════════════════════════════════════════════════════════════════
             if category == "auth_failure":
+                error_msg_short = f"{type(e).__name__}: {str(e)[:200]}"
+                backoff_delay = calculate_backoff_delay(db_state.consecutive_failures, category)
+                db_state.mark_failed(error_msg_short, category, backoff_delay)
+
                 logger.critical(
-                    "⛔ AUTH FATAL: Credentials rejected. Exiting immediately.",
+                    "AUTH FATAL: Credentials rejected",
                     extra={
                         "classification": "auth_failure",
                         "guidance": "Check SUPABASE_DB_URL credentials, username, password",
@@ -518,26 +712,46 @@ async def init_db_pool(app: Any | None = None) -> None:
                         "db_user": dsn_info.get("user"),
                         "error_type": type(e).__name__,
                         "error_msg": str(e)[:300],
+                        "process_role": db_state.process_role.value,
                     },
                 )
-                print(
-                    f"\n{'=' * 70}\n"
-                    f"  ⛔ AUTH FATAL: Credentials rejected. Exiting immediately.\n"
-                    f"{'=' * 70}\n\n"
-                    f"  Error: {str(e)[:200]}\n\n"
-                    f"  Host: {dsn_info.get('host')}\n"
-                    f"  Port: {dsn_info.get('port')}\n"
-                    f"  User: {dsn_info.get('user')}\n\n"
-                    f"  ACTION: Verify SUPABASE_DB_URL credentials in Railway/env.\n"
-                    f"  Exiting NOW to prevent server_login_retry lockout.\n\n"
-                    f"{'=' * 70}\n",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+
+                # WORKERS: Exit immediately to prevent lockout amplification
+                # API: Stay alive in degraded mode - /readyz will return 503
+                if db_state.should_exit_on_auth_failure():
+                    print(
+                        f"\n{'=' * 70}\n"
+                        f"  AUTH FATAL: Credentials rejected. Worker exiting.\n"
+                        f"{'=' * 70}\n\n"
+                        f"  Error: {str(e)[:200]}\n\n"
+                        f"  Host: {dsn_info.get('host')}\n"
+                        f"  Port: {dsn_info.get('port')}\n"
+                        f"  User: {dsn_info.get('user')}\n\n"
+                        f"  ACTION: Verify SUPABASE_DB_URL credentials in Railway/env.\n"
+                        f"  Exiting NOW to prevent server_login_retry lockout.\n\n"
+                        f"{'=' * 70}\n",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                else:
+                    # API: Log degraded mode and return (don't exit)
+                    logger.warning(
+                        f"[DB] API degraded mode: auth failure, next retry in {int(backoff_delay)}s",
+                        extra={
+                            "process_role": "api",
+                            "next_retry_s": int(backoff_delay),
+                        },
+                    )
+                    return  # Exit init loop, API will serve /health but /readyz returns 503
 
             # ═══════════════════════════════════════════════════════════════════
             # POLITE BACKOFF: Network/transient errors → Exponential retry
             # ═══════════════════════════════════════════════════════════════════
+            error_msg_short = f"{type(e).__name__}: {str(e)[:200]}"
+            backoff_delay = calculate_backoff_delay(db_state.consecutive_failures, category)
+            db_state.init_attempts = attempt
+            db_state.mark_failed(error_msg_short, category, backoff_delay)
+
             logger.warning(
                 f"DB pool init attempt {attempt} failed: {category}",
                 extra={
@@ -576,16 +790,20 @@ async def init_db_pool(app: Any | None = None) -> None:
     _pool_health.healthy = False
     _pool_health.init_duration_ms = total_elapsed * 1000
 
-    # In production, we keep the app running for logs but /readyz will fail
-    # This allows container orchestrators to see the pod is unhealthy
-    is_prod = settings.ENVIRONMENT.lower() in ("prod", "production")
+    # Update db_state for degraded mode
+    final_backoff = calculate_backoff_delay(db_state.consecutive_failures, "network")
+    db_state.mark_failed(str(last_error)[:500], "network", final_backoff)
 
-    if is_prod:
-        logger.error(f"❌ {error_msg} - app will start but /readyz will return 503")
-        # Don't raise - keep running so logs are accessible and /readyz works
-    else:
-        logger.error(f"❌ {error_msg}")
-        # In dev, also don't crash - easier for local development
+    # API: Stay alive in degraded mode, /readyz will return 503
+    # Workers: Also stay alive here (only auth failures trigger exit)
+    logger.error(
+        f"{error_msg} - app will start but /readyz will return 503",
+        extra={
+            "process_role": db_state.process_role.value,
+            "next_retry_s": int(final_backoff),
+        },
+    )
+    # Don't raise - keep running so logs are accessible and /readyz works
 
 
 async def check_db_ready(timeout: float = READINESS_CHECK_TIMEOUT) -> tuple[bool, str]:

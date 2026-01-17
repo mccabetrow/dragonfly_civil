@@ -3,9 +3,11 @@
 Validate production SUPABASE_DB_URL contract.
 
 Production DSN Contract (ALL REQUIRED):
-  1. Host MUST contain '.pooler.supabase.com' (or aws-*.pooler.supabase.com)
-  2. Port MUST be 6543 (transaction pooler, NOT 5432 direct)
-  3. sslmode MUST be 'require' (explicit encryption)
+  1. Port MUST be 6543 (transaction pooler)
+  2. sslmode MUST be 'require' (explicit encryption)
+  3. Host MUST be one of:
+     - *.pooler.supabase.com (shared pooler)
+     - db.<ref>.supabase.co:6543 (dedicated pooler)
 
 Usage:
     python -m tools.validate_prod_dsn                    # reads from SUPABASE_DB_URL env
@@ -20,8 +22,9 @@ How to get the correct DSN:
     1. Supabase Dashboard → Settings → Database → Connection string
     2. Select "Transaction" mode (NOT Session, NOT Direct)
     3. Copy the connection string
-    4. Verify it looks like:
-       postgresql://postgres.<ref>:<pass>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
+    4. Verify it matches one of these patterns:
+       Shared:    postgresql://postgres.<ref>:<pass>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
+       Dedicated: postgresql://postgres:<pass>@db.<ref>.supabase.co:6543/postgres?sslmode=require
     5. Paste into Railway → Service → Variables → SUPABASE_DB_URL
 """
 from __future__ import annotations
@@ -43,9 +46,11 @@ def validate_supabase_dsn(url: str) -> list[str]:
     Validate that the provided Supabase DSN satisfies production constraints.
 
     Production DSN Contract:
-    1. Host MUST contain '.pooler.supabase.com' (or aws-*.pooler.supabase.com)
-    2. Port MUST be 6543 (transaction pooler)
-    3. sslmode MUST be 'require' (explicit encryption)
+    1. Port MUST be 6543 (transaction pooler)
+    2. sslmode MUST be 'require' (explicit encryption)
+    3. Host MUST be one of:
+       - *.pooler.supabase.com (shared pooler)
+       - db.<ref>.supabase.co:6543 (dedicated pooler)
 
     Returns list of violations (empty if valid).
     """
@@ -64,22 +69,7 @@ def validate_supabase_dsn(url: str) -> list[str]:
 
     violations: list[str] = []
 
-    # CHECK 1: Host must be pooler, not direct
-    is_pooler_host = ".pooler.supabase.com" in host or (
-        host.startswith("aws-") and ".pooler.supabase.com" in host
-    )
-    if "db." in host and ".supabase.co" in host:
-        violations.append(
-            f"Host '{parsed.hostname}' is a DIRECT connection (db.*.supabase.co). "
-            "Use the Transaction Pooler: aws-*.pooler.supabase.com"
-        )
-    elif not is_pooler_host:
-        violations.append(
-            f"Host '{parsed.hostname or 'missing'}' must contain '.pooler.supabase.com'. "
-            "Use Supabase Dashboard → Settings → Database → Transaction mode"
-        )
-
-    # CHECK 2: Port must be 6543 (transaction pooler)
+    # CHECK 1: Port must be 6543 (transaction pooler)
     if port == 5432:
         violations.append(
             "Port 5432 is a DIRECT connection port. " "Transaction Pooler requires port 6543"
@@ -87,11 +77,37 @@ def validate_supabase_dsn(url: str) -> list[str]:
     elif port != 6543:
         violations.append(f"Port {port or 'missing'} is invalid. Must be 6543 (Transaction Pooler)")
 
-    # CHECK 3: sslmode must be explicitly 'require'
+    # CHECK 2: sslmode must be explicitly 'require'
     if sslmode is None:
         violations.append("sslmode is missing. Append '?sslmode=require' to the connection string")
     elif sslmode.lower() != "require":
         violations.append(f"sslmode='{sslmode}' is invalid. Must be sslmode=require for production")
+
+    # CHECK 3: Host must be a valid pooler host
+    # Two valid patterns:
+    #   1. Shared pooler:    *.pooler.supabase.com
+    #   2. Dedicated pooler: db.<ref>.supabase.co (ONLY when port=6543)
+    is_shared_pooler = ".pooler.supabase.com" in host
+    is_dedicated_pooler_host = host.startswith("db.") and ".supabase.co" in host
+    is_dedicated_pooler = is_dedicated_pooler_host and port == 6543
+    is_direct_connection = is_dedicated_pooler_host and port == 5432
+
+    if is_direct_connection:
+        violations.append(
+            f"Host '{parsed.hostname}:5432' is a DIRECT connection. "
+            "Direct connections bypass the pooler. Use port 6543 for dedicated pooler."
+        )
+    elif not is_shared_pooler and not is_dedicated_pooler:
+        if is_dedicated_pooler_host:
+            violations.append(
+                f"Host '{parsed.hostname}' with port {port} is invalid. "
+                "Dedicated pooler requires port 6543."
+            )
+        else:
+            violations.append(
+                f"Host '{parsed.hostname or 'missing'}' is not a valid Supabase pooler. "
+                "Expected: *.pooler.supabase.com OR db.<ref>.supabase.co:6543"
+            )
 
     return violations
 

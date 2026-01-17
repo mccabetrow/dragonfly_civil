@@ -12,8 +12,16 @@ This module MUST be imported at the very top of all entrypoints:
 It enforces strict separation between Runtime and Migration environments,
 preventing accidental exposure of direct database credentials in production.
 
+SINGLE DSN CONTRACT:
+====================
+CANONICAL VARIABLE: DATABASE_URL
+DEPRECATED (with warning): SUPABASE_DB_URL
+
+All runtime code should use DATABASE_URL. SUPABASE_DB_URL is accepted
+with a deprecation warning for backward compatibility.
+
 SECURITY MODEL:
-- Runtime services use SUPABASE_DB_URL (port 6543, connection pooler)
+- Runtime services use DATABASE_URL (port 6543, connection pooler)
 - Migrations use SUPABASE_MIGRATE_DB_URL (port 5432, direct connection)
 - These MUST NEVER be mixed in production runtime
 
@@ -35,6 +43,7 @@ Usage:
 Author: Principal DevOps Engineer
 Date: 2026-01-07
 Updated: 2026-01-11 - Added execution mode detection and auth failure handling
+Updated: 2026-01-15 - Single DSN Contract (DATABASE_URL canonical)
 """
 
 from __future__ import annotations
@@ -103,6 +112,53 @@ SCRIPT_MODULE_PREFIXES = ("tools.", "etl.", "tests.", "scripts.")
 ExecutionMode = Literal["runtime", "script"]
 
 _EXECUTION_MODE: ExecutionMode | None = None
+
+
+# =============================================================================
+# SINGLE DSN CONTRACT HELPERS
+# =============================================================================
+
+# Canonical variable name
+CANONICAL_DB_VAR = "DATABASE_URL"
+
+# Deprecated variable (maps to canonical with warning)
+DEPRECATED_DB_VAR = "SUPABASE_DB_URL"
+
+_dsn_deprecation_warned = False
+
+
+def _get_database_url_for_guard() -> str | None:
+    """
+    Get database URL using Single DSN Contract.
+
+    Priority:
+        1. DATABASE_URL (canonical)
+        2. SUPABASE_DB_URL (deprecated, emits warning once)
+
+    Returns:
+        Database URL or None if not set.
+    """
+    global _dsn_deprecation_warned
+
+    # Priority 1: Canonical
+    db_url = os.environ.get(CANONICAL_DB_VAR, "").strip()
+    if db_url:
+        return db_url
+
+    # Priority 2: Deprecated (with warning)
+    db_url = os.environ.get(DEPRECATED_DB_VAR, "").strip()
+    if db_url:
+        if not _dsn_deprecation_warned:
+            _dsn_deprecation_warned = True
+            logger.warning(
+                "Environment variable '%s' is DEPRECATED. "
+                "Use '%s' instead. This will be removed in a future release.",
+                DEPRECATED_DB_VAR,
+                CANONICAL_DB_VAR,
+            )
+        return db_url
+
+    return None
 
 
 def _infer_scripts_mode_from_context() -> bool:
@@ -248,28 +304,38 @@ def _parse_db_host(url: Optional[str]) -> Optional[str]:
         return None
 
 
-def _is_pooler_host(hostname: Optional[str]) -> bool:
+def _is_pooler_host(hostname: Optional[str], port: Optional[int] = None) -> bool:
     """
     Check if hostname is a Supabase transaction pooler.
 
-    Supabase pooler hostnames follow the pattern:
-    - aws-0-<region>.pooler.supabase.com (cloud)
-    - <project-ref>.pooler.supabase.co (legacy)
+    Supabase pooler hostnames follow TWO patterns:
+    1. Shared pooler:    *.pooler.supabase.com (e.g., aws-0-us-east-1.pooler.supabase.com)
+    2. Dedicated pooler: db.<ref>.supabase.co:6543 (same host as direct, but port 6543)
 
-    Direct connection hostnames are:
-    - db.<project-ref>.supabase.co (direct)
+    Direct connection (FORBIDDEN in runtime):
+    - db.<project-ref>.supabase.co:5432 (bypasses pooler)
 
     Args:
         hostname: The database hostname
+        port: The port number (required to distinguish dedicated pooler from direct)
 
     Returns:
-        True if hostname indicates a pooler connection
+        True if hostname+port indicates a pooler connection
     """
     if not hostname:
         return False
     hostname_lower = hostname.lower()
-    # Supabase pooler patterns
-    return "pooler" in hostname_lower or hostname_lower.startswith("aws-")
+
+    # Shared pooler patterns
+    if "pooler" in hostname_lower or hostname_lower.startswith("aws-"):
+        return True
+
+    # Dedicated pooler: db.<ref>.supabase.co with port 6543
+    is_dedicated_host = hostname_lower.startswith("db.") and ".supabase.co" in hostname_lower
+    if is_dedicated_host and port == 6543:
+        return True
+
+    return False
 
 
 def _parse_db_sslmode(url: Optional[str]) -> Optional[str]:
@@ -291,16 +357,20 @@ def _enforce_prod_pooler_contract() -> None:
     """Exit immediately if production runtime DB URL violates pooler contract.
 
     Production DSN Contract (all REQUIRED):
-    1. Host MUST contain '.pooler.supabase.com' (or aws-*.pooler.supabase.com)
-    2. Port MUST be 6543 (transaction pooler)
-    3. sslmode MUST be 'require' (explicit encryption)
+    1. Host MUST contain '.pooler.supabase.com' (e.g., aws-0-us-east-1.pooler.supabase.com)
+    2. Host MUST NOT be direct connection (db.*.supabase.co is FORBIDDEN)
+    3. Port MUST be 6543 (transaction pooler)
+    4. sslmode MUST be 'require' (explicit encryption)
 
     If ANY condition is violated, prints operator-friendly FATAL block and exits.
+
+    SINGLE DSN CONTRACT: Uses DATABASE_URL (canonical) or SUPABASE_DB_URL (deprecated).
     """
     if not (_is_production() and is_runtime_mode()):
         return
 
-    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+    # Use Single DSN Contract helper
+    db_url = _get_database_url_for_guard()
 
     if not db_url:
         return  # Missing URL handled elsewhere
@@ -313,26 +383,60 @@ def _enforce_prod_pooler_contract() -> None:
     violations: list[str] = []
     remediations: list[str] = []
 
-    # CHECK 1: Host must be pooler, not direct
-    is_pooler_host = ".pooler.supabase.com" in host_lower or (
-        host_lower.startswith("aws-") and ".pooler.supabase.com" in host_lower
-    )
-    if not is_pooler_host:
-        violations.append(f"host='{host or 'missing'}' (expected *.pooler.supabase.com)")
-        remediations.append(
-            "Use Supabase Dashboard → Settings → Database → Connection string → "
-            "'Transaction Pooler' mode"
+    # Determine pooler type
+    # Two valid pooler patterns when port=6543:
+    #   1. Shared pooler:    *.pooler.supabase.com:6543
+    #   2. Dedicated pooler: db.<ref>.supabase.co:6543
+    #
+    # Direct connection (FORBIDDEN):
+    #   - db.<ref>.supabase.co:5432 (bypasses pooler)
+    is_shared_pooler = ".pooler.supabase.com" in host_lower
+    is_dedicated_pooler_host = host_lower.startswith("db.") and ".supabase.co" in host_lower
+
+    # CHECK 0: Direct connection detection (db.*.supabase.co with port 5432)
+    # This is FORBIDDEN - direct connections bypass the pooler
+    is_direct_connection = is_dedicated_pooler_host and port == 5432
+    if is_direct_connection:
+        violations.append(
+            f"host='{host}:5432' is DIRECT connection (bypasses pooler, FORBIDDEN in prod)"
         )
+        remediations.append(
+            "CRITICAL: Port 5432 is direct connection. "
+            "Use port 6543 for dedicated pooler, or use *.pooler.supabase.com."
+        )
+
+    # CHECK 1: Host must be a valid pooler pattern
+    # Dedicated pooler (db.*.supabase.co) is ONLY valid when port=6543
+    is_dedicated_pooler = is_dedicated_pooler_host and port == 6543
+    is_valid_pooler_host = is_shared_pooler or is_dedicated_pooler
+
+    if not is_valid_pooler_host and not is_direct_connection:
+        if is_dedicated_pooler_host and port != 6543:
+            violations.append(
+                f"host='{host}' with port={port} is invalid. "
+                "Dedicated pooler requires port 6543."
+            )
+            remediations.append(
+                "Change port to 6543 for dedicated pooler, or use shared pooler: "
+                "*.pooler.supabase.com:6543"
+            )
+        elif not is_dedicated_pooler_host:
+            violations.append(f"host='{host or 'missing'}' is not a valid Supabase pooler")
+            remediations.append(
+                "Use Supabase Dashboard → Settings → Database → Connection string → "
+                "'Transaction Pooler' mode. Valid patterns: "
+                "*.pooler.supabase.com:6543 (shared) or db.<ref>.supabase.co:6543 (dedicated)"
+            )
 
     # CHECK 2: Port must be 6543
     if port != 6543:
         violations.append(f"port={port or 'missing'} (expected 6543)")
-        remediations.append("Change port from 5432 to 6543 in SUPABASE_DB_URL")
+        remediations.append(f"Change port from 5432 to 6543 in {CANONICAL_DB_VAR}")
 
     # CHECK 3: sslmode must be explicitly 'require'
     if sslmode is None or sslmode.lower() != "require":
         violations.append(f"sslmode='{sslmode or 'missing'}' (expected 'require')")
-        remediations.append("Append ?sslmode=require to SUPABASE_DB_URL")
+        remediations.append(f"Append ?sslmode=require to {CANONICAL_DB_VAR}")
 
     if violations:
         # Print operator-friendly FATAL block
@@ -342,10 +446,12 @@ def _enforce_prod_pooler_contract() -> None:
         print(f"{border}{RESET}\n", file=sys.stderr)
 
         print(
-            f"{RED}SUPABASE_DB_URL does not meet production requirements.{RESET}\n", file=sys.stderr
+            f"{RED}{CANONICAL_DB_VAR} does not meet production requirements.{RESET}\n",
+            file=sys.stderr,
         )
         print(
-            f"{RED}Required: *.pooler.supabase.com:6543?sslmode=require{RESET}\n", file=sys.stderr
+            f"{RED}Required: *.pooler.supabase.com:6543 OR db.<ref>.supabase.co:6543 with sslmode=require{RESET}\n",
+            file=sys.stderr,
         )
 
         print(f"{YELLOW}Violations:{RESET}", file=sys.stderr)
@@ -361,7 +467,7 @@ def _enforce_prod_pooler_contract() -> None:
         print(
             "  2. Copy 'Transaction' mode connection string (NOT Session/Direct)", file=sys.stderr
         )
-        print("  3. Railway Dashboard → Service → Variables → SUPABASE_DB_URL", file=sys.stderr)
+        print(f"  3. Railway Dashboard → Service → Variables → {CANONICAL_DB_VAR}", file=sys.stderr)
         print("  4. Paste new DSN, ensure port=6543 & sslmode=require", file=sys.stderr)
         print("  5. Redeploy", file=sys.stderr)
 
@@ -497,7 +603,7 @@ def check_forbidden_vars() -> tuple[bool, Optional[str]]:
             "  2. DELETE the SUPABASE_MIGRATE_DB_URL variable\n"
             "  3. Redeploy the service\n"
             "\n"
-            "Runtime services must ONLY use SUPABASE_DB_URL (port 6543).\n"
+            f"Runtime services must ONLY use {CANONICAL_DB_VAR} (port 6543).\n"
             "Migration URLs are for CI/CD pipelines, not runtime services."
         )
 
@@ -514,7 +620,8 @@ def check_pooler_enforcement() -> tuple[bool, Optional[str], bool]:
     Returns:
         Tuple of (passed, message, is_fatal)
     """
-    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+    # Use Single DSN Contract helper
+    db_url = _get_database_url_for_guard()
     is_prod = _is_production()
 
     if not db_url:
@@ -545,7 +652,7 @@ def check_pooler_enforcement() -> tuple[bool, Optional[str], bool]:
                 f"\nCurrent port: {port}\n"
                 "Required port: 6543 (transaction pooler)\n"
                 "\nDirect connections bypass the pooler and can exhaust the database connection limit.\n"
-                "Update SUPABASE_DB_URL to use the pooler and redeploy."
+                f"Update {CANONICAL_DB_VAR} to use the pooler and redeploy."
             ),
             True,
         )
@@ -574,7 +681,8 @@ def check_sslmode() -> tuple[bool, Optional[str]]:
     Returns:
         Tuple of (passed, warning_message)
     """
-    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+    # Use Single DSN Contract helper
+    db_url = _get_database_url_for_guard()
 
     if not db_url:
         return True, None
@@ -598,7 +706,7 @@ def check_sslmode() -> tuple[bool, Optional[str]]:
     # sslmode not explicitly set
     if _is_production():
         return False, (
-            "⚠️  sslmode not explicitly set in SUPABASE_DB_URL.\n"
+            f"⚠️  sslmode not explicitly set in {CANONICAL_DB_VAR}.\n"
             "\n"
             "Supabase defaults to sslmode=require, but explicit is better.\n"
             "Consider adding ?sslmode=require to your connection string."
@@ -611,10 +719,12 @@ def validate_db_config() -> None:
     """
     Validate database configuration at startup.
 
-    This function performs strict validation of SUPABASE_DB_URL:
+    This function performs strict validation of DATABASE_URL:
     - FATAL if SUPABASE_MIGRATE_DB_URL is present (any environment)
     - FATAL if port is 5432 in production (must use 6543)
     - Warns if sslmode is not explicitly set
+
+    SINGLE DSN CONTRACT: Uses DATABASE_URL (canonical) or SUPABASE_DB_URL (deprecated).
 
     Call this BEFORE db.start() in your application entrypoint.
 
@@ -624,7 +734,8 @@ def validate_db_config() -> None:
     is_prod = _is_production()
     env = _get_env()
 
-    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+    # Use Single DSN Contract helper
+    db_url = _get_database_url_for_guard()
 
     # CHECK 1: SUPABASE_MIGRATE_DB_URL must NEVER be present (any env)
     migrate_url = os.environ.get("SUPABASE_MIGRATE_DB_URL")
@@ -647,12 +758,12 @@ def validate_db_config() -> None:
         if is_prod:
             _log_banner("DATABASE CONFIGURATION ERROR", RED)
             print(
-                f"{RED}SUPABASE_DB_URL is not set. Cannot start without database.{RESET}\n",
+                f"{RED}{CANONICAL_DB_VAR} is not set. Cannot start without database.{RESET}\n",
                 file=sys.stderr,
             )
             sys.exit(1)
         else:
-            logger.warning("SUPABASE_DB_URL not set (acceptable in dev)")
+            logger.warning(f"{CANONICAL_DB_VAR} not set (acceptable in dev)")
             return
 
     # CHECK 2: Port must be 6543 (pooler) in production
@@ -666,7 +777,7 @@ def validate_db_config() -> None:
             f"{RED}Direct connections bypass the connection pooler and can exhaust{RESET}\n"
             f"{RED}the database connection limit, causing cascading failures.{RESET}\n"
             f"\n"
-            f"{YELLOW}FIX: Update SUPABASE_DB_URL to use port 6543 and redeploy.{RESET}\n",
+            f"{YELLOW}FIX: Update {CANONICAL_DB_VAR} to use port 6543 and redeploy.{RESET}\n",
             file=sys.stderr,
         )
         logger.critical(
@@ -680,7 +791,7 @@ def validate_db_config() -> None:
     if not sslmode:
         if is_prod:
             logger.warning(
-                "sslmode not explicitly set in SUPABASE_DB_URL. "
+                f"sslmode not explicitly set in {CANONICAL_DB_VAR}. "
                 "Add '?sslmode=require' to enforce encrypted connections."
             )
         # Not fatal - Supabase defaults to require
@@ -846,7 +957,8 @@ def validate_production_config() -> ConfigValidationResult:
 
     # Success message - prominent for operator visibility
     if result.passed:
-        db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+        # Use Single DSN Contract helper
+        db_url = _get_database_url_for_guard()
         host = _parse_db_host(db_url)
         port = _parse_db_port(db_url)
         sslmode = _parse_db_sslmode(db_url)
@@ -870,11 +982,14 @@ def require_pooler_connection() -> None:
 
     Use this for workers that absolutely must use the pooler.
     Raises SystemExit if not using pooler in production.
+
+    SINGLE DSN CONTRACT: Uses DATABASE_URL (canonical) or SUPABASE_DB_URL (deprecated).
     """
     if not _is_production():
         return
 
-    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+    # Use Single DSN Contract helper
+    db_url = _get_database_url_for_guard()
     port = _parse_db_port(db_url)
 
     if port and port != 6543:
@@ -916,7 +1031,8 @@ def validate_runtime_config() -> None:
 
     env = _get_env()
     is_prod = _is_production()
-    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+    # Use Single DSN Contract helper
+    db_url = _get_database_url_for_guard()
 
     # =========================================================================
     # CHECK 1: Migration Credential Leak (FATAL in runtime mode)
@@ -944,16 +1060,16 @@ def validate_runtime_config() -> None:
     # =========================================================================
     if not db_url:
         if is_prod:
-            logger.critical("[CRITICAL] SUPABASE_DB_URL is not set!")
+            logger.critical(f"[CRITICAL] {CANONICAL_DB_VAR} is not set!")
             _log_banner("CRITICAL: DATABASE URL MISSING", RED)
             print(
-                f"{RED}[CRITICAL] SUPABASE_DB_URL is not set.{RESET}\n"
+                f"{RED}[CRITICAL] {CANONICAL_DB_VAR} is not set.{RESET}\n"
                 f"{RED}Production services cannot start without a database connection.{RESET}\n",
                 file=sys.stderr,
             )
             sys.exit(1)
         else:
-            logger.warning("SUPABASE_DB_URL not set (acceptable in dev)")
+            logger.warning(f"{CANONICAL_DB_VAR} not set (acceptable in dev)")
             return
 
     # =========================================================================
@@ -961,12 +1077,15 @@ def validate_runtime_config() -> None:
     # =========================================================================
     port = _parse_db_port(db_url)
     hostname = _parse_db_host(db_url)
-    is_pooler = _is_pooler_host(hostname)
+    # Pass port to _is_pooler_host to support dedicated pooler format (db.<ref>.supabase.co:6543)
+    is_pooler = _is_pooler_host(hostname, port)
 
     if is_prod:
         # In production, BOTH conditions must be met:
         # 1. Port must be 6543
-        # 2. Host must contain "pooler" or be an AWS pooler
+        # 2. Host must be a valid pooler:
+        #    - Shared pooler: *.pooler.supabase.com
+        #    - Dedicated pooler: db.<ref>.supabase.co:6543
         if port != 6543:
             logger.critical("[CRITICAL] Production runtime must use Supabase pooler port 6543.")
             _log_banner("CRITICAL: WRONG DATABASE PORT", RED)
@@ -992,17 +1111,16 @@ def validate_runtime_config() -> None:
             logger.critical("[CRITICAL] Production runtime must use Supabase pooler hostname.")
             _log_banner("CRITICAL: NOT USING POOLER HOST", RED)
             print(
-                f"{RED}⛔ FATAL: Prod using Direct Connection. Host must contain 'pooler'.{RESET}\n"
+                f"{RED}⛔ FATAL: Invalid pooler host for production.{RESET}\n"
                 f"\n"
                 f"{RED}Current host: {hostname or 'unknown'}{RESET}\n"
-                f"{RED}Required: Host containing 'pooler' (e.g., aws-0-us-east-1.pooler.supabase.com){RESET}\n"
-                f"\n"
-                f"{RED}Direct connections (db.<project>.supabase.co) bypass the connection pooler{RESET}\n"
-                f"{RED}and can exhaust the database connection limit.{RESET}\n"
+                f"{RED}Valid patterns:{RESET}\n"
+                f"{RED}  - *.pooler.supabase.com:6543 (shared pooler){RESET}\n"
+                f"{RED}  - db.<ref>.supabase.co:6543 (dedicated pooler){RESET}\n"
                 f"\n"
                 f"{YELLOW}IMMEDIATE ACTION:{RESET}\n"
                 f"{YELLOW}  1. Supabase Dashboard → Settings → Database → Connection string{RESET}\n"
-                f"{YELLOW}  2. Use the 'Connection Pooler' string (Mode: Transaction){RESET}\n"
+                f"{YELLOW}  2. Use the 'Transaction Pooler' string (port 6543){RESET}\n"
                 f"{YELLOW}  3. Update SUPABASE_DB_URL in Railway and redeploy{RESET}\n",
                 file=sys.stderr,
             )

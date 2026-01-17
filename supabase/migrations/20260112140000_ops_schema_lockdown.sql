@@ -146,26 +146,55 @@ CREATE INDEX IF NOT EXISTS idx_worker_heartbeat_type ON ops.worker_heartbeat (wo
 CREATE INDEX IF NOT EXISTS idx_worker_heartbeat_time ON ops.worker_heartbeat (last_heartbeat DESC);
 COMMENT ON TABLE ops.worker_heartbeat IS 'Worker liveness tracking - workers update on each poll cycle.';
 -- ===========================================================================
--- STEP 6: Create ops.audit_log table if not exists
+-- STEP 6: Ensure ops.audit_log table exists (may already exist from earlier migration)
 -- ===========================================================================
+-- Note: ops.audit_log was created by 20251225100000_entity_audit_log.sql with schema:
+--   entity_id, table_name, action, old_values, new_values, changed_fields, 
+--   worker_id, batch_id, source_file, created_at, created_by
+-- 
+-- We only create if missing (rare), using the canonical schema from earlier migration.
+-- The index on created_at should already exist; we add it idempotently just in case.
 CREATE TABLE IF NOT EXISTS ops.audit_log (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    event_type text NOT NULL,
-    actor text,
-    target_table text,
-    target_id uuid,
+    entity_id text NOT NULL,
+    table_name text NOT NULL,
+    action text NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
     old_values jsonb,
     new_values jsonb,
-    metadata jsonb DEFAULT '{}',
-    created_at timestamptz NOT NULL DEFAULT now()
+    changed_fields text [],
+    worker_id text,
+    batch_id uuid,
+    source_file text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    created_by text
 );
+-- Idempotent index creation - only create if columns exist
 CREATE INDEX IF NOT EXISTS idx_audit_log_time ON ops.audit_log (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_log_event ON ops.audit_log (event_type);
-CREATE INDEX IF NOT EXISTS idx_audit_log_target ON ops.audit_log (target_table, target_id);
-COMMENT ON TABLE ops.audit_log IS 'Immutable audit trail for significant system events.';
+-- Guard index creation for columns that may vary between schemas
+DO $$ BEGIN IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'ops'
+        AND table_name = 'audit_log'
+        AND column_name = 'action'
+) THEN CREATE INDEX IF NOT EXISTS idx_audit_log_action_time ON ops.audit_log (action, created_at DESC);
+END IF;
+IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'ops'
+        AND table_name = 'audit_log'
+        AND column_name = 'table_name'
+) THEN CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON ops.audit_log (table_name, entity_id);
+END IF;
+END $$;
+COMMENT ON TABLE ops.audit_log IS 'Entity-level audit log tracking INSERT/UPDATE/DELETE operations on key tables.';
 -- ===========================================================================
 -- STEP 7: Create/Replace ops.get_system_health() with proper security
 -- ===========================================================================
+-- Must drop first to change return type (existing function may return jsonb)
+DROP FUNCTION IF EXISTS ops.get_system_health();
+DROP FUNCTION IF EXISTS ops.get_system_health(integer);
 CREATE OR REPLACE FUNCTION ops.get_system_health() RETURNS TABLE (
         check_name text,
         status text,
@@ -198,6 +227,8 @@ COMMENT ON FUNCTION ops.get_system_health IS 'Returns current system health stat
 -- ===========================================================================
 -- STEP 8: Create/Replace ops.get_worker_status() with proper security
 -- ===========================================================================
+-- Must drop first to change return type
+DROP FUNCTION IF EXISTS ops.get_worker_status();
 CREATE OR REPLACE FUNCTION ops.get_worker_status() RETURNS TABLE (
         worker_id text,
         worker_type text,
@@ -232,6 +263,9 @@ COMMENT ON FUNCTION ops.get_worker_status IS 'Returns current worker heartbeat s
 -- ===========================================================================
 -- STEP 9: Create/Replace ops.get_recent_audit_events() with proper security
 -- ===========================================================================
+-- Must drop first to change return type
+DROP FUNCTION IF EXISTS ops.get_recent_audit_events(integer, text);
+DROP FUNCTION IF EXISTS ops.get_recent_audit_events();
 CREATE OR REPLACE FUNCTION ops.get_recent_audit_events(
         p_limit integer DEFAULT 100,
         p_event_type text DEFAULT NULL
@@ -273,6 +307,8 @@ COMMENT ON FUNCTION ops.get_recent_audit_events IS 'Returns recent audit events.
 -- ===========================================================================
 -- STEP 10: Create/Replace ops.get_dashboard_stats_json() for unified dashboard
 -- ===========================================================================
+-- Must drop first to change return type
+DROP FUNCTION IF EXISTS ops.get_dashboard_stats_json();
 CREATE OR REPLACE FUNCTION ops.get_dashboard_stats_json() RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = ops,
     public,

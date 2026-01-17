@@ -142,18 +142,16 @@ class TestBackendDbPoolApplicationName:
         db_py = Path(__file__).parent.parent / "backend" / "db.py"
         source = db_py.read_text(encoding="utf-8")
 
-        # Verify we use kwargs={...} with application_name inside (may be multi-line)
-        assert "kwargs={" in source, "Pool should use kwargs= parameter"
-        assert '"application_name"' in source, "kwargs should include application_name"
+        # Verify we use kwargs= parameter (either inline dict or variable)
+        assert "kwargs=" in source, "Pool should use kwargs= parameter"
+        assert '"application_name"' in source, "Should include application_name string"
 
         # Verify we do NOT use options with -c application_name
         assert "-c application_name" not in source
-        assert (
-            "options=" not in source.lower()
-            or "application_name" not in source.split("options=")[1].split(")")[0]
-            if "options=" in source.lower()
-            else True
-        )
+        # options= is OK for statement_timeout, just not for application_name
+        if "options=" in source.lower():
+            # Check that options doesn't contain application_name
+            assert "application_name" not in source.split("options=")[1].split(")")[0]
 
     def test_no_pgoptions_env_var_usage(self):
         """Verify we don't set PGOPTIONS to configure application_name."""

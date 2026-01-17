@@ -118,7 +118,9 @@ def _clear_migrate_url_and_patch_guards(
 
         monkeypatch.setattr(cg, "validate_db_config", noop)
         monkeypatch.setattr(cg, "validate_runtime_config", noop)
-    except ImportError:
+    except (ImportError, SystemExit):
+        # May fail if module not available or config_guard raises at import time
+        # ConfigurationSecurityViolation inherits from SystemExit
         pass
 
     try:
@@ -126,7 +128,9 @@ def _clear_migrate_url_and_patch_guards(
 
         monkeypatch.setattr(main_mod, "validate_db_config", noop)
         monkeypatch.setattr(main_mod, "validate_runtime_config", noop)
-    except ImportError:
+    except (ImportError, SystemExit):
+        # backend.main may raise ConfigurationSecurityViolation (SystemExit subclass)
+        # at import time. This is expected in test environments without full prod config
         pass
 
     try:

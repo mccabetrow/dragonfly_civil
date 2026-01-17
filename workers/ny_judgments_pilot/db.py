@@ -1,318 +1,356 @@
 """
 NY Judgments Pilot Worker - Database Operations
 
-All database operations for the ingestion worker.
-Uses psycopg3 (sync) for simplicity - this is a batch worker, not an API.
+All database operations are isolated in this module.
+Uses psycopg3 (sync) with explicit transaction control.
 
-Design decisions:
-- psycopg3 (sync) chosen over asyncpg because:
-  1. Worker is synchronous by design (run once, exit)
-  2. No concurrent requests to benefit from async
-  3. Simpler error handling and debugging
-  4. Matches existing backend/db.py patterns
+DESIGN PRINCIPLES:
+    - Pure database operations, no business logic
+    - Explicit transaction boundaries (caller commits)
+    - Uses ON CONFLICT (dedupe_key) DO NOTHING for idempotency
+    - All queries are parameterized (no SQL injection)
 
-- Explicit transactions for:
-  1. Batch inserts (commit per batch, not per record)
-  2. Ingest run lifecycle (start/end in separate transactions)
-
-- ON CONFLICT DO NOTHING for idempotent upserts
-  (we don't update existing records - append-only landing zone)
+TABLES:
+    - public.ingest_runs: Tracks ingestion worker executions
+    - public.judgments_raw: Raw judgment records landing zone
 """
 
 from __future__ import annotations
 
 import logging
-import socket
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import psycopg
-from psycopg import sql
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 
-from .config import WorkerConfig
+from .normalize import NormalizedRecord
+
+# ============================================================================
+# Logging
+# ============================================================================
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Constants
-# ============================================================================
-
-# Application name for Postgres connection (visible in pg_stat_activity)
-APP_NAME = "dragonfly_ny_pilot"
-
-# Batch size for inserts (balance between memory and transaction size)
-DEFAULT_BATCH_SIZE = 100
-
 
 # ============================================================================
-# Data Types
+# Connection Factory
 # ============================================================================
 
 
-@dataclass
-class InsertResult:
-    """Result of a batch insert operation."""
-
-    inserted: int = 0
-    skipped: int = 0  # Duplicates (ON CONFLICT DO NOTHING)
-    errored: int = 0
-    errors: list[dict[str, Any]] = field(default_factory=list)
-
-    def merge(self, other: "InsertResult") -> "InsertResult":
-        """Merge another result into this one."""
-        return InsertResult(
-            inserted=self.inserted + other.inserted,
-            skipped=self.skipped + other.skipped,
-            errored=self.errored + other.errored,
-            errors=self.errors + other.errors,
-        )
-
-
-@dataclass
-class IngestRunStats:
-    """Statistics for an ingest run."""
-
-    records_fetched: int = 0
-    records_inserted: int = 0
-    records_skipped: int = 0
-    records_errored: int = 0
-
-
-# ============================================================================
-# Connection Management
-# ============================================================================
-
-
-def get_connection(dsn: str, *, autocommit: bool = False) -> psycopg.Connection:
+def get_connection(dsn: str) -> psycopg.Connection:
     """
     Create a database connection with standard settings.
 
     Args:
         dsn: PostgreSQL connection string.
-        autocommit: If True, disable transaction blocks.
 
     Returns:
         psycopg.Connection configured for this worker.
 
     Raises:
-        psycopg.OperationalError: If connection fails.
+        psycopg.OperationalError: On connection failure.
     """
-    # Build connection options
-    # Note: Supabase pooler (port 6543) doesn't support 'options' parameter
     conn = psycopg.connect(
         dsn,
-        autocommit=autocommit,
         row_factory=dict_row,
-        application_name=APP_NAME,
+        application_name="ny_judgments_pilot",
         connect_timeout=10,
     )
 
-    logger.info(
-        "[DB] Connected",
-        extra={
-            "host": _extract_host(dsn),
-            "application_name": APP_NAME,
-        },
-    )
+    # Set session timezone to UTC for consistency
+    with conn.cursor() as cur:
+        cur.execute("SET TIME ZONE 'UTC'")
 
     return conn
 
 
-def _extract_host(dsn: str) -> str:
-    """Extract host from DSN for logging (no credentials)."""
+# ============================================================================
+# Ingest Run Operations (public.ingest_runs)
+# ============================================================================
+
+
+def check_existing_run(
+    conn: psycopg.Connection,
+    source_batch_id: str,
+) -> dict[str, Any] | None:
+    """
+    Check if an ingest run already exists for this batch.
+
+    Uses worker_name + source_system + date as the identity.
+
+    Args:
+        conn: Database connection.
+        source_batch_id: Unique batch identifier (e.g., ny_judgments_2026-01-14).
+
+    Returns:
+        Existing run record, or None if not found.
+    """
+    # The source_batch_id encodes the date, so we search by pattern matching
+    # Format: ny_judgments_YYYY-MM-DD
+    query = """
+        SELECT id, worker_name, source_system, source_county, status,
+               started_at, finished_at, records_fetched, records_inserted
+        FROM public.ingest_runs
+        WHERE worker_name = 'ny_judgments_pilot'
+          AND DATE(started_at) = %(run_date)s
+        ORDER BY started_at DESC
+        LIMIT 1
+    """
+
+    # Extract date from source_batch_id (ny_judgments_YYYY-MM-DD)
     try:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(dsn)
-        return parsed.hostname or "unknown"
+        run_date = source_batch_id.replace("ny_judgments_", "")
     except Exception:
-        return "unknown"
+        run_date = datetime.now(timezone.utc).date().isoformat()
 
+    with conn.cursor() as cur:
+        cur.execute(query, {"run_date": run_date})
+        row = cur.fetchone()
 
-# ============================================================================
-# Ingest Run Management
-# ============================================================================
+    return dict(row) if row else None
 
 
 def create_ingest_run(
     conn: psycopg.Connection,
-    config: WorkerConfig,
+    source_batch_id: str,
+    source_county: str | None = None,
+    environment: str = "dev",
 ) -> UUID:
     """
-    Create a new ingest run record at the start of execution.
+    Create a new ingest run record with 'running' status.
 
     Args:
         conn: Database connection.
-        config: Worker configuration.
+        source_batch_id: Unique batch identifier.
+        source_county: County being ingested (or None for all).
+        environment: Environment (dev, staging, prod).
 
     Returns:
-        UUID of the created ingest run.
-
-    Raises:
-        psycopg.Error: On database error.
+        UUID of the created run.
     """
-    run_id = uuid4()
-    hostname = _get_hostname()
-
     query = """
         INSERT INTO public.ingest_runs (
-            id,
             worker_name,
             worker_version,
             source_system,
             source_county,
-            started_at,
             status,
-            hostname,
+            started_at,
             environment,
             triggered_by
         ) VALUES (
-            %(id)s,
-            %(worker_name)s,
-            %(worker_version)s,
-            %(source_system)s,
+            'ny_judgments_pilot',
+            '1.0.0',
+            'ny_ecourts',
             %(source_county)s,
+            'running',
             %(started_at)s,
-            %(status)s,
-            %(hostname)s,
             %(environment)s,
-            %(triggered_by)s
+            'scheduler'
         )
+        RETURNING id
     """
 
     params = {
-        "id": str(run_id),
-        "worker_name": config.worker_name,
-        "worker_version": config.worker_version,
-        "source_system": config.source_system,
-        "source_county": config.pilot_county,
+        "source_county": source_county,
         "started_at": datetime.now(timezone.utc),
-        "status": "running",
-        "hostname": hostname,
-        "environment": config.env,
-        "triggered_by": "scheduler",  # TODO: Could be "manual" or "backfill"
+        "environment": environment,
     }
 
     with conn.cursor() as cur:
         cur.execute(query, params)
+        row = cur.fetchone()
 
     conn.commit()
 
+    run_id = row["id"]
     logger.info(
-        "[DB] Ingest run created",
-        extra={
-            "ingest_run_id": str(run_id),
-            "worker_name": config.worker_name,
-            "source_system": config.source_system,
-            "source_county": config.pilot_county,
-        },
+        "created ingest_run run_id=%s source_batch_id=%s",
+        run_id,
+        source_batch_id,
     )
 
     return run_id
 
 
-def finalize_ingest_run(
+def create_import_run(
     conn: psycopg.Connection,
-    run_id: UUID,
-    stats: IngestRunStats,
-    status: str,
-    error_message: str | None = None,
-    error_details: dict[str, Any] | None = None,
-) -> None:
+    source_batch_id: str,
+    file_hash: str,
+) -> UUID:
     """
-    Finalize an ingest run with final statistics and status.
+    Backwards-compatible wrapper for create_ingest_run.
 
     Args:
         conn: Database connection.
-        run_id: UUID of the ingest run.
-        stats: Final statistics.
-        status: Final status ("completed", "failed", "partial").
-        error_message: Top-level error message if failed.
-        error_details: Structured error details if failed.
+        source_batch_id: Unique batch identifier.
+        file_hash: Hash of the source (ignored - for compatibility).
 
-    Raises:
-        psycopg.Error: On database error.
+    Returns:
+        UUID of the created run.
+    """
+    return create_ingest_run(conn, source_batch_id)
+
+
+def update_run_to_failed(
+    conn: psycopg.Connection,
+    run_id: UUID | None,
+    source_batch_id: str,
+    error_message: str,
+    error_details: dict[str, Any] | None = None,
+) -> None:
+    """
+    Update ingest run to 'failed' status.
+
+    Args:
+        conn: Database connection.
+        run_id: UUID of the run (None to create new failed record).
+        source_batch_id: Batch identifier.
+        error_message: Short error message.
+        error_details: Structured error details.
+    """
+    if run_id is None:
+        # Create a failed run record if we couldn't create one earlier
+        query = """
+            INSERT INTO public.ingest_runs (
+                worker_name,
+                worker_version,
+                source_system,
+                status,
+                started_at,
+                finished_at,
+                error_message,
+                error_details
+            ) VALUES (
+                'ny_judgments_pilot',
+                '1.0.0',
+                'ny_ecourts',
+                'failed',
+                %(started_at)s,
+                %(finished_at)s,
+                %(error_message)s,
+                %(error_details)s
+            )
+        """
+        now = datetime.now(timezone.utc)
+        params = {
+            "started_at": now,
+            "finished_at": now,
+            "error_message": error_message[:500] if error_message else None,
+            "error_details": Json(error_details) if error_details else None,
+        }
+    else:
+        query = """
+            UPDATE public.ingest_runs
+            SET
+                status = 'failed',
+                finished_at = %(finished_at)s,
+                error_message = %(error_message)s,
+                error_details = %(error_details)s
+            WHERE id = %(run_id)s
+        """
+        params = {
+            "run_id": str(run_id),
+            "finished_at": datetime.now(timezone.utc),
+            "error_message": error_message[:500] if error_message else None,
+            "error_details": Json(error_details) if error_details else None,
+        }
+
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+
+    conn.commit()
+
+    logger.error(
+        "run_failed run_id=%s error=%s",
+        run_id or "N/A",
+        error_message,
+    )
+
+
+def update_run_to_completed(
+    conn: psycopg.Connection,
+    run_id: UUID,
+    total_rows: int,
+    inserted_rows: int,
+    skipped_rows: int,
+    error_rows: int,
+) -> None:
+    """
+    Update ingest run to 'completed' status with row counts.
+
+    Args:
+        conn: Database connection.
+        run_id: UUID of the run.
+        total_rows: Total records fetched.
+        inserted_rows: Records successfully inserted.
+        skipped_rows: Records skipped (duplicates).
+        error_rows: Records that failed.
     """
     query = """
         UPDATE public.ingest_runs
         SET
+            status = 'completed',
             finished_at = %(finished_at)s,
             records_fetched = %(records_fetched)s,
             records_inserted = %(records_inserted)s,
             records_skipped = %(records_skipped)s,
-            records_errored = %(records_errored)s,
-            status = %(status)s,
-            error_message = %(error_message)s,
-            error_details = %(error_details)s
-        WHERE id = %(id)s
+            records_errored = %(records_errored)s
+        WHERE id = %(run_id)s
     """
 
     params = {
-        "id": str(run_id),
+        "run_id": str(run_id),
         "finished_at": datetime.now(timezone.utc),
-        "records_fetched": stats.records_fetched,
-        "records_inserted": stats.records_inserted,
-        "records_skipped": stats.records_skipped,
-        "records_errored": stats.records_errored,
-        "status": status,
-        "error_message": error_message,
-        "error_details": psycopg.types.json.Json(error_details) if error_details else None,
+        "records_fetched": total_rows,
+        "records_inserted": inserted_rows,
+        "records_skipped": skipped_rows,
+        "records_errored": error_rows,
     }
 
     with conn.cursor() as cur:
         cur.execute(query, params)
-        if cur.rowcount == 0:
-            logger.error(
-                "[DB] Ingest run not found for finalization",
-                extra={"ingest_run_id": str(run_id)},
-            )
 
     conn.commit()
 
     logger.info(
-        "[DB] Ingest run finalized",
-        extra={
-            "ingest_run_id": str(run_id),
-            "status": status,
-            "records_fetched": stats.records_fetched,
-            "records_inserted": stats.records_inserted,
-            "records_skipped": stats.records_skipped,
-            "records_errored": stats.records_errored,
-        },
+        "run_completed run_id=%s total=%d inserted=%d skipped=%d errors=%d",
+        run_id,
+        total_rows,
+        inserted_rows,
+        skipped_rows,
+        error_rows,
     )
 
 
 # ============================================================================
-# Judgment Raw Operations
+# Judgments Raw Operations (public.judgments_raw)
 # ============================================================================
 
 
-def upsert_judgment_raw(
+def insert_judgment_raw(
     conn: psycopg.Connection,
-    record: dict[str, Any],
-) -> tuple[bool, str | None]:
+    record: NormalizedRecord,
+    ingest_run_id: UUID,
+) -> bool:
     """
-    Insert a single judgment_raw record with ON CONFLICT DO NOTHING.
+    Insert a single normalized record into judgments_raw.
+
+    Uses ON CONFLICT (dedupe_key) DO NOTHING for idempotency.
 
     Args:
-        conn: Database connection (should be in a transaction).
-        record: Normalized record dict with all required fields.
+        conn: Database connection.
+        record: NormalizedRecord to insert.
+        ingest_run_id: UUID of the current ingest run.
 
     Returns:
-        Tuple of (was_inserted, error_message).
-        - (True, None) if inserted successfully
-        - (False, None) if skipped (duplicate)
-        - (False, error_message) if failed
-
-    Note:
-        Does NOT commit - caller manages transaction.
+        True if inserted, False if duplicate (skipped).
     """
     query = """
         INSERT INTO public.judgments_raw (
-            id,
             source_system,
             source_county,
             source_court,
@@ -326,10 +364,8 @@ def upsert_judgment_raw(
             raw_html,
             content_hash,
             dedupe_key,
-            ingest_run_id,
-            status
+            ingest_run_id
         ) VALUES (
-            %(id)s,
             %(source_system)s,
             %(source_county)s,
             %(source_court)s,
@@ -343,257 +379,98 @@ def upsert_judgment_raw(
             %(raw_html)s,
             %(content_hash)s,
             %(dedupe_key)s,
-            %(ingest_run_id)s,
-            %(status)s
+            %(ingest_run_id)s
         )
         ON CONFLICT (dedupe_key) DO NOTHING
+        RETURNING id
     """
 
-    try:
-        # Prepare params with proper JSON handling
-        params = {
-            "id": str(record["id"]),
-            "source_system": record["source_system"],
-            "source_county": record.get("source_county"),
-            "source_court": record.get("source_court"),
-            "case_type": record.get("case_type"),
-            "external_id": record.get("external_id"),
-            "source_url": record["source_url"],
-            "judgment_entered_at": record.get("judgment_entered_at"),
-            "filed_at": record.get("filed_at"),
-            "raw_payload": psycopg.types.json.Json(record.get("raw_payload", {})),
-            "raw_text": record.get("raw_text"),
-            "raw_html": record.get("raw_html"),
-            "content_hash": record["content_hash"],
-            "dedupe_key": record["dedupe_key"],
-            "ingest_run_id": str(record["ingest_run_id"]),
-            "status": record.get("status", "pending"),
-        }
+    data = record.to_dict()
+    data["raw_payload"] = Json(data["raw_payload"])
+    data["ingest_run_id"] = str(ingest_run_id)
 
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            was_inserted = cur.rowcount > 0
+    with conn.cursor() as cur:
+        cur.execute(query, data)
+        row = cur.fetchone()
 
-        return (was_inserted, None)
-
-    except psycopg.Error as e:
-        error_msg = f"{type(e).__name__}: {str(e)[:200]}"
-        logger.warning(
-            "[DB] Failed to insert record",
-            extra={
-                "dedupe_key": record.get("dedupe_key", "unknown"),
-                "error": error_msg,
-            },
-        )
-        return (False, error_msg)
+    # If RETURNING returned a row, we inserted successfully
+    return row is not None
 
 
-def upsert_judgment_raw_batch(
+def insert_judgments_raw_batch(
     conn: psycopg.Connection,
-    records: list[dict[str, Any]],
-) -> InsertResult:
+    records: list[NormalizedRecord],
+    ingest_run_id: UUID,
+    batch_size: int = 100,
+) -> tuple[int, int]:
     """
-    Insert a batch of judgment_raw records with ON CONFLICT DO NOTHING.
+    Insert a batch of normalized records into judgments_raw.
 
-    Uses a single transaction for the entire batch.
-    Partial failures within the batch are captured, not raised.
+    Uses ON CONFLICT for efficient bulk inserts.
 
     Args:
         conn: Database connection.
-        records: List of normalized record dicts.
+        records: List of NormalizedRecords to insert.
+        ingest_run_id: UUID of the current ingest run.
+        batch_size: Records per transaction batch.
 
     Returns:
-        InsertResult with counts and any errors.
-
-    Note:
-        Commits on success, rolls back on catastrophic failure only.
+        Tuple of (inserted_count, skipped_count).
     """
-    if not records:
-        return InsertResult()
+    inserted = 0
+    skipped = 0
 
-    result = InsertResult()
+    for i in range(0, len(records), batch_size):
+        batch = records[i : i + batch_size]
 
-    try:
-        for record in records:
-            was_inserted, error = upsert_judgment_raw(conn, record)
-
-            if error:
-                result.errored += 1
-                result.errors.append(
-                    {
-                        "dedupe_key": record.get("dedupe_key"),
-                        "error": error,
-                    }
-                )
-            elif was_inserted:
-                result.inserted += 1
+        for record in batch:
+            if insert_judgment_raw(conn, record, ingest_run_id):
+                inserted += 1
             else:
-                result.skipped += 1
+                skipped += 1
 
-        # Commit the batch
+        # Commit after each batch
         conn.commit()
 
         logger.debug(
-            "[DB] Batch inserted",
-            extra={
-                "batch_size": len(records),
-                "inserted": result.inserted,
-                "skipped": result.skipped,
-                "errored": result.errored,
-            },
+            "batch_inserted offset=%d count=%d inserted=%d skipped=%d",
+            i,
+            len(batch),
+            inserted,
+            skipped,
         )
 
-    except psycopg.Error as e:
-        # Catastrophic failure - rollback and mark all as errored
-        conn.rollback()
-        error_msg = f"{type(e).__name__}: {str(e)[:200]}"
-
-        logger.error(
-            "[DB] Batch insert failed catastrophically",
-            extra={
-                "batch_size": len(records),
-                "error": error_msg,
-            },
-        )
-
-        # Mark all records as errored
-        result = InsertResult(
-            errored=len(records),
-            errors=[{"batch_error": error_msg}],
-        )
-
-    return result
-
-
-def check_existing_dedupe_keys(
-    conn: psycopg.Connection,
-    dedupe_keys: list[str],
-) -> set[str]:
-    """
-    Check which dedupe_keys already exist in judgments_raw.
-
-    Useful for pre-filtering before expensive normalization.
-
-    Args:
-        conn: Database connection.
-        dedupe_keys: List of dedupe_keys to check.
-
-    Returns:
-        Set of dedupe_keys that already exist.
-    """
-    if not dedupe_keys:
-        return set()
-
-    query = """
-        SELECT dedupe_key
-        FROM public.judgments_raw
-        WHERE dedupe_key = ANY(%(keys)s)
-    """
-
-    with conn.cursor() as cur:
-        cur.execute(query, {"keys": dedupe_keys})
-        rows = cur.fetchall()
-
-    existing = {row["dedupe_key"] for row in rows}
-
-    logger.debug(
-        "[DB] Checked existing dedupe_keys",
-        extra={
-            "checked": len(dedupe_keys),
-            "existing": len(existing),
-        },
-    )
-
-    return existing
+    return inserted, skipped
 
 
 # ============================================================================
-# Utility Functions
+# Health Check
 # ============================================================================
 
 
-def _get_hostname() -> str:
-    """Get hostname for audit trail."""
-    try:
-        return socket.gethostname()
-    except Exception:
-        return "unknown"
-
-
-def ping(conn: psycopg.Connection) -> bool:
+def check_database_health(conn: psycopg.Connection) -> dict[str, bool]:
     """
-    Check if database connection is alive.
+    Check database health and table accessibility.
 
     Args:
         conn: Database connection.
 
     Returns:
-        True if connection is healthy.
+        Dict of table_name -> accessible boolean.
     """
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1")
-            row = cur.fetchone()
-            return row is not None and row.get("?column?") == 1
-    except Exception as e:
-        logger.error("[DB] Ping failed", extra={"error": str(e)})
-        return False
+    tables = [
+        ("public.ingest_runs", "SELECT 1 FROM public.ingest_runs LIMIT 1"),
+        ("public.judgments_raw", "SELECT 1 FROM public.judgments_raw LIMIT 1"),
+    ]
 
+    results = {}
 
-def get_last_ingest_run(
-    conn: psycopg.Connection,
-    worker_name: str,
-    source_system: str,
-    source_county: str | None = None,
-) -> dict[str, Any] | None:
-    """
-    Get the most recent successful ingest run for delta calculation.
+    for table_name, query in tables:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(query)
+            results[table_name] = True
+        except Exception:
+            results[table_name] = False
 
-    Args:
-        conn: Database connection.
-        worker_name: Name of the worker.
-        source_system: Source system identifier.
-        source_county: Optional county filter.
-
-    Returns:
-        Dict with run details, or None if no previous run.
-    """
-    query = """
-        SELECT
-            id,
-            started_at,
-            finished_at,
-            records_fetched,
-            records_inserted,
-            status
-        FROM public.ingest_runs
-        WHERE
-            worker_name = %(worker_name)s
-            AND source_system = %(source_system)s
-            AND (%(source_county)s IS NULL OR source_county = %(source_county)s)
-            AND status = 'completed'
-        ORDER BY finished_at DESC
-        LIMIT 1
-    """
-
-    with conn.cursor() as cur:
-        cur.execute(
-            query,
-            {
-                "worker_name": worker_name,
-                "source_system": source_system,
-                "source_county": source_county,
-            },
-        )
-        row = cur.fetchone()
-
-    if row:
-        logger.debug(
-            "[DB] Found last ingest run",
-            extra={
-                "ingest_run_id": str(row["id"]),
-                "finished_at": str(row["finished_at"]),
-            },
-        )
-
-    return row
+    return results

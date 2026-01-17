@@ -127,11 +127,11 @@ try:
     from .middleware.correlation import CorrelationMiddleware  # noqa: E402
 
     _CORRELATION_MIDDLEWARE_AVAILABLE = True
-except (ImportError, ModuleNotFoundError) as _correlation_err:
+except ModuleNotFoundError as _correlation_err:
     CorrelationMiddleware = None  # type: ignore[assignment, misc]
     _CORRELATION_MIDDLEWARE_AVAILABLE = False
     logging.getLogger(__name__).critical(
-        "[CRITICAL] ⚠️ Correlation Middleware missing. Booting without headers. Error: %s",
+        "[BOOT] CorrelationMiddleware missing; proceeding WITHOUT request-id correlation. Error: %s",
         _correlation_err,
     )
 
@@ -175,14 +175,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     Handles startup and shutdown events:
     - Startup: Verify safe environment, generate boot report, initialize database pool
-    - Shutdown: Close database pool
+    - Shutdown: Close database pool, stop DB supervisor
 
     Uses explicit database.start()/stop() to avoid psycopg_pool deprecation warning:
     "AsyncConnectionPool constructor open is deprecated"
 
     SECURITY: verify_safe_environment() ensures we never boot with mismatched
     credentials (e.g., dev env with prod keys or vice versa).
+
+    DEGRADED MODE: API starts and serves /health even if DB is unavailable.
+    /readyz returns 503 with metadata until DB is ready.
     """
+    from .core.db_state import create_db_supervisor, db_state
+
     # Log startup diagnostics (same format as workers)
     log_startup_diagnostics("DragonflyAPI")
 
@@ -190,41 +195,62 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # STARTUP SECURITY VERIFICATION
     # ==========================================================================
 
-    logger.info(f"🚀 Starting Dragonfly Engine v{__version__} [{_env_name.upper()}]")
+    logger.info(
+        f"Starting Dragonfly Engine v{__version__} [{_env_name.upper()}] "
+        f"(process_role={db_state.process_role.value})"
+    )
 
     # 1. Verify safe environment - prevents credential/environment mismatches
     try:
         verify_safe_environment(_env_name)
-        logger.info(f"✅ Environment verified: [{_env_name.upper()}]")
+        logger.info(f"Environment verified: [{_env_name.upper()}]")
     except Exception as e:
-        logger.critical(f"❌ ENVIRONMENT VERIFICATION FAILED: {e}")
+        logger.critical(f"ENVIRONMENT VERIFICATION FAILED: {e}")
         raise  # Prevent app from starting with mismatched credentials
 
     # 2. Generate signed boot report (will raise BootError if critical deps missing)
     try:
         boot_report = generate_boot_report(env=_env_name)
-        logger.info(f"✅ Boot report signed: {boot_report.git_sha}")
+        logger.info(f"Boot report signed: {boot_report.git_sha}")
     except BootError as e:
-        logger.critical(f"❌ BOOT REFUSED: {e}")
+        logger.critical(f"BOOT REFUSED: {e}")
         raise  # Prevent app from starting
 
     # 3. Validate database configuration (port 6543 required in prod)
     validate_db_config()
 
     # 4. Initialize database with explicit lifecycle (avoids deprecation warning)
+    # DEGRADED MODE: This will NOT exit on failure for API processes
+    db_supervisor = None
     try:
         await database.start()
-        logger.info("✅ Database pool initialized")
+        if db_state.ready:
+            logger.info("Database pool initialized")
+        else:
+            logger.warning(
+                f"[DB] Degraded mode: {db_state.operator_status()}",
+                extra={"process_role": db_state.process_role.value},
+            )
     except Exception as e:
-        logger.error(f"❌ Failed to initialize database pool: {e}")
-        # Don't raise - allow app to start for health checks
+        logger.error(f"Failed to initialize database pool: {e}")
+        # Don't raise - allow app to start for health checks (degraded mode)
+
+    # 5. Start background DB supervisor for reconnection attempts (API only)
+    if not db_state.ready and db_state.process_role.value == "api":
+        db_supervisor = create_db_supervisor(database.start)
+        await db_supervisor.start()
+        logger.info("[DB Supervisor] Background reconnection supervisor started")
 
     yield
 
-    # Shutdown - use explicit database.stop() for clean lifecycle
-    logger.info("🛑 Shutting down Dragonfly Engine...")
+    # Shutdown - stop supervisor first, then close DB
+    logger.info("Shutting down Dragonfly Engine...")
+
+    if db_supervisor:
+        await db_supervisor.stop()
+
     await database.stop()
-    logger.info("✅ Shutdown complete")
+    logger.info("Shutdown complete")
 
 
 def _get_cors_headers(settings: Any) -> dict[str, str]:
@@ -238,6 +264,30 @@ def _get_cors_headers(settings: Any) -> dict[str, str]:
         "Access-Control-Allow-Methods": "*",
         "Access-Control-Allow-Headers": "*",
     }
+
+
+def _get_required_headers(settings: Any) -> dict[str, str]:
+    """
+    Build mandatory response headers for ALL responses.
+
+    These headers MUST be present on every response for production certification:
+    - X-Dragonfly-Env: Environment name (dev/prod)
+    - X-Dragonfly-SHA-Short: Git commit short SHA
+    - X-Dragonfly-Version: Package version
+
+    Combined with CORS headers for error responses.
+    """
+    version_info = get_version_info()
+    headers = _get_cors_headers(settings)
+    headers.update(
+        {
+            "X-Dragonfly-Env": version_info.get("env", "unknown"),
+            "X-Dragonfly-SHA": version_info.get("sha", "unknown"),
+            "X-Dragonfly-SHA-Short": version_info.get("sha_short", "unknown"),
+            "X-Dragonfly-Version": version_info.get("version", "unknown"),
+        }
+    )
+    return headers
 
 
 def create_app() -> FastAPI:
@@ -335,7 +385,7 @@ def create_app() -> FastAPI:
         logger.info("[Middleware] CorrelationMiddleware added (request IDs)")
     else:
         logger.critical(
-            "[CRITICAL] ⚠️ CorrelationMiddleware not available. Booting without X-Request-ID headers."
+            "[BOOT] CorrelationMiddleware missing; proceeding WITHOUT request-id correlation."
         )
 
     # --- Additional middleware (after core security stack) ---
@@ -355,13 +405,13 @@ def create_app() -> FastAPI:
     logger.info("[Middleware] MetricsMiddleware added (request/error counting)")
 
     # ==========================================================================
-    # GLOBAL EXCEPTION HANDLERS WITH CORS HEADERS
-    # Ensures frontend can read error responses instead of "Network Error"
+    # GLOBAL EXCEPTION HANDLERS WITH REQUIRED HEADERS
+    # All responses include CORS + Dragonfly version headers for traceability
     # ==========================================================================
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        """Handle HTTP exceptions with CORS headers."""
+        """Handle HTTP exceptions with CORS + version headers."""
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -369,7 +419,7 @@ def create_app() -> FastAPI:
                 "message": str(exc.detail),
                 "status_code": exc.status_code,
             },
-            headers=_get_cors_headers(settings),
+            headers=_get_required_headers(settings),
         )
 
     @app.exception_handler(Exception)
@@ -407,7 +457,7 @@ def create_app() -> FastAPI:
                 "request_id": req_id,
                 "trace_id": trace_id,
             },
-            headers=_get_cors_headers(settings),
+            headers=_get_required_headers(settings),
         )
 
     # ==========================================================================
@@ -503,31 +553,9 @@ def create_app() -> FastAPI:
             "docs": "/docs",
         }
 
-    @app.get("/health", tags=["health"])
-    async def health() -> dict[str, str]:
-        """
-        Liveness probe at root level.
-
-        Returns 200 if the process is running. Never checks external deps.
-        Suitable for Railway/Kubernetes liveness checks.
-        """
-        return {
-            "service": "Dragonfly Engine",
-            "status": "ok",
-            "version": __version__,
-        }
-
-    @app.get("/readyz", tags=["health"])
-    async def readyz() -> JSONResponse:
-        """
-        Readiness probe at root level.
-
-        Returns 200 only if DB is reachable and SELECT 1 succeeds within 2s.
-        Returns 503 with JSON error details if not ready.
-        """
-        from .api.routers.health import readiness_db_check
-
-        return await readiness_db_check()
+    # NOTE: /health and /readyz are provided by health_root_router (prefix="")
+    # They are NOT duplicated here - see backend/api/routers/health.py root_router
+    # This ensures consistent responses with version/sha/env fields
 
     @app.get("/api", tags=["root"])
     async def api_root() -> dict[str, str]:

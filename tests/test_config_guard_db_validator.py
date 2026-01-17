@@ -121,18 +121,33 @@ def test_validate_db_config_fatal_when_migrate_url_present(monkeypatch: pytest.M
 
 
 def test_validate_runtime_config_fatal_on_non_pooler_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Production must use *.pooler.supabase.com host, not db.*.supabase.co."""
+    """Production must use a valid pooler host, not arbitrary hosts."""
     _clear_env(monkeypatch)
     _set_prod_env(monkeypatch)
-    # Direct connection host (db.* pattern) with correct port/ssl
+    # Arbitrary host (not a Supabase pooler pattern)
+    monkeypatch.setenv(
+        "SUPABASE_DB_URL",
+        "postgresql://svc:pass@my-random-db.example.com:6543/postgres?sslmode=require",
+    )
+
+    validate_runtime_config = _get_validate_runtime_config()
+    with pytest.raises(SystemExit):
+        validate_runtime_config()
+
+
+def test_validate_runtime_config_accepts_dedicated_pooler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dedicated pooler (db.<ref>.supabase.co:6543) is valid in production."""
+    _clear_env(monkeypatch)
+    _set_prod_env(monkeypatch)
+    # Dedicated pooler format - should pass
     monkeypatch.setenv(
         "SUPABASE_DB_URL",
         "postgresql://svc:pass@db.abc123.supabase.co:6543/postgres?sslmode=require",
     )
 
     validate_runtime_config = _get_validate_runtime_config()
-    with pytest.raises(SystemExit):
-        validate_runtime_config()
+    # Should not raise - dedicated pooler is valid
+    validate_runtime_config()
 
 
 def test_validate_runtime_config_fatal_on_missing_sslmode(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,3 +191,24 @@ def test_validate_runtime_config_allows_valid_pooler_dsn(monkeypatch: pytest.Mon
     validate_runtime_config = _get_validate_runtime_config()
     # Should not raise
     validate_runtime_config()
+
+
+def test_validate_runtime_config_fatal_on_direct_connection_port_5432(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct connection (db.*.supabase.co:5432) MUST fail.
+
+    Port 5432 is the direct connection port which bypasses the pooler.
+    This should fail even with sslmode=require.
+    """
+    _clear_env(monkeypatch)
+    _set_prod_env(monkeypatch)
+    # Direct connection - port 5432 MUST fail
+    monkeypatch.setenv(
+        "SUPABASE_DB_URL",
+        "postgresql://svc:pass@db.xyz789.supabase.co:5432/postgres?sslmode=require",
+    )
+
+    validate_runtime_config = _get_validate_runtime_config()
+    with pytest.raises(SystemExit):
+        validate_runtime_config()

@@ -484,18 +484,40 @@ class OutboxProcessor:
 
 
 def get_db_url() -> str:
-    """Get the database URL for the outbox processor."""
-    # Use pooler URL for app workers
+    """Get the database URL for the outbox processor.
+
+    Single DSN Contract:
+        Canonical: DATABASE_URL (read this only)
+        Deprecated: SUPABASE_DB_URL (maps with warning)
+    """
+    import warnings
+
+    # Single DSN Contract: DATABASE_URL is canonical
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        return url
+
+    # Deprecation shim: fall back to SUPABASE_DB_URL with warning
     url = os.environ.get("SUPABASE_DB_URL")
     if url:
+        warnings.warn(
+            "SUPABASE_DB_URL is deprecated; use DATABASE_URL instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return url
 
-    # Fall back to migrate URL
+    # Fall back to migrate URL (also deprecated)
     url = os.environ.get("SUPABASE_MIGRATE_DB_URL")
     if url:
+        warnings.warn(
+            "SUPABASE_MIGRATE_DB_URL is deprecated for runtime; use DATABASE_URL instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return url
 
-    raise RuntimeError("No database URL configured (SUPABASE_DB_URL or SUPABASE_MIGRATE_DB_URL)")
+    raise RuntimeError("No database URL configured (set DATABASE_URL)")
 
 
 def main() -> None:

@@ -79,20 +79,22 @@ GRANT ALL ON SEQUENCES TO service_role;
 DROP FUNCTION IF EXISTS ops.get_system_health() CASCADE;
 DROP FUNCTION IF EXISTS ops.get_system_health(integer) CASCADE;
 CREATE OR REPLACE FUNCTION ops.get_system_health(p_limit integer DEFAULT 100) RETURNS TABLE (
-        metric_name text,
-        metric_value numeric,
+        component text,
         status text,
-        recorded_at timestamptz
+        latency_ms integer,
+        error_message text,
+        snapshot_time timestamptz
     ) LANGUAGE sql SECURITY DEFINER
 SET search_path = ops,
-    pg_temp AS $$ -- Return latest health metrics from ops.health_snapshots
-    -- Falls back gracefully if table doesn't exist
-SELECT hs.metric_name::text,
-    hs.metric_value::numeric,
+    pg_temp AS $$ -- Return latest health snapshots from ops.health_snapshots
+    -- Uses the canonical schema: component, status, latency_ms, error_message, snapshot_time
+SELECT hs.component::text,
     hs.status::text,
-    hs.recorded_at::timestamptz
+    hs.latency_ms,
+    hs.error_message::text,
+    hs.snapshot_time::timestamptz
 FROM ops.health_snapshots hs
-ORDER BY hs.recorded_at DESC
+ORDER BY hs.snapshot_time DESC
 LIMIT p_limit;
 $$;
 -- Revoke all access from everyone first
@@ -105,7 +107,7 @@ FROM authenticated;
 -- Grant ONLY to service_role
 GRANT EXECUTE ON FUNCTION ops.get_system_health(integer) TO service_role;
 -- Document the security model
-COMMENT ON FUNCTION ops.get_system_health(integer) IS 'SECURITY DEFINER RPC - Returns system health metrics. ' 'Access restricted to service_role ONLY for ops privacy. ' 'Use with service_role key: SELECT * FROM ops.get_system_health(10);';
+COMMENT ON FUNCTION ops.get_system_health(integer) IS 'SECURITY DEFINER RPC - Returns system health metrics. Access restricted to service_role ONLY.';
 -- =============================================================================
 -- STEP 5: VERIFICATION QUERIES (These run as part of migration)
 -- =============================================================================

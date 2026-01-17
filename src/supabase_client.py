@@ -131,40 +131,78 @@ def _strip(value: str | None) -> str | None:
     return stripped or None
 
 
+# =============================================================================
+# SINGLE DSN CONTRACT: DATABASE_URL is the canonical variable
+# =============================================================================
+
+# Canonical variable name
+_CANONICAL_DSN_VAR = "DATABASE_URL"
+
+# Deprecated variable (maps to canonical with warning)
+_DEPRECATED_DSN_VAR = "SUPABASE_DB_URL"
+
+
 def get_supabase_db_url(env: _EnvInput = None) -> str:
     """
-    Get the Supabase database URL.
+    Get the database URL using Single DSN Contract.
 
-    Uses the canonical SUPABASE_DB_URL environment variable.
+    CANONICAL VARIABLE: DATABASE_URL
+    DEPRECATED (with warning): SUPABASE_DB_URL
+
+    Priority:
+        1. DATABASE_URL (canonical)
+        2. SUPABASE_DB_URL (deprecated, emits warning)
+        3. Settings fallback
+
     The env parameter is ignored (kept for backward compatibility).
 
     Returns:
         PostgreSQL connection string
 
     Raises:
-        RuntimeError: If SUPABASE_DB_URL is not set
+        RuntimeError: If no database URL is configured
     """
+    import warnings
+
     settings = get_settings()
 
-    # Use canonical SUPABASE_DB_URL
-    db_url = _strip(os.getenv("SUPABASE_DB_URL"))
-    if not db_url:
-        db_url = _strip(settings.SUPABASE_DB_URL)
-
+    # Priority 1: Canonical DATABASE_URL
+    db_url = _strip(os.getenv(_CANONICAL_DSN_VAR))
     if db_url:
         return db_url
+
+    # Priority 2: Deprecated SUPABASE_DB_URL (with warning)
+    db_url = _strip(os.getenv(_DEPRECATED_DSN_VAR))
+    if db_url:
+        msg = (
+            f"Environment variable '{_DEPRECATED_DSN_VAR}' is DEPRECATED. "
+            f"Use '{_CANONICAL_DSN_VAR}' instead. "
+            "This will be removed in a future release."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        logger.warning(msg)
+        return db_url
+
+    # Priority 3: Settings fallback (may come from .env)
+    if hasattr(settings, "SUPABASE_DB_URL") and settings.SUPABASE_DB_URL:
+        db_url = _strip(settings.SUPABASE_DB_URL)
+        if db_url:
+            return db_url
 
     # Fail fast with clear error message
     mode = get_supabase_env()
     raise RuntimeError(
-        f"Missing required environment variable: SUPABASE_DB_URL\n\n"
+        f"Missing required environment variable: {_CANONICAL_DSN_VAR}\n\n"
+        f"SINGLE DSN CONTRACT:\n"
+        f"  Canonical variable: {_CANONICAL_DSN_VAR}\n"
+        f"  Deprecated (still works): {_DEPRECATED_DSN_VAR}\n\n"
         f"Required for database connectivity:\n"
         f"  SUPABASE_URL              {'✓ set' if settings.SUPABASE_URL else '✗ MISSING'}\n"
         f"  SUPABASE_SERVICE_ROLE_KEY {'✓ set' if settings.SUPABASE_SERVICE_ROLE_KEY else '✗ MISSING'}\n"
-        f"  SUPABASE_DB_URL           ✗ MISSING\n\n"
+        f"  {_CANONICAL_DSN_VAR:<23} ✗ MISSING\n\n"
         f"Current SUPABASE_MODE: {mode}\n\n"
-        f"Set SUPABASE_DB_URL in your environment or .env file:\n"
-        f"  SUPABASE_DB_URL=postgresql://user:pass@host:5432/postgres?sslmode=require"
+        f"Set {_CANONICAL_DSN_VAR} in your environment or .env file:\n"
+        f"  {_CANONICAL_DSN_VAR}=postgresql://user:pass@host:6543/postgres?sslmode=require"
     )
 
 

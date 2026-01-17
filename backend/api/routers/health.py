@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from ... import __version__
 from ...api import ApiResponse, api_response, degraded_response
 from ...config import get_settings
+from ...core.db_state import db_state, is_db_connected
 from ...db import check_db_ready, fetch_val, get_pool, get_pool_health, get_supabase_client
 from ...middleware.version import get_version_info
 
@@ -144,15 +145,57 @@ class SystemHealthResponse(BaseModel):
 # ==========================================================================
 # ROOT-LEVEL PROBES (mounted at /api or / root)
 # These are the "World-Class Certification" endpoints:
-# - /health  -> Liveness: "I am running"
-# - /readyz  -> Readiness: "I can serve traffic" (DB verified)
+# - /           -> Service identity (Railway domain contract)
+# - /whoami     -> Detailed process identity (debugging)
+# - /health     -> Liveness: "I am running"
+# - /readyz     -> Readiness: "I can serve traffic" (DB verified)
 # ==========================================================================
+
+
+# Railway Domain Contract: Service Identity
+SERVICE_NAME = "dragonfly-api"
+
+
+class ServiceIdentityResponse(BaseModel):
+    """
+    Root identity response for Railway domain verification.
+
+    This endpoint MUST:
+    - Return 200 always (no DB dependency)
+    - Include service_name for domain verification
+    - Include env/sha for deployment tracing
+    """
+
+    service_name: str
+    version: str
+    sha_short: str
+    env: str
+    build_timestamp: str | None = None
+
+
+class WhoAmIResponse(BaseModel):
+    """
+    Detailed process identity for debugging deployments.
+
+    Includes host-level info and redacted DSN identity.
+    """
+
+    service_name: str
+    hostname: str
+    pid: int
+    process_role: str
+    listening_port: int | None
+    database_ready: bool
+    dsn_identity: str  # Redacted: "pooler@host:port/db"
 
 
 class SimpleLivenessResponse(BaseModel):
     """Minimal liveness response for load balancers."""
 
     status: str
+    version: str | None = None
+    sha: str | None = None
+    env: str | None = None
 
 
 class SimpleReadinessResponse(BaseModel):
@@ -163,29 +206,138 @@ class SimpleReadinessResponse(BaseModel):
 
 
 class SimpleReadinessErrorResponse(BaseModel):
-    """Readiness error response with generic reason (no details)."""
+    """Readiness error response with metadata (no sensitive details)."""
 
     status: str
     reason: str
+    next_retry_in_seconds: int | None = None
+    consecutive_failures: int | None = None
+
+
+def _get_dsn_identity() -> str:
+    """
+    Get redacted DSN identity for debugging (never exposes credentials).
+
+    Format: "user@host:port/database" or "not_configured"
+    """
+    import os
+    import re
+
+    dsn = os.environ.get("DATABASE_URL", os.environ.get("SUPABASE_DB_URL", ""))
+    if not dsn:
+        return "not_configured"
+
+    # Parse: postgresql://user:pass@host:port/db?params
+    # Return: user@host:port/db (no password, no params)
+    match = re.match(r"postgresql://([^:]+):[^@]+@([^/]+)/([^?]+)", dsn)
+    if match:
+        user, host_port, db = match.groups()
+        return f"{user}@{host_port}/{db}"
+
+    return "unknown_format"
+
+
+@root_router.get(
+    "/",
+    response_model=ServiceIdentityResponse,
+    summary="Service identity",
+    description="Returns service identity for Railway domain verification. Always 200.",
+)
+async def root_service_identity() -> ServiceIdentityResponse:
+    """
+    Root service identity endpoint for Railway domain contract.
+
+    Purpose: Verify that a domain is correctly attached to dragonfly-api.
+
+    This endpoint:
+    - ALWAYS returns 200 (no DB dependency)
+    - Returns service_name="dragonfly-api" for domain verification
+    - Includes version/sha/env for deployment tracing
+
+    If certifier receives anything OTHER than service_name="dragonfly-api",
+    the domain is misconfigured (e.g., Railway edge fallback).
+    """
+    version_info = get_version_info()
+    return ServiceIdentityResponse(
+        service_name=SERVICE_NAME,
+        version=__version__,
+        sha_short=version_info.get("sha_short", "unknown"),
+        env=version_info.get("env", "unknown"),
+        build_timestamp=None,  # Optional: could add RAILWAY_BUILD_TIME
+    )
+
+
+@root_router.get(
+    "/whoami",
+    response_model=WhoAmIResponse,
+    summary="Process identity",
+    description="Returns detailed process identity for debugging. Always 200.",
+)
+async def root_whoami() -> WhoAmIResponse:
+    """
+    Detailed process identity for debugging Railway deployments.
+
+    Returns:
+    - hostname: Container hostname (useful for multi-replica debugging)
+    - pid: Process ID
+    - process_role: "api" (could be "worker" in future)
+    - listening_port: PORT env var (Railway-assigned)
+    - database_ready: Current db_state.ready boolean
+    - dsn_identity: Redacted DSN (user@host:port/db, no password)
+
+    This endpoint NEVER exposes:
+    - Passwords or secrets
+    - Full connection strings
+    - Internal IP addresses
+    """
+    import os
+    import socket
+
+    get_version_info()
+
+    # Get listening port from environment
+    port_raw = os.environ.get("PORT", "8080")
+    try:
+        listening_port = int(port_raw)
+    except ValueError:
+        listening_port = None
+
+    return WhoAmIResponse(
+        service_name=SERVICE_NAME,
+        hostname=socket.gethostname(),
+        pid=os.getpid(),
+        process_role="api",
+        listening_port=listening_port,
+        database_ready=db_state.ready,
+        dsn_identity=_get_dsn_identity(),
+    )
 
 
 @root_router.get(
     "/health",
     response_model=SimpleLivenessResponse,
     summary="Liveness probe",
-    description="Returns 200 OK if the process is alive. For load balancers.",
+    description="Returns 200 OK if the process is alive. Includes build/sha/env.",
 )
 async def root_health_check() -> SimpleLivenessResponse:
     """
     Root-level liveness probe.
 
     Purpose: For load balancers to know the process is alive.
-    This NEVER checks external dependencies.
+    This NEVER checks external dependencies - always returns 200 if process is up.
+
+    Includes version/sha/env for debugging deployments.
 
     Returns:
-        {"status": "ok"}
+        {"status": "ok", "version": "1.3.1", "sha": "abc123", "env": "prod"}
     """
-    return SimpleLivenessResponse(status="ok")
+    version_info = get_version_info()
+    return SimpleLivenessResponse(
+        status="ok",
+        version=__version__,
+        sha=version_info.get("sha_short"),
+        env=version_info.get("env"),
+    )
 
 
 @root_router.get(
@@ -199,22 +351,66 @@ async def root_health_check() -> SimpleLivenessResponse:
         },
     },
     summary="Readiness probe",
-    description="Returns 200 only if DB is reachable. Redacts error details.",
+    description="Returns 200 only if DB is reachable. Includes retry metadata on failure.",
 )
 async def root_readiness_check() -> JSONResponse:
     """
     Root-level readiness probe with security-hardened error responses.
 
     Logic:
-    - Attempt to acquire a connection from db.pool
-    - Run SELECT 1
+    - Check is_db_connected flag first (Indestructible Boot pattern)
+    - Check db_state.ready (fast path for degraded mode)
+    - If not ready, return 503 with metadata (next_retry, consecutive_failures)
+    - If ready, verify with SELECT 1
     - Success: Return 200 OK {"status": "ready", "services": {"database": "connected"}}
-    - Failure: Log specific exception, return 503 with GENERIC reason
+    - Failure: Log specific exception, return 503 with operator-friendly metadata
 
-    Security: Error details are LOGGED but never exposed in the response.
-    This prevents information leakage about internal infrastructure.
+    Security: Sensitive error details are LOGGED but never exposed in the response.
+    Operational metadata (retry timing) IS exposed for operator visibility.
     """
     version_info = get_version_info()
+
+    # Fast path #1: Check global is_db_connected flag (Indestructible Boot)
+    if not is_db_connected:
+        logger.info(
+            "Readiness check: is_db_connected=False (degraded mode)",
+            extra={
+                "probe": "readyz_root",
+                "is_db_connected": False,
+                "db_ready": db_state.ready,
+            },
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "reason": "db_disconnected",
+                "next_retry_in_seconds": db_state.next_retry_in_seconds(),
+                "consecutive_failures": db_state.consecutive_failures,
+            },
+        )
+
+    # Fast path #2: If db_state says not ready, return 503 immediately
+    # This avoids hammering a failing database
+    if not db_state.ready:
+        logger.info(
+            "Readiness check: DB not ready (degraded mode)",
+            extra={
+                "probe": "readyz_root",
+                "db_ready": False,
+                "error_class": db_state.last_error_class,
+                "next_retry_s": db_state.next_retry_in_seconds(),
+            },
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "reason": "Database unavailable",
+                "next_retry_in_seconds": db_state.next_retry_in_seconds(),
+                "consecutive_failures": db_state.consecutive_failures,
+            },
+        )
 
     try:
         pool = await get_pool()
@@ -253,7 +449,9 @@ async def root_readiness_check() -> JSONResponse:
             status_code=503,
             content={
                 "status": "not_ready",
-                "reason": "Upstream dependency unavailable",
+                "reason": "Database query timeout",
+                "next_retry_in_seconds": None,
+                "consecutive_failures": None,
             },
         )
 
@@ -269,12 +467,14 @@ async def root_readiness_check() -> JSONResponse:
                 "sha": version_info.get("sha_short"),
             },
         )
-        # Return GENERIC reason to prevent information leakage
+        # Return operator-friendly metadata
         return JSONResponse(
             status_code=503,
             content={
                 "status": "not_ready",
-                "reason": "Upstream dependency unavailable",
+                "reason": "Database error",
+                "next_retry_in_seconds": db_state.next_retry_in_seconds(),
+                "consecutive_failures": db_state.consecutive_failures,
             },
         )
 
