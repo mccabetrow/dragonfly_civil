@@ -1,18 +1,31 @@
 """
 Dragonfly Engine - Unified Configuration
 
-CANONICAL ENVIRONMENT VARIABLE CONTRACT v2.0
+CANONICAL ENVIRONMENT VARIABLE CONTRACT v2.1
 =============================================
 
 This module is the SINGLE SOURCE OF TRUTH for all Dragonfly configuration.
 Both API (backend/) and workers (backend/workers/, workers/) use this loader.
+
+SINGLE DSN CONTRACT (v2.1):
+---------------------------
+DATABASE_URL is the CANONICAL database connection variable.
+SUPABASE_DB_URL is a DEPRECATED alias (will work but emits warning).
+
+Resolution order:
+  1. DATABASE_URL      (canonical - Railway/Heroku/Render convention)
+  2. SUPABASE_DB_URL   (deprecated - legacy Dragonfly)
+  3. supabase_db_url   (deprecated - lowercase alias)
 
 CANONICAL ENV VARS (no suffixes, mode-based):
 ---------------------------------------------
 Required:
   SUPABASE_URL                  - Supabase project REST URL (https://xxx.supabase.co)
   SUPABASE_SERVICE_ROLE_KEY     - Service role JWT (server-side only, 100+ chars)
-  SUPABASE_DB_URL               - Postgres connection string (pooler recommended)
+
+Database (soft-fail - missing = degraded mode):
+  DATABASE_URL                  - Postgres connection string (CANONICAL)
+  SUPABASE_DB_URL               - Postgres connection string (DEPRECATED alias)
 
 Environment control:
   SUPABASE_MODE                 - dev | prod (determines which project, default: dev)
@@ -265,10 +278,11 @@ class Settings(BaseSettings):
         description="Supabase service role JWT key",
         json_schema_extra={"env": ["SUPABASE_SERVICE_ROLE_KEY", "supabase_service_role_key"]},
     )
+    # DATABASE_URL is canonical (Railway/Heroku convention); SUPABASE_DB_URL is deprecated alias
     SUPABASE_DB_URL: str = Field(
-        ...,
-        description="Postgres connection string (pooler recommended)",
-        json_schema_extra={"env": ["SUPABASE_DB_URL", "supabase_db_url"]},
+        default="",
+        description="Postgres connection string (resolved from DATABASE_URL or SUPABASE_DB_URL)",
+        json_schema_extra={"env": ["DATABASE_URL", "SUPABASE_DB_URL", "supabase_db_url"]},
     )
 
     # Migration-only credential (used by scripts/db_push.ps1, not runtime app)
@@ -453,6 +467,36 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"ENVIRONMENT='{raw}' is invalid. Must be one of: dev, staging, prod"
                 )
+
+        # =====================================================================
+        # SINGLE DSN CONTRACT: DATABASE_URL is canonical, SUPABASE_DB_URL is deprecated
+        # =====================================================================
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        supabase_db_url = os.environ.get("SUPABASE_DB_URL", "").strip()
+        supabase_db_url_lower = os.environ.get("supabase_db_url", "").strip()
+
+        # Resolve canonical DB URL with fallback chain
+        resolved_db_url = database_url or supabase_db_url or supabase_db_url_lower
+
+        if resolved_db_url:
+            # Emit deprecation warning if using legacy var
+            if not database_url and (supabase_db_url or supabase_db_url_lower):
+                source_var = "SUPABASE_DB_URL" if supabase_db_url else "supabase_db_url"
+                logger.warning(
+                    f"DEPRECATION: Using {source_var} as database URL. "
+                    f"Migrate to DATABASE_URL (canonical) for Railway/Heroku compatibility."
+                )
+                _DEPRECATED_KEYS_USED.add(source_var)
+
+            # Inject as SUPABASE_DB_URL for backward compatibility with rest of codebase
+            values["SUPABASE_DB_URL"] = resolved_db_url
+        else:
+            # No DB URL configured - will enter degraded mode
+            logger.warning(
+                "No database URL configured (DATABASE_URL or SUPABASE_DB_URL). "
+                "API will start in DEGRADED MODE."
+            )
+            values["SUPABASE_DB_URL"] = ""
 
         return values
 

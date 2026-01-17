@@ -375,8 +375,14 @@ def _validate_environment(result: PreflightResult) -> None:
 
 
 def _validate_supabase_db_url(result: PreflightResult) -> None:
-    """Validate canonical SUPABASE_DB_URL."""
-    db_url = _get_env("SUPABASE_DB_URL")
+    """Validate canonical DATABASE_URL (with SUPABASE_DB_URL fallback)."""
+    # Single DSN Contract: DATABASE_URL is canonical, SUPABASE_DB_URL is deprecated
+    database_url = _get_env("DATABASE_URL")
+    supabase_db_url = _get_env("SUPABASE_DB_URL")
+
+    # Resolve with fallback chain
+    db_url = database_url or supabase_db_url
+    source_var = "DATABASE_URL" if database_url else "SUPABASE_DB_URL" if supabase_db_url else None
 
     # Track in effective config (redact password)
     if db_url:
@@ -384,15 +390,22 @@ def _validate_supabase_db_url(result: PreflightResult) -> None:
             # Format: postgresql://user:pass@host:port/db - redact password
             parts = db_url.split("@")
             host_part = parts[1][:25] if len(parts) > 1 else "..."
-            result.effective_config["SUPABASE_DB_URL"] = f"SET (***@{host_part}...)"
+            result.effective_config[source_var] = f"SET (***@{host_part}...)"
         else:
-            result.effective_config["SUPABASE_DB_URL"] = f"SET ({db_url[:30]}...)"
+            result.effective_config[source_var] = f"SET ({db_url[:30]}...)"
+
+        # Emit deprecation notice if using legacy var
+        if not database_url and supabase_db_url:
+            result.warnings.append(
+                "SUPABASE_DB_URL is deprecated; use DATABASE_URL (Railway/Heroku convention)"
+            )
     else:
+        result.effective_config["DATABASE_URL"] = "NOT SET"
         result.effective_config["SUPABASE_DB_URL"] = "NOT SET"
 
     if not db_url:
         result.errors.append(
-            "SUPABASE_DB_URL is required\n"
+            "DATABASE_URL (or SUPABASE_DB_URL) is required\n"
             "   Set the canonical database URL for your environment.\n"
             "   Format: postgresql://postgres.<ref>:<password>@<host>:5432/postgres"
         )
@@ -400,7 +413,7 @@ def _validate_supabase_db_url(result: PreflightResult) -> None:
 
     if not db_url.startswith(("postgresql://", "postgres://")):
         result.errors.append(
-            "SUPABASE_DB_URL has INVALID FORMAT\n"
+            f"{source_var} has INVALID FORMAT\n"
             f"   Current:  {db_url[:40]}...\n"
             "   Required: postgresql://... or postgres://..."
         )
