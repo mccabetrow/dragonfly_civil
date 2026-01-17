@@ -33,5 +33,6 @@ cmds = [
 
 [start]
 # Default start command for API service
+# Uses tools.run_uvicorn for crash-proof Indestructible Boot pattern
 # Workers override this via Railway dashboard Start Command setting
-cmd = ". /opt/venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+cmd = ". /opt/venv/bin/activate && python -m tools.run_uvicorn"
