@@ -37,6 +37,7 @@ from supabase import Client, create_client  # noqa: E402
 
 from . import __version__  # noqa: E402
 from .config import get_settings  # noqa: E402
+from .core import db_state as db_state_module  # noqa: E402 - for is_db_connected flag
 from .core.config_guard import validate_db_config  # noqa: E402
 from .core.db_state import (  # noqa: E402
     EXIT_CODE_AUTH_LOCKOUT,
@@ -704,6 +705,10 @@ async def init_db_pool(app: Any | None = None) -> None:
 
             # Update global db_state for degraded mode tracking
             db_state.mark_connected(init_duration)
+
+            # Set global is_db_connected flag (Indestructible Boot pattern)
+            # This flag is checked by /readyz endpoint
+            db_state_module.is_db_connected = True
 
             logger.info(
                 "DB Connected",
