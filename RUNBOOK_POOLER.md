@@ -1,8 +1,38 @@
 # Dragonfly Supabase Pooler Runbook
 
 **Author**: Principal Database Reliability Engineer  
-**Date**: 2026-01-17  
-**Status**: Production
+**Date**: 2026-01-18  
+**Status**: Production (Direct Connection Waiver Active)
+
+---
+
+## ⚠️ CURRENT STATUS: DIRECT CONNECTION WAIVER
+
+**Effective**: 2026-01-18  
+**Expires**: 2026-02-15  
+**Reason**: Supabase Shared Pooler returns `FATAL: Tenant or user not found`
+
+### What This Means
+
+- Production is using **port 5432 (direct)** instead of **port 6543 (pooler)**
+- The waiver is enforced in `backend/core/dsn_guard.py`
+- `prod_gate.py` tracks waiver expiry with warnings
+
+### Required Environment Variable
+
+```bash
+# Railway must have this set:
+DB_CONNECTION_MODE=direct_waiver
+```
+
+### Before Waiver Expires
+
+1. **Investigate root cause** - See "Pooler Troubleshooting" section below
+2. **Fix pooler** OR **extend waiver** in `backend/core/dsn_guard.py`:
+   ```python
+   DIRECT_WAIVER_EXPIRY = datetime(2026, 3, 15, ...)  # New date
+   ```
+3. **Document reason** for extension in this file
 
 ---
 
@@ -15,6 +45,58 @@ This runbook documents Supabase connection pooler strategy for Dragonfly to prev
 
 - **Production**: `iaketsyhmqbwaabgykux`
 - **Development**: `ejiddanxtqcleyswqvkc`
+
+---
+
+## 🔍 Pooler Troubleshooting: "Tenant or user not found"
+
+This error means the Shared Pooler cannot route your connection.
+
+### Step 1: Verify Correct DSN Format
+
+```
+[scheme]://[user].[PROJECT_REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/[database]
+```
+
+**Required elements**:
+
+- Username: `postgres.iaketsyhmqbwaabgykux` (NOT just `postgres`)
+- Host: `aws-0-REGION.pooler.supabase.com` (NOT `db.xxx.supabase.co`)
+- Port: `6543`
+
+### Step 2: Find Your Region
+
+1. Go to Supabase Dashboard → Settings → General
+2. Look for "Region" - e.g., `us-east-1`, `us-west-2`, `eu-west-1`
+3. Use that region in the pooler hostname
+
+### Step 3: Verify Connection Pooling is Enabled
+
+1. Supabase Dashboard → Settings → Database
+2. Scroll to "Connection Pooling"
+3. Ensure it's **enabled**
+
+### Step 4: Get Exact Connection String
+
+1. Supabase Dashboard → Settings → Database
+2. Find "Connection String" section
+3. Select **"Transaction"** mode (dropdown)
+4. Copy the exact string provided
+
+### Step 5: Test with verify_pooler
+
+```bash
+$env:DATABASE_URL = "YOUR_POOLER_DSN_HERE"
+python -m tools.verify_pooler
+```
+
+### Step 6: If Pooler Still Fails
+
+If pooler continues to fail after all checks:
+
+1. Contact Supabase Support with project ref and error
+2. Extend waiver as needed (see above)
+3. Use direct connection (5432) with waiver
 
 ---
 

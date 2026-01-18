@@ -10,8 +10,10 @@ PROD Environment (SUPABASE_MODE=prod):
   - Port MUST be: 6543 (Transaction Pooler)
   - Direct connections (5432) are FORBIDDEN in prod
 
-  WAIVER: Set DB_CONNECTION_MODE=direct_waiver to allow 5432 in emergencies.
-          This logs a CRITICAL warning but allows the connection.
+  TIME-BOXED WAIVER (expires 2026-02-15):
+    Set DB_CONNECTION_MODE=direct_waiver to allow 5432 temporarily.
+    This logs CRITICAL warnings and emits db_connection_mode metric.
+    After expiry date, waiver is ignored and direct connections crash.
 
 DEV Environment (SUPABASE_MODE=dev):
   - Host MUST contain: ejiddanxtqcleyswqvkc OR localhost/127.0.0.1
@@ -27,7 +29,7 @@ Usage:
     validate_dsn_for_environment(dsn, environment)
 
 Author: Principal Site Reliability Engineer
-Date: 2026-01-18 (Updated with waiver support)
+Date: 2026-01-18 (Updated with time-boxed waiver)
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from loguru import logger
@@ -58,6 +61,44 @@ DIRECT_CONNECTION_PORT = 5432
 # Environment variable for direct connection waiver
 DIRECT_WAIVER_ENV_VAR = "DB_CONNECTION_MODE"
 DIRECT_WAIVER_VALUE = "direct_waiver"
+
+# =============================================================================
+# TIME-BOXED WAIVER CONFIGURATION
+# =============================================================================
+# The waiver expires on this date. After expiry, direct connections crash.
+# To extend: update this date and document the reason in RUNBOOK_POOLER.md
+DIRECT_WAIVER_EXPIRY = datetime(2026, 2, 15, 0, 0, 0, tzinfo=timezone.utc)
+
+# Reason for current waiver (for logging/metrics)
+DIRECT_WAIVER_REASON = "Supabase pooler returns 'Tenant or user not found' - pending investigation"
+
+# =============================================================================
+# METRICS / OBSERVABILITY
+# =============================================================================
+# Current connection mode for metrics export
+_connection_mode: str = "unknown"
+
+
+def get_db_connection_mode() -> str:
+    """Return current connection mode for metrics: 'pooler', 'direct_waiver', or 'unknown'."""
+    return _connection_mode
+
+
+def get_waiver_status() -> dict:
+    """Return waiver status for observability."""
+    now = datetime.now(timezone.utc)
+    is_expired = now >= DIRECT_WAIVER_EXPIRY
+    days_remaining = (DIRECT_WAIVER_EXPIRY - now).days if not is_expired else 0
+
+    return {
+        "waiver_active": _connection_mode == "direct_waiver",
+        "waiver_expired": is_expired,
+        "expiry_date": DIRECT_WAIVER_EXPIRY.isoformat(),
+        "days_remaining": days_remaining,
+        "reason": DIRECT_WAIVER_REASON if _connection_mode == "direct_waiver" else None,
+        "connection_mode": _connection_mode,
+    }
+
 
 # Allowed dev hosts (includes local development)
 DEV_ALLOWED_HOSTS = (
@@ -180,31 +221,57 @@ def validate_dsn_for_environment(
 
         # Rule 2: Port MUST be 6543 (Transaction Pooler) - unless waiver is active
         if port != PROD_REQUIRED_PORT:
+            global _connection_mode
+
             # Check for direct connection waiver
             waiver_value = os.environ.get(DIRECT_WAIVER_ENV_VAR, "").lower().strip()
             has_waiver = waiver_value == DIRECT_WAIVER_VALUE
 
+            # Check if waiver has expired
+            now = datetime.now(timezone.utc)
+            waiver_expired = now >= DIRECT_WAIVER_EXPIRY
+            days_remaining = (DIRECT_WAIVER_EXPIRY - now).days
+
             if port == DIRECT_CONNECTION_PORT and has_waiver:
-                # Waiver granted - allow but log CRITICAL warning
+                if waiver_expired:
+                    # Waiver has expired - HARD CRASH
+                    _connection_mode = "waiver_expired"
+                    msg = (
+                        f"DSN Guard FATAL: Direct connection waiver EXPIRED on {DIRECT_WAIVER_EXPIRY.date()}.\n"
+                        f"  Port {DIRECT_CONNECTION_PORT} is no longer allowed in production.\n"
+                        f"  You MUST fix the pooler connection or extend the waiver in dsn_guard.py.\n"
+                        f"  See RUNBOOK_POOLER.md for instructions."
+                    )
+                    logger.critical(msg)
+                    if fatal_on_mismatch:
+                        raise DSNEnvironmentMismatchError(msg, environment, host, port)
+                    return False
+
+                # Waiver granted and not expired - allow with warnings
+                _connection_mode = "direct_waiver"
                 logger.critical(
                     f"DSN Guard: ⚠️  DIRECT CONNECTION WAIVER ACTIVE ⚠️\n"
                     f"  Port {DIRECT_CONNECTION_PORT} (direct) is being used in PROD.\n"
+                    f"  Reason: {DIRECT_WAIVER_REASON}\n"
+                    f"  Expiry: {DIRECT_WAIVER_EXPIRY.date()} ({days_remaining} days remaining)\n"
                     f"  This bypasses connection pooling.\n"
                     f"  Performance may be degraded under load.\n"
                     f"  Remove {DIRECT_WAIVER_ENV_VAR}={DIRECT_WAIVER_VALUE} to enforce pooler."
                 )
                 logger.warning(
                     f"DSN Guard: Proceeding with direct connection (waiver active). "
-                    f"Host: {host}, Port: {port}"
+                    f"Host: {host}, Port: {port}, Days until expiry: {days_remaining}"
                 )
                 return True  # Allow with waiver
 
             # No waiver - HARD CRASH
+            _connection_mode = "rejected"
             msg = (
                 f"DSN Guard FATAL: PROD environment requires port {PROD_REQUIRED_PORT} (Transaction Pooler). "
                 f"Got port: {port}. "
                 f"Direct connections (5432) are FORBIDDEN in production!\n"
-                f"  To use direct connection in emergency, set: {DIRECT_WAIVER_ENV_VAR}={DIRECT_WAIVER_VALUE}"
+                f"  To use direct connection temporarily, set: {DIRECT_WAIVER_ENV_VAR}={DIRECT_WAIVER_VALUE}\n"
+                f"  Waiver expires: {DIRECT_WAIVER_EXPIRY.date()}"
             )
             logger.critical(msg)
             logger.critical(f"DSN (redacted): {redacted}")
@@ -212,7 +279,8 @@ def validate_dsn_for_environment(
                 raise DSNEnvironmentMismatchError(msg, environment, host, port)
             return False
 
-        # Prod validation passed
+        # Prod validation passed - using pooler
+        _connection_mode = "pooler"
         logger.info(
             f"DSN Guard: ✓ PROD environment validated "
             f"(host contains {PROD_PROJECT_REF}, port {port})"

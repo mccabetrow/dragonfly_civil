@@ -46,6 +46,13 @@ import psycopg
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from backend.core.dsn_guard import (
+    DIRECT_WAIVER_ENV_VAR,
+    DIRECT_WAIVER_EXPIRY,
+    DIRECT_WAIVER_REASON,
+    DIRECT_WAIVER_VALUE,
+    get_waiver_status,
+)
 from backend.core.logging import configure_worker_logging
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 from tools.validate_prod_dsn import validate_supabase_dsn
@@ -178,7 +185,7 @@ class GateReport:
             print(f"         {check.message}")
 
             if not check.passed and not check.skipped and check.remediation:
-                print(f"         {RED}→ FIX: {check.remediation}{RESET}")
+                print(f"         {RED}=> FIX: {check.remediation}{RESET}")
 
             if check.details:
                 for key, value in check.details.items():
@@ -197,7 +204,7 @@ class GateReport:
             # Show first failed check's remediation prominently
             for check in self.checks:
                 if not check.passed and not check.skipped and check.remediation:
-                    print(f"  {RED}  → {check.remediation}{RESET}")
+                    print(f"  {RED}  => {check.remediation}{RESET}")
                     break
         print("=" * width)
         print()
@@ -470,7 +477,45 @@ def check_prod_dsn(env: str, skip: bool = False) -> CheckResult:
     violations = validate_supabase_dsn(db_url)
 
     if violations:
-        # Truncate to avoid leaking sensitive info
+        # Check if waiver is active - if so, port 5432 is expected
+        # Check env var directly since _connection_mode may not be set yet
+        from datetime import datetime, timezone
+
+        waiver_value = os.environ.get(DIRECT_WAIVER_ENV_VAR, "").lower().strip()
+        waiver_active = waiver_value == DIRECT_WAIVER_VALUE
+        now = datetime.now(timezone.utc)
+        waiver_expired = now >= DIRECT_WAIVER_EXPIRY
+        days_remaining = (DIRECT_WAIVER_EXPIRY - now).days if not waiver_expired else 0
+
+        if waiver_active and not waiver_expired:
+            # Waiver is active - port 5432 and direct host are allowed
+            # Also ignore sslmode warnings for direct connections
+            non_waivered_violations = [
+                v
+                for v in violations
+                if "5432" not in v and "DIRECT" not in v.upper() and "sslmode" not in v.lower()
+            ]
+            if not non_waivered_violations:
+                return CheckResult(
+                    name="DSN Contract",
+                    passed=True,
+                    message=f"DSN using direct connection (waiver active, {days_remaining}d remaining)",
+                    details={
+                        "waiver_active": True,
+                        "days_remaining": days_remaining,
+                    },
+                )
+            # Still have non-waivered violations
+            summary = "; ".join(v[:80] for v in non_waivered_violations[:3])
+            return CheckResult(
+                name="DSN Contract",
+                passed=False,
+                message=f"DSN violates production contract: {summary}",
+                remediation="Fix the DSN issues (waiver only covers port 5432 and direct host)",
+                details={"violation_count": len(non_waivered_violations), "waiver_active": True},
+            )
+
+        # No waiver - report all violations
         summary = "; ".join(v[:80] for v in violations[:3])
         return CheckResult(
             name="DSN Contract",
@@ -478,7 +523,7 @@ def check_prod_dsn(env: str, skip: bool = False) -> CheckResult:
             message=f"DSN violates production contract: {summary}",
             remediation=(
                 "Run 'python -m tools.validate_prod_dsn --runbook' for fix instructions. "
-                "Use Supabase Dashboard → Settings → Database → Transaction mode."
+                "Use Supabase Dashboard -> Settings -> Database -> Transaction mode."
             ),
             details={"violation_count": len(violations)},
         )
@@ -487,6 +532,97 @@ def check_prod_dsn(env: str, skip: bool = False) -> CheckResult:
         name="DSN Contract",
         passed=True,
         message="DSN meets production contract (pooler:6543, sslmode=require)",
+    )
+
+
+def check_waiver_status(env: str, skip: bool = False) -> CheckResult:
+    """
+    Check direct connection waiver status.
+
+    If a waiver is active:
+    - WARN if approaching expiry (< 7 days)
+    - FAIL if expired
+
+    This ensures we don't forget to fix the pooler issue.
+    """
+    from datetime import datetime, timezone
+
+    if skip:
+        return CheckResult(
+            name="Waiver Status",
+            passed=True,
+            message="Skipped by user request",
+            skipped=True,
+        )
+
+    # Only relevant in prod mode
+    if env != "prod":
+        return CheckResult(
+            name="Waiver Status",
+            passed=True,
+            message="Skipped in dev mode",
+            skipped=True,
+        )
+
+    # Check directly - don't rely on _connection_mode being set
+    waiver_value = os.environ.get(DIRECT_WAIVER_ENV_VAR, "").lower().strip()
+    waiver_active = waiver_value == DIRECT_WAIVER_VALUE
+    now = datetime.now(timezone.utc)
+    waiver_expired = now >= DIRECT_WAIVER_EXPIRY
+    days_remaining = (DIRECT_WAIVER_EXPIRY - now).days if not waiver_expired else 0
+
+    status = {
+        "waiver_active": waiver_active,
+        "waiver_expired": waiver_expired,
+        "expiry_date": DIRECT_WAIVER_EXPIRY.isoformat(),
+        "days_remaining": days_remaining,
+        "reason": DIRECT_WAIVER_REASON if waiver_active else None,
+        "env_var": f"{DIRECT_WAIVER_ENV_VAR}={waiver_value}" if waiver_value else "not set",
+    }
+
+    # Check if waiver has expired
+    if waiver_expired and waiver_active:
+        return CheckResult(
+            name="Waiver Status",
+            passed=False,
+            message=f"Direct connection waiver EXPIRED on {status['expiry_date'][:10]}",
+            remediation=(
+                "The waiver has expired. You must either:\n"
+                "  1. Fix the pooler connection (see RUNBOOK_POOLER.md)\n"
+                "  2. Extend the waiver in backend/core/dsn_guard.py (DIRECT_WAIVER_EXPIRY)"
+            ),
+            details=status,
+        )
+
+    # Check if waiver is active
+    if status["waiver_active"]:
+        days = status["days_remaining"]
+        if days <= 7:
+            # Warning - approaching expiry
+            return CheckResult(
+                name="Waiver Status",
+                passed=True,  # Pass but with warning
+                message=f"⚠️ Direct waiver active - EXPIRES IN {days} DAYS",
+                remediation=(
+                    f"Waiver expires {status['expiry_date'][:10]}. "
+                    "Fix pooler or extend waiver before expiry. See RUNBOOK_POOLER.md"
+                ),
+                details=status,
+            )
+        else:
+            return CheckResult(
+                name="Waiver Status",
+                passed=True,
+                message=f"Direct waiver active ({days} days remaining until {status['expiry_date'][:10]})",
+                details=status,
+            )
+
+    # No waiver active - using pooler (ideal state)
+    return CheckResult(
+        name="Waiver Status",
+        passed=True,
+        message="No waiver active - using pooler connection",
+        details={"env_var": status["env_var"]},
     )
 
 
@@ -1175,6 +1311,9 @@ def run_prod_gate(skips: set[str]) -> GateReport:
 
     # DSN contract check FIRST - fail fast before any network calls
     report.add(check_prod_dsn(env, "dsn" in skips))
+
+    # Waiver status check - track direct connection waiver expiry
+    report.add(check_waiver_status(env, "waiver" in skips))
 
     # Production checks - database first (fail fast)
     report.add(check_db_connectivity(env, "db" in skips))
