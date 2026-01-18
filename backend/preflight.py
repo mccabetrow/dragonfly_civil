@@ -9,10 +9,18 @@ Features:
     - Validates required environment variables with format checks
     - Single-line error output: "{service}: {error}" format for log aggregators
     - Structured logging with service_name, git_sha, environment, supabase_mode
-    - Fail-fast mode (prod): exits on errors AND warnings
-    - Warn mode (dev/staging): exits only on critical errors, logs warnings
+    - **Strict Preflight Contract**: Errors are fatal; warnings NEVER fatal by default
     - Concise banner output for operator visibility
     - --print-effective-config mode to show which env keys are used
+
+Environment Toggles:
+    PREFLIGHT_FAIL_FAST:       Exit immediately on errors (default: true)
+    PREFLIGHT_WARNINGS_FATAL:  Treat warnings as errors (default: false)
+    PREFLIGHT_STRICT_MODE:     Enforce stricter validation (default: true in prod)
+
+Single DSN Contract:
+    DATABASE_URL:     Canonical database connection string
+    SUPABASE_DB_URL:  Deprecated alias (emits warning unless DATABASE_URL is set)
 
 Usage:
     from backend.preflight import validate_worker_env
@@ -180,6 +188,43 @@ logger = logging.getLogger("preflight")
 
 # Exit code for configuration errors (BSD sysexits.h convention)
 EX_CONFIG = 78
+
+# ==============================================================================
+# PREFLIGHT ENVIRONMENT TOGGLES
+# ==============================================================================
+
+
+def _parse_bool_env(key: str, default: bool) -> bool:
+    """Parse a boolean environment variable."""
+    value = os.environ.get(key, "").strip().lower()
+    if not value:
+        return default
+    return value in ("true", "1", "yes", "on")
+
+
+def get_preflight_config() -> dict:
+    """
+    Get preflight configuration from environment.
+
+    Returns a dict with:
+        - fail_fast: bool - Exit immediately on errors (default: True)
+        - warnings_fatal: bool - Treat warnings as errors (default: False)
+        - strict_mode: bool - Enforce stricter validation (default: True in prod)
+
+    STRICT PREFLIGHT CONTRACT:
+        - Errors are ALWAYS fatal (exit non-zero) unless fail_fast=False
+        - Warnings are NEVER fatal unless PREFLIGHT_WARNINGS_FATAL=true
+        - This ensures workers do not crash-loop on configuration warnings
+    """
+    environment = os.environ.get("ENVIRONMENT", "dev").lower()
+    is_prod = environment == "prod"
+
+    return {
+        "fail_fast": _parse_bool_env("PREFLIGHT_FAIL_FAST", True),
+        "warnings_fatal": _parse_bool_env("PREFLIGHT_WARNINGS_FATAL", False),
+        "strict_mode": _parse_bool_env("PREFLIGHT_STRICT_MODE", is_prod),
+    }
+
 
 # ==============================================================================
 # VALIDATION RULES
@@ -375,7 +420,15 @@ def _validate_environment(result: PreflightResult) -> None:
 
 
 def _validate_supabase_db_url(result: PreflightResult) -> None:
-    """Validate canonical DATABASE_URL (with SUPABASE_DB_URL fallback)."""
+    """
+    Validate canonical DATABASE_URL (with SUPABASE_DB_URL fallback).
+
+    SINGLE DSN CONTRACT:
+        - DATABASE_URL is the canonical variable
+        - SUPABASE_DB_URL is deprecated (warning only, unless DATABASE_URL is set)
+        - If DATABASE_URL is set, suppress SUPABASE_DB_URL deprecation warning
+        - Missing database URL is FATAL in production
+    """
     # Single DSN Contract: DATABASE_URL is canonical, SUPABASE_DB_URL is deprecated
     database_url = _get_env("DATABASE_URL")
     supabase_db_url = _get_env("SUPABASE_DB_URL")
@@ -385,20 +438,33 @@ def _validate_supabase_db_url(result: PreflightResult) -> None:
     source_var = "DATABASE_URL" if database_url else "SUPABASE_DB_URL" if supabase_db_url else None
 
     # Track in effective config (redact password)
-    if db_url:
-        if "@" in db_url:
-            # Format: postgresql://user:pass@host:port/db - redact password
-            parts = db_url.split("@")
+    if database_url:
+        # DATABASE_URL is set - this is the canonical path
+        if "@" in database_url:
+            parts = database_url.split("@")
             host_part = parts[1][:25] if len(parts) > 1 else "..."
-            result.effective_config[source_var] = f"SET (***@{host_part}...)"
+            result.effective_config["DATABASE_URL"] = f"SET (***@{host_part}...)"
         else:
-            result.effective_config[source_var] = f"SET ({db_url[:30]}...)"
-
-        # Emit deprecation notice if using legacy var
-        if not database_url and supabase_db_url:
-            result.warnings.append(
-                "SUPABASE_DB_URL is deprecated; use DATABASE_URL (Railway/Heroku convention)"
+            result.effective_config["DATABASE_URL"] = f"SET ({database_url[:30]}...)"
+        # Note: Do NOT emit deprecation warning for SUPABASE_DB_URL when DATABASE_URL is set
+        if supabase_db_url:
+            result.effective_config["SUPABASE_DB_URL"] = "SET (ignored - using DATABASE_URL)"
+    elif supabase_db_url:
+        # Only SUPABASE_DB_URL is set - emit deprecation warning
+        if "@" in supabase_db_url:
+            parts = supabase_db_url.split("@")
+            host_part = parts[1][:25] if len(parts) > 1 else "..."
+            result.effective_config["SUPABASE_DB_URL"] = f"SET (***@{host_part}...) [DEPRECATED]"
+        else:
+            result.effective_config["SUPABASE_DB_URL"] = (
+                f"SET ({supabase_db_url[:30]}...) [DEPRECATED]"
             )
+        result.effective_config["DATABASE_URL"] = "NOT SET"
+        # Emit deprecation warning - but it's just a WARNING, not fatal
+        result.warnings.append(
+            "SUPABASE_DB_URL is deprecated; use DATABASE_URL (Railway/Heroku convention)\n"
+            "   The application will continue to function, but please update your config."
+        )
     else:
         result.effective_config["DATABASE_URL"] = "NOT SET"
         result.effective_config["SUPABASE_DB_URL"] = "NOT SET"
@@ -518,6 +584,7 @@ def validate_worker_env(
     *,
     exit_on_error: bool = True,
     fail_fast: bool | None = None,
+    warnings_fatal: bool | None = None,
     structured_logging: bool = True,
 ) -> PreflightResult:
     """
@@ -527,12 +594,24 @@ def validate_worker_env(
     It performs critical validation of environment variables and exits
     with a clear error message if configuration is invalid.
 
+    STRICT PREFLIGHT CONTRACT:
+        - ERRORS are ALWAYS fatal (exit 1) unless exit_on_error=False
+        - WARNINGS are NEVER fatal unless PREFLIGHT_WARNINGS_FATAL=true or warnings_fatal=True
+        - This ensures workers do not crash-loop on configuration warnings
+
+    Environment Toggles (override via env vars):
+        PREFLIGHT_FAIL_FAST:       Exit on errors (default: true)
+        PREFLIGHT_WARNINGS_FATAL:  Treat warnings as errors (default: false)
+        PREFLIGHT_STRICT_MODE:     Stricter validation (default: true in prod)
+
     Args:
         worker_name: Human-readable name of the worker (for logging).
         exit_on_error: If True (default), exit with code 1 on validation errors.
                        Set to False for testing or diagnostic modes.
-        fail_fast: If True, exit on warnings too (not just errors).
-                   Defaults to True in prod, False in dev/staging.
+        fail_fast: DEPRECATED - use env var PREFLIGHT_FAIL_FAST.
+                   If provided, controls whether errors cause immediate exit.
+        warnings_fatal: If True, treat warnings as errors.
+                       Defaults to PREFLIGHT_WARNINGS_FATAL env var (false).
         structured_logging: If True (default), enable structured JSON logging.
 
     Returns:
@@ -553,50 +632,72 @@ def validate_worker_env(
 
     result = run_preflight_checks(worker_name)
 
-    # Determine fail-fast behavior based on environment
-    environment = result.environment
+    # Get preflight configuration from environment
+    preflight_config = get_preflight_config()
+
+    # Resolve fail_fast: explicit arg > env var > default (True)
     if fail_fast is None:
-        fail_fast = environment == "prod"
+        fail_fast = preflight_config["fail_fast"]
+
+    # Resolve warnings_fatal: explicit arg > env var > default (False)
+    # CRITICAL: warnings_fatal defaults to FALSE - warnings never brick workers
+    if warnings_fatal is None:
+        warnings_fatal = preflight_config["warnings_fatal"]
 
     # Print structured banner
-    _print_structured_banner(result)
+    _print_structured_banner(result, preflight_config)
 
+    # STRICT PREFLIGHT CONTRACT:
+    # 1. ERRORS are fatal (exit non-zero) if fail_fast=True and exit_on_error=True
     if result.errors:
         _print_error_block(result.errors)
         logger.critical(f"Preflight failed for {worker_name}: {len(result.errors)} error(s)")
-        if exit_on_error:
+        if exit_on_error and fail_fast:
+            sys.exit(1)
+        elif exit_on_error:
+            # Even without fail_fast, errors are still logged critically
+            # but we allow the caller to handle via exit_on_error=False
             sys.exit(1)
 
+    # 2. WARNINGS are NEVER fatal unless warnings_fatal=True
     if result.warnings:
         _print_warning_block(result.warnings)
-        if fail_fast:
+        if warnings_fatal:
             logger.error(
                 f"Preflight failed for {worker_name}: {len(result.warnings)} warning(s) "
-                f"(fail_fast=True in {environment})"
+                f"(PREFLIGHT_WARNINGS_FATAL=true)"
             )
             if exit_on_error:
                 sys.exit(1)
         else:
-            logger.warning(f"Preflight passed with {len(result.warnings)} warning(s)")
+            # This is the normal path: warnings are logged but do NOT cause exit
+            logger.warning(
+                f"Preflight passed with {len(result.warnings)} warning(s) - continuing startup"
+            )
     else:
         logger.info(f"Preflight passed for {worker_name}")
 
     return result
 
 
-def _print_structured_banner(result: PreflightResult) -> None:
+def _print_structured_banner(result: PreflightResult, preflight_config: dict | None = None) -> None:
     """Print a structured startup banner with key metadata."""
     width = 70
     sha_display = result.git_sha or "unknown"
+
+    # Get preflight config for display
+    if preflight_config is None:
+        preflight_config = get_preflight_config()
 
     print()
     print("=" * width)
     print(f"  Dragonfly Worker: {result.worker_name}")
     print("-" * width)
-    print(f"  Environment:   {result.environment}")
-    print(f"  Supabase Mode: {result.supabase_mode}")
-    print(f"  Git SHA:       {sha_display}")
-    print(f"  Startup:       {datetime.now(timezone.utc).isoformat(timespec='seconds')}Z")
+    print(f"  Environment:      {result.environment}")
+    print(f"  Supabase Mode:    {result.supabase_mode}")
+    print(f"  Git SHA:          {sha_display}")
+    print(f"  Warnings Fatal:   {preflight_config['warnings_fatal']}")
+    print(f"  Startup:          {datetime.now(timezone.utc).isoformat(timespec='seconds')}Z")
     print("=" * width)
 
 

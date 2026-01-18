@@ -1,7 +1,7 @@
 # Dragonfly Supabase Pooler Runbook
 
 **Author**: Principal Database Reliability Engineer  
-**Date**: 2026-01-16  
+**Date**: 2026-01-17  
 **Status**: Production
 
 ---
@@ -15,6 +15,111 @@ This runbook documents Supabase connection pooler strategy for Dragonfly to prev
 
 - **Production**: `iaketsyhmqbwaabgykux`
 - **Development**: `ejiddanxtqcleyswqvkc`
+
+---
+
+## 🔥 EMERGENCY: How to Stop a Lockout Spiral
+
+If you see `server_login_retry` errors in logs:
+
+### Step 1: STOP ALL SERVICES IMMEDIATELY
+
+```bash
+# Railway
+railway service stop <service-name>
+
+# Or via dashboard: Settings → Deployments → Stop
+```
+
+**DO NOT RESTART** - every restart attempt amplifies the lockout.
+
+### Step 2: Wait 15-20 Minutes
+
+The Supabase pooler lockout window is **15-20 minutes**. There is no way to shorten this.
+
+### Step 3: Fix Credentials (While Waiting)
+
+```bash
+# 1. Verify the password in Supabase Dashboard → Settings → Database
+# 2. Ensure password is URL-encoded if it contains special characters
+# 3. Update DATABASE_URL in Railway
+```
+
+### Step 4: Probe Before Restarting
+
+```bash
+python -m tools.probe_db --env prod
+```
+
+Only restart services if probe returns `RESULT: PASS`.
+
+### Step 5: Restart Services
+
+```bash
+railway up  # or trigger redeploy
+```
+
+---
+
+## 🔐 How to Generate a DSN Safely
+
+### Password URL Encoding
+
+If your password contains special characters (`@`, `+`, `/`, `!`, etc.), it **MUST** be URL-encoded:
+
+```python
+from urllib.parse import quote
+
+password = "MyP@ss+word!/123"
+encoded = quote(password, safe='')
+print(f"Encoded: {encoded}")
+# Output: MyP%40ss%2Bword%21%2F123
+```
+
+### DSN Template Generator
+
+```python
+from urllib.parse import quote
+
+# Fill in your values
+user = "postgres"
+password = "YOUR_PASSWORD_HERE"  # Will be encoded
+project_ref = "iaketsyhmqbwaabgykux"
+region = "us-east-1"
+
+# Encode password
+encoded_password = quote(password, safe='')
+
+# Generate DSN
+dsn = f"postgresql://{user}.{project_ref}:{encoded_password}@aws-0-{region}.pooler.supabase.com:6543/postgres?sslmode=require"
+
+print(dsn)
+```
+
+### Safe Characters (No Encoding Needed)
+
+RFC 3986 "unreserved" characters don't need encoding:
+
+- `A-Z`, `a-z`, `0-9`
+- `-`, `.`, `_`, `~`
+
+If your password uses ONLY these characters, no encoding is needed.
+
+### Common Special Characters
+
+| Character   | URL Encoded |
+| ----------- | ----------- |
+| `@`         | `%40`       |
+| `+`         | `%2B`       |
+| `/`         | `%2F`       |
+| `!`         | `%21`       |
+| `#`         | `%23`       |
+| `$`         | `%24`       |
+| `%`         | `%25`       |
+| `&`         | `%26`       |
+| `=`         | `%3D`       |
+| `?`         | `%3F`       |
+| ` ` (space) | `%20`       |
 
 ---
 
@@ -223,16 +328,48 @@ DSN: postgresql://postgres.iaketsyh****@aws-0-us-east-1.pooler.supabase.com:6543
 
 ## 5. Operator Log Lines
 
-At startup, the API and workers log pooler metadata:
+At startup, the API and workers log a **single structured line** with all pooler metadata:
 
 ```
-[DB] pooler_mode=shared host=aws-0-us-east-1.pooler.supabase.com port=6543 user=postgres.*** project_ref=iaketsyhmqbwaabgykux
+[DB] pooler_mode=shared host=aws-0-us-east-1.pooler.supabase.com port=6543 user=postgres.*** project_ref=iaketsyhmqbwaabgykux sslmode=require password_encoding=safe_plain
 ```
 
-On lockout:
+### Log Field Reference
+
+| Field               | Description                | Example Values                             |
+| ------------------- | -------------------------- | ------------------------------------------ |
+| `pooler_mode`       | Connection mode            | `shared`, `dedicated`, `direct`, `unknown` |
+| `host`              | Database host              | `aws-0-us-east-1.pooler.supabase.com`      |
+| `port`              | Database port              | `6543` (pooler), `5432` (FORBIDDEN)        |
+| `user`              | Redacted username          | `postgres.***`                             |
+| `project_ref`       | Supabase project reference | `iaketsyhmqbwaabgykux`                     |
+| `sslmode`           | SSL configuration          | `require` (mandatory)                      |
+| `password_encoding` | Password encoding status   | See below                                  |
+
+### Password Encoding Status
+
+| Status           | Meaning                                              | Action Required     |
+| ---------------- | ---------------------------------------------------- | ------------------- |
+| `safe_plain`     | Password uses only unreserved chars (A-Za-z0-9-.\_~) | None                |
+| `encoded`        | Password contains %XX sequences (URL-encoded)        | None                |
+| `needs_encoding` | Password has special chars WITHOUT encoding          | **FIX IMMEDIATELY** |
+| `missing`        | No password in DSN                                   | Check configuration |
+
+**If you see `password_encoding=needs_encoding`**, the password contains special characters
+that are NOT URL-encoded. This can cause silent authentication failures. Fix using:
+
+```python
+from urllib.parse import quote
+encoded = quote("YOUR_PASSWORD", safe='')
+```
+
+### Lockout Log
+
+On lockout detection:
 
 ```
 [DB] READY=false reason=lockout next_retry_in=900s
+[DB Supervisor] Lockout backoff: 900s (15m) remaining. No connection attempts until backoff expires.
 ```
 
 ---
@@ -243,6 +380,17 @@ On lockout:
 | --------- | ---------------------------------------------------------- | --------- |
 | API       | Degraded mode, /health=200, /readyz=503, 15-20 min backoff | N/A       |
 | Worker    | Immediate exit                                             | 78        |
+
+### Supervisor Backoff Guarantee
+
+When the API enters degraded mode due to lockout:
+
+1. **DBSupervisor** schedules next retry 15-20 minutes in the future
+2. **Zero connection attempts** are made during the backoff window
+3. Supervisor logs remaining time every 60 seconds
+4. Only after backoff expires does supervisor attempt reconnection
+
+This prevents the API from amplifying lockouts while staying alive to serve /health.
 
 **Lockout triggers**:
 

@@ -267,15 +267,15 @@ class Settings(BaseSettings):
     # CORE SUPABASE CONFIGURATION (Canonical - no suffixes)
     # =========================================================================
 
-    # Indestructible Boot: Core Supabase vars have defaults for degraded mode
     SUPABASE_URL: str = Field(
-        default="",
-        description="Supabase project REST URL (empty = degraded mode)",
+        ...,
+        description="Supabase project REST URL",
         json_schema_extra={"env": ["SUPABASE_URL", "supabase_url"]},
     )
     SUPABASE_SERVICE_ROLE_KEY: str = Field(
-        default="",
-        description="Supabase service role JWT key (empty = degraded mode)",
+        ...,
+        min_length=100,
+        description="Supabase service role JWT key",
         json_schema_extra={"env": ["SUPABASE_SERVICE_ROLE_KEY", "supabase_service_role_key"]},
     )
     # DATABASE_URL is canonical (Railway/Heroku convention); SUPABASE_DB_URL is deprecated alias

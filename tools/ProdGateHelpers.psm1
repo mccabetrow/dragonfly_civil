@@ -27,6 +27,34 @@ function Mask-SensitiveValue {
     return "$start***$end"
 }
 
+function Mask-OutputLine {
+    [CmdletBinding()]
+    param(
+        [string]$Line
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Line)) {
+        return $Line
+    }
+
+    $masked = $Line
+
+    $dsnPattern = '(?i)postgres(?:ql)?://\S+'
+    $masked = [regex]::Replace($masked, $dsnPattern, {
+            param($match)
+            Mask-SensitiveValue -Value $match.Value
+        })
+
+    $secretKeys = 'DATABASE_URL|SUPABASE_DB_URL|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_ANON_KEY|SUPABASE_JWT_SECRET|OPENAI_API_KEY|AZURE_OPENAI_API_KEY|ANTHROPIC_API_KEY|RAILWAY_TOKEN|SUPABASE_ACCESS_TOKEN'
+    $kvPattern = "(?i)\b($secretKeys)\b\s*[:=]\s*([^\s]+)"
+    $masked = [regex]::Replace($masked, $kvPattern, {
+            param($match)
+            "{0}={1}" -f $match.Groups[1].Value, (Mask-SensitiveValue -Value $match.Groups[2].Value)
+        })
+
+    return $masked
+}
+
 function Test-RailwayFallbackHeader {
     [CmdletBinding()]
     param(
@@ -64,7 +92,19 @@ function Parse-WhoAmIJson {
         throw "Unable to parse whoami payload: $($_.Exception.Message)"
     }
 
+    if ([string]::IsNullOrWhiteSpace([string]$data.env)) {
+        throw "whoami payload missing env"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$data.sha_short)) {
+        throw "whoami payload missing sha_short"
+    }
+    if ($null -eq $data.database_ready) {
+        throw "whoami payload missing database_ready"
+    }
+
     return [pscustomobject]@{
+        Env           = [string]$data.env
+        ShaShort      = [string]$data.sha_short
         DatabaseReady = [bool]$data.database_ready
         DsnIdentity   = [string]$data.dsn_identity
     }
@@ -86,4 +126,4 @@ function Get-ProdGatePythonPath {
     return $pythonCmd.Source
 }
 
-Export-ModuleMember -Function Mask-SensitiveValue, Test-RailwayFallbackHeader, Parse-WhoAmIJson, Get-ProdGatePythonPath
+Export-ModuleMember -Function Mask-SensitiveValue, Mask-OutputLine, Test-RailwayFallbackHeader, Parse-WhoAmIJson, Get-ProdGatePythonPath

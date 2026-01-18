@@ -2,7 +2,11 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^https://')]
-    [string]$Url
+    [string]$Url,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('prod', 'dev')]
+    [string]$Env
 )
 
 Set-StrictMode -Version Latest
@@ -53,11 +57,10 @@ function Invoke-Task {
     )
     Write-Host "→ $DisplayName" -ForegroundColor DarkCyan
     Write-Host "   Command: $PythonExe $($Arguments -join ' ')"
-    $output = & $PythonExe @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
-    if ($output) {
-        $output | ForEach-Object { Write-Host "   $_" }
+    & $PythonExe @Arguments 2>&1 | ForEach-Object {
+        Write-Host "   $(Mask-OutputLine -Line $_)"
     }
+    $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         throw "$DisplayName failed with exit code $exitCode"
     }
@@ -86,9 +89,9 @@ Write-Section -Title 'Python diagnostics'
 
 Invoke-Task -PythonExe $pythonExe -DisplayName 'tools.diagnose_boot' -Arguments @('-m', 'tools.diagnose_boot')
 
-Invoke-Task -PythonExe $pythonExe -DisplayName 'tools.probe_db' -Arguments @('-m', 'tools.probe_db', '--env', 'prod', '--from-env')
+Invoke-Task -PythonExe $pythonExe -DisplayName 'tools.probe_db' -Arguments @('-m', 'tools.probe_db', '--env', $Env, '--from-env')
 
-Invoke-Task -PythonExe $pythonExe -DisplayName 'tools.certify_prod' -Arguments @('-m', 'tools.certify_prod', '--url', $Url, '--env', 'prod', '--no-fail-fast')
+Invoke-Task -PythonExe $pythonExe -DisplayName 'tools.certify_prod' -Arguments @('-m', 'tools.certify_prod', '--url', $Url, '--env', $Env, '--no-fail-fast')
 
 Write-Host "" -ForegroundColor Green
 Write-Host ('=' * 60) -ForegroundColor Green

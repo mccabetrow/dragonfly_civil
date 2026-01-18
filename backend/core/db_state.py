@@ -315,7 +315,14 @@ class DBSupervisor:
 
     Runs in API processes to attempt DB reconnection with polite backoff.
     Respects auth failure lockout avoidance timing.
+
+    CRITICAL: This supervisor MUST honor the backoff window set by mark_failed().
+    During lockout (error_class="lockout"), next_retry_ts is 15-20 minutes in future.
+    The supervisor MUST wait until that time - zero login attempts before then.
     """
+
+    # Minimum seconds remaining before we allow a retry (safety margin)
+    RETRY_SAFETY_MARGIN_S = 5
 
     def __init__(
         self,
@@ -356,19 +363,56 @@ class DBSupervisor:
         self.state.supervisor_running = False
         logger.info("[DB Supervisor] Stopped")
 
+    def _can_retry_now(self) -> bool:
+        """Check if we can attempt a retry RIGHT NOW.
+
+        Returns True only if:
+        1. next_retry_ts is None (never failed), OR
+        2. Current time >= next_retry_ts (backoff expired)
+
+        CRITICAL: During lockout, this returns False for 15-20 minutes.
+        """
+        if self.state.next_retry_ts is None:
+            return True
+        remaining = self.state.next_retry_ts - time.monotonic()
+        # Only allow retry if past the backoff window (with small margin for clock drift)
+        return remaining <= self.RETRY_SAFETY_MARGIN_S
+
     async def _run(self) -> None:
-        """Main supervisor loop - attempts reconnection with backoff."""
+        """Main supervisor loop - attempts reconnection with backoff.
+
+        LOCKOUT ENFORCEMENT:
+        - When error_class is "lockout", next_retry_ts is 15-20 min in future
+        - This loop MUST NOT attempt any DB connection before that time
+        - We log the wait time so operators know the supervisor is honoring backoff
+        """
         while not self._stop_event.is_set():
             # If already connected, check periodically
             if self.state.ready:
                 await asyncio.sleep(60)  # Health check interval
                 continue
 
-            # Wait until next retry time
+            # CRITICAL: Check if we're allowed to retry yet
             retry_in = self.state.next_retry_in_seconds()
-            if retry_in is not None and retry_in > 0:
-                wait_time = min(retry_in, 60)  # Wake up at least every 60s
+            if retry_in is not None and retry_in > self.RETRY_SAFETY_MARGIN_S:
+                # Log if this is a lockout situation (long wait)
+                if retry_in > 120:  # > 2 minutes suggests lockout
+                    logger.info(
+                        f"[DB Supervisor] Lockout backoff: {retry_in}s ({retry_in // 60}m) remaining. "
+                        f"No connection attempts until backoff expires.",
+                        extra={
+                            "retry_in_seconds": retry_in,
+                            "error_class": self.state.last_error_class,
+                        },
+                    )
+                # Wait in chunks (max 60s) to stay responsive to stop events
+                wait_time = min(retry_in, 60)
                 await asyncio.sleep(wait_time)
+                continue
+
+            # Double-check we're allowed to retry (defensive)
+            if not self._can_retry_now():
+                await asyncio.sleep(5)
                 continue
 
             # Attempt reconnection

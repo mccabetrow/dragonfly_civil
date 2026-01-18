@@ -66,7 +66,18 @@ class Settings(BaseSettings):
     # =========================================================================
     # CORE SUPABASE CONFIGURATION
     # Indestructible Boot: DB URL can be missing/malformed - API enters degraded mode
+    #
+    # SINGLE DSN CONTRACT:
+    #   PRIMARY:  DATABASE_URL (industry standard)
+    #   FALLBACK: SUPABASE_DB_URL (legacy, emits warning)
+    #   MISSING:  Soft-fail (degraded mode), never crash
     # =========================================================================
+
+    # Primary DSN (industry standard)
+    DATABASE_URL: str = Field(
+        default="",
+        description="Primary Postgres connection string (preferred)",
+    )
 
     SUPABASE_URL: str = Field(
         default="",
@@ -76,9 +87,11 @@ class Settings(BaseSettings):
         default="",
         description="Supabase service role JWT key",
     )
+
+    # Legacy DSN (fallback only - emits deprecation warning)
     SUPABASE_DB_URL: str = Field(
         default="",
-        description="Postgres connection string",
+        description="Legacy Postgres connection string (use DATABASE_URL instead)",
     )
 
     # Migration-only (scripts, not runtime)
@@ -152,6 +165,11 @@ class Settings(BaseSettings):
         """
         Post-init validation with Indestructible Boot pattern.
 
+        DSN Resolution Order:
+        1. DATABASE_URL (primary, industry standard)
+        2. SUPABASE_DB_URL (legacy fallback, emits warning)
+        3. None (soft-fail, degraded mode)
+
         If DATABASE_URL is missing or malformed:
         - Log a warning
         - Set db_state.is_db_connected = False
@@ -164,10 +182,16 @@ class Settings(BaseSettings):
 
         from .db_state import db_state
 
+        # =====================================================================
+        # SINGLE DSN CONTRACT: DATABASE_URL is primary, SUPABASE_DB_URL fallback
+        # =====================================================================
+        effective_db_url = self._resolve_database_url()
+
         # Check if critical DB config is missing
-        if not self.SUPABASE_DB_URL or not self.SUPABASE_DB_URL.strip():
-            logger.warning(
-                "⚠️ SUPABASE_DB_URL not configured - entering DEGRADED MODE\n"
+        if not effective_db_url:
+            logger.critical(
+                "⚠️ DATABASE_URL not configured - entering DEGRADED MODE\n"
+                "   Neither DATABASE_URL nor SUPABASE_DB_URL is set.\n"
                 "   /health will return 200, /readyz will return 503\n"
                 "   Database operations will fail until configured."
             )
@@ -176,11 +200,11 @@ class Settings(BaseSettings):
             return self
 
         # Validate DB URL format
-        if not self.SUPABASE_DB_URL.startswith(("postgresql://", "postgres://")):
+        if not effective_db_url.startswith(("postgresql://", "postgres://")):
             logger.warning(
-                f"⚠️ SUPABASE_DB_URL has invalid format - entering DEGRADED MODE\n"
+                f"⚠️ DATABASE_URL has invalid format - entering DEGRADED MODE\n"
                 f"   Expected: postgresql://... or postgres://...\n"
-                f"   Got: {self.SUPABASE_DB_URL[:30]}...\n"
+                f"   Got: {effective_db_url[:30]}...\n"
                 f"   Database operations will fail until fixed."
             )
             db_state_module.is_db_connected = False
@@ -191,8 +215,8 @@ class Settings(BaseSettings):
         if self.DRAGONFLY_ENV != "prod":
             return self
 
-        # Extract host from DB URL
-        db_host = self._extract_db_host(self.SUPABASE_DB_URL)
+        # Extract host from effective DB URL
+        db_host = self._extract_db_host(effective_db_url)
 
         # Check for dev project ID in prod environment
         if db_host and _DEV_PROJECT_ID in db_host:
@@ -202,7 +226,7 @@ class Settings(BaseSettings):
                 f"  DB Host: {db_host}\n"
                 f"  Expected: {_PROD_PROJECT_ID}\n\n"
                 f"This is a FATAL configuration error.\n"
-                f"Ensure .env.prod contains production credentials."
+                f"Ensure DATABASE_URL points to production."
             )
 
         # Check SUPABASE_URL too
@@ -217,6 +241,33 @@ class Settings(BaseSettings):
             )
 
         return self
+
+    def _resolve_database_url(self) -> str | None:
+        """
+        Resolve the effective database URL using Single DSN Contract.
+
+        Resolution Order:
+        1. DATABASE_URL (primary, industry standard)
+        2. SUPABASE_DB_URL (legacy fallback, emits deprecation warning)
+        3. None (triggers degraded mode)
+
+        Returns:
+            Effective database URL or None if not configured.
+        """
+        # Primary: DATABASE_URL
+        if self.DATABASE_URL and self.DATABASE_URL.strip():
+            return self.DATABASE_URL.strip()
+
+        # Fallback: SUPABASE_DB_URL (legacy, emit warning)
+        if self.SUPABASE_DB_URL and self.SUPABASE_DB_URL.strip():
+            logger.warning(
+                "⚠️ Using legacy SUPABASE_DB_URL - migrate to DATABASE_URL\n"
+                "   Set DATABASE_URL in your environment and remove SUPABASE_DB_URL."
+            )
+            return self.SUPABASE_DB_URL.strip()
+
+        # Neither configured
+        return None
 
     @staticmethod
     def _extract_db_host(db_url: str) -> str | None:
@@ -241,7 +292,13 @@ class Settings(BaseSettings):
 
     @property
     def supabase_db_url(self) -> str:
-        return self.SUPABASE_DB_URL
+        """Get effective database URL (prefers DATABASE_URL over SUPABASE_DB_URL)."""
+        return self._resolve_database_url() or ""
+
+    @property
+    def database_url(self) -> str:
+        """Canonical database URL accessor (same as supabase_db_url)."""
+        return self._resolve_database_url() or ""
 
     @property
     def supabase_mode(self) -> Literal["dev", "prod"]:
@@ -357,7 +414,14 @@ def log_startup_diagnostics(service_name: str = "Dragonfly") -> None:
     """
     settings = get_settings()
 
-    db_host = Settings._extract_db_host(settings.SUPABASE_DB_URL) or "unknown"
+    # Use resolved database URL
+    effective_db_url = settings.database_url
+    db_host = Settings._extract_db_host(effective_db_url) if effective_db_url else "not_configured"
+    db_source = (
+        "DATABASE_URL"
+        if settings.DATABASE_URL
+        else ("SUPABASE_DB_URL" if settings.SUPABASE_DB_URL else "none")
+    )
 
     logger.info("╔══════════════════════════════════════════════════════════════════╗")
     logger.info(f"║  {service_name} Startup Diagnostics")
@@ -366,6 +430,7 @@ def log_startup_diagnostics(service_name: str = "Dragonfly") -> None:
     logger.info(f"║  ENVIRONMENT:    {settings.ENVIRONMENT}")
     logger.info(f"║  SUPABASE_MODE:  {settings.SUPABASE_MODE}")
     logger.info(f"║  DB Host:        {db_host}")
+    logger.info(f"║  DSN Source:     {db_source}")
     logger.info(f"║  LOG_LEVEL:      {settings.LOG_LEVEL}")
     logger.info("╚══════════════════════════════════════════════════════════════════╝")
 
@@ -383,20 +448,41 @@ def validate_required_env(fail_fast: bool = True) -> dict[str, Any]:
     Raises:
         RuntimeError: If fail_fast and required vars missing
     """
-    required = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"]
-    missing = [var for var in required if not os.environ.get(var)]
+    # Single DSN Contract: DATABASE_URL is primary, SUPABASE_DB_URL is fallback
+    required_core = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]
+
+    # Check for database URL (either primary or fallback)
+    has_database_url = bool(os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL"))
+
+    missing = [var for var in required_core if not os.environ.get(var)]
+
+    # Add database URL to missing if neither is set
+    if not has_database_url:
+        missing.append("DATABASE_URL")
+
+    # Build present list
+    present = [var for var in required_core if os.environ.get(var)]
+    if os.environ.get("DATABASE_URL"):
+        present.append("DATABASE_URL")
+    elif os.environ.get("SUPABASE_DB_URL"):
+        present.append("SUPABASE_DB_URL (legacy)")
+
+    # Check for legacy usage
+    warnings = []
+    if os.environ.get("SUPABASE_DB_URL") and not os.environ.get("DATABASE_URL"):
+        warnings.append("Using legacy SUPABASE_DB_URL - migrate to DATABASE_URL")
 
     result = {
         "valid": len(missing) == 0,
-        "present": [var for var in required if os.environ.get(var)],
+        "present": present,
         "missing": missing,
-        "warnings": [],
+        "warnings": warnings,
     }
 
     if missing and fail_fast:
         raise RuntimeError(
             f"Missing required environment variables: {', '.join(missing)}\n"
-            f"Ensure load_environment() is called and .env.{{env}} file exists."
+            f"Set DATABASE_URL (preferred) or SUPABASE_DB_URL (legacy)."
         )
 
     return result

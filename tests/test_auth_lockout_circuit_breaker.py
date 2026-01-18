@@ -198,3 +198,171 @@ class TestProcessRoleOnLockout:
         assert metadata["last_error_class"] == "lockout"
         assert metadata["next_retry_in_seconds"] is not None
         assert metadata["next_retry_in_seconds"] >= 895
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DB SUPERVISOR BACKOFF ENFORCEMENT TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDBSupervisorBackoffEnforcement:
+    """Verify DBSupervisor does NOT retry before lockout backoff expires."""
+
+    def test_supervisor_can_retry_now_false_during_lockout(self) -> None:
+        """_can_retry_now should return False when in lockout backoff."""
+        from backend.core.db_state import DBReadinessState, DBSupervisor
+
+        state = DBReadinessState()
+        state.mark_failed("server_login_retry", "lockout", 900)  # 15 min backoff
+
+        async def dummy_connect():
+            pass
+
+        supervisor = DBSupervisor(state, dummy_connect)
+
+        # Should NOT be allowed to retry - we're in 15 min backoff
+        assert supervisor._can_retry_now() is False
+
+    def test_supervisor_can_retry_now_true_after_backoff(self) -> None:
+        """_can_retry_now should return True after backoff expires."""
+        import time
+
+        from backend.core.db_state import DBReadinessState, DBSupervisor
+
+        state = DBReadinessState()
+        # Set next_retry_ts to the past (backoff expired)
+        state.next_retry_ts = time.monotonic() - 10
+
+        async def dummy_connect():
+            pass
+
+        supervisor = DBSupervisor(state, dummy_connect)
+
+        # Should be allowed to retry - backoff has expired
+        assert supervisor._can_retry_now() is True
+
+    def test_supervisor_can_retry_now_true_when_never_failed(self) -> None:
+        """_can_retry_now should return True when next_retry_ts is None."""
+        from backend.core.db_state import DBReadinessState, DBSupervisor
+
+        state = DBReadinessState()
+        # Never failed - next_retry_ts is None
+
+        async def dummy_connect():
+            pass
+
+        supervisor = DBSupervisor(state, dummy_connect)
+
+        assert state.next_retry_ts is None
+        assert supervisor._can_retry_now() is True
+
+    def test_supervisor_respects_15_minute_lockout_window(self) -> None:
+        """Supervisor must not allow retry before 15-minute lockout window."""
+        from backend.core.db_state import LOCKOUT_BACKOFF_MIN_S, DBReadinessState, DBSupervisor
+
+        state = DBReadinessState()
+        # Simulate lockout with 15 minute backoff
+        state.mark_failed("server_login_retry", "lockout", LOCKOUT_BACKOFF_MIN_S)
+
+        async def dummy_connect():
+            pass
+
+        supervisor = DBSupervisor(state, dummy_connect)
+
+        # Verify retry not allowed
+        assert supervisor._can_retry_now() is False
+
+        # Verify remaining time is close to 15 minutes
+        retry_in = state.next_retry_in_seconds()
+        assert retry_in is not None
+        assert retry_in >= LOCKOUT_BACKOFF_MIN_S - 10  # Allow 10s tolerance
+
+    def test_supervisor_has_safety_margin(self) -> None:
+        """Supervisor should have a safety margin before allowing retry."""
+        from backend.core.db_state import DBSupervisor
+
+        # Verify the safety margin constant exists and is reasonable
+        assert hasattr(DBSupervisor, "RETRY_SAFETY_MARGIN_S")
+        assert DBSupervisor.RETRY_SAFETY_MARGIN_S >= 1  # At least 1 second margin
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PASSWORD ENCODING HEURISTIC TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPasswordEncodingHeuristic:
+    """Verify password URL-encoding detection works correctly."""
+
+    def test_encoded_password_detected(self) -> None:
+        """Password with %XX sequences should be detected as encoded."""
+        from backend.db import _check_password_encoding
+
+        dsn = "postgresql://user:p%40ssw%2Brd@host:5432/db"  # p@ssw+rd encoded
+        result = _check_password_encoding(dsn)
+
+        assert result["password_present"] is True
+        assert result["looks_url_encoded"] is True
+        assert result["encoding_status"] == "encoded"
+
+    def test_safe_plain_password_detected(self) -> None:
+        """Password with only unreserved chars should be 'safe_plain'."""
+        from backend.db import _check_password_encoding
+
+        dsn = "postgresql://user:SimplePassword123@host:5432/db"
+        result = _check_password_encoding(dsn)
+
+        assert result["password_present"] is True
+        assert result["unreserved_only"] is True
+        assert result["encoding_status"] == "safe_plain"
+
+    def test_needs_encoding_detected(self) -> None:
+        """Password with special chars but no encoding should be flagged."""
+        from backend.db import _check_password_encoding
+
+        dsn = "postgresql://user:p@ssw+rd!@host:5432/db"  # @ and ! not encoded
+        result = _check_password_encoding(dsn)
+
+        assert result["password_present"] is True
+        assert result["looks_url_encoded"] is False
+        assert result["unreserved_only"] is False
+        assert result["encoding_status"] == "needs_encoding"
+
+    def test_missing_password_detected(self) -> None:
+        """DSN without password should report 'missing'."""
+        from backend.db import _check_password_encoding
+
+        dsn = "postgresql://user@host:5432/db"  # No password
+        result = _check_password_encoding(dsn)
+
+        assert result["password_present"] is False
+        assert result["encoding_status"] == "missing"
+
+    def test_unreserved_chars_pattern(self) -> None:
+        """Test that unreserved-only passwords are correctly identified."""
+        from backend.db import _check_password_encoding
+
+        # RFC 3986 unreserved: A-Za-z0-9 - . _ ~
+        dsn = "postgresql://user:ABCabc123-._~@host:5432/db"
+        result = _check_password_encoding(dsn)
+
+        assert result["unreserved_only"] is True
+        assert result["encoding_status"] == "safe_plain"
+
+    @pytest.mark.parametrize(
+        "password_encoded,expected_status",
+        [
+            ("password123", "safe_plain"),  # Simple alphanumeric
+            ("pass-word_123", "safe_plain"),  # With unreserved chars
+            ("p%40ss", "encoded"),  # Encoded @
+            ("p%2B%2F", "encoded"),  # Encoded + and /
+        ],
+    )
+    def test_various_passwords(self, password_encoded: str, expected_status: str) -> None:
+        """Test various password patterns are correctly classified."""
+        from backend.db import _check_password_encoding
+
+        dsn = f"postgresql://user:{password_encoded}@host:5432/db"
+        result = _check_password_encoding(dsn)
+
+        assert result["encoding_status"] == expected_status

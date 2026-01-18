@@ -158,14 +158,17 @@ logger.info(
     extra=_version_log_extra(),
 )
 
-# Validate required environment variables at import time
-# Fail fast if critical vars are missing
-try:
-    validate_required_env(fail_fast=True)
-except RuntimeError as e:
-    # Log but don't crash during import - let lifespan handle it
-    logging.error(f"Configuration validation failed: {e}")
-    raise
+# =============================================================================
+# INDESTRUCTIBLE BOOT: Validate env vars but NEVER crash on missing DB config
+# =============================================================================
+# The API must boot even if DATABASE_URL is missing - it enters "degraded mode"
+# where /health returns 200 but /readyz returns 503.
+#
+# fail_fast=False means we log warnings but don't raise RuntimeError.
+# The db_state module tracks readiness for /readyz endpoint.
+_env_validation = validate_required_env(fail_fast=False)
+if _env_validation["missing"]:
+    logging.warning(f"[BOOT] Missing env vars (degraded mode): {_env_validation['missing']}")
 
 
 @asynccontextmanager

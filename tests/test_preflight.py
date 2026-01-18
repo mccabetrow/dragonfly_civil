@@ -4,7 +4,8 @@ Unit tests for backend.preflight module.
 Tests cover:
 - Environment variable validation (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, etc.)
 - Git SHA detection
-- Fail-fast vs warn mode behavior
+- Strict Preflight Contract (warnings never fatal by default)
+- Single DSN Contract (DATABASE_URL canonical, SUPABASE_DB_URL deprecated)
 - Structured logging output
 """
 
@@ -30,6 +31,7 @@ from backend.preflight import (
     _validate_supabase_url,
     configure_structured_logging,
     get_git_sha,
+    get_preflight_config,
     run_preflight_checks,
     validate_worker_env,
 )
@@ -48,12 +50,17 @@ def clean_env():
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_DB_URL",
+        "DATABASE_URL",
         "ENVIRONMENT",
         "SUPABASE_MODE",
         "GIT_SHA",
         "RAILWAY_GIT_COMMIT_SHA",
         "RENDER_GIT_COMMIT",
         "HEROKU_SLUG_COMMIT",
+        # Preflight env toggles
+        "PREFLIGHT_FAIL_FAST",
+        "PREFLIGHT_WARNINGS_FATAL",
+        "PREFLIGHT_STRICT_MODE",
     ]
     for key in keys_to_clear:
         original_env[key] = os.environ.get(key)
@@ -79,7 +86,18 @@ def valid_service_role_key() -> str:
 
 @pytest.fixture
 def valid_env(valid_service_role_key: str, clean_env):
-    """Set up a valid environment for tests."""
+    """Set up a valid environment for tests (using canonical DATABASE_URL)."""
+    os.environ["SUPABASE_URL"] = "https://test.supabase.co"
+    os.environ["SUPABASE_SERVICE_ROLE_KEY"] = valid_service_role_key
+    os.environ["DATABASE_URL"] = "postgresql://user:pass@host:5432/db"
+    os.environ["ENVIRONMENT"] = "dev"
+    os.environ["SUPABASE_MODE"] = "dev"
+    yield
+
+
+@pytest.fixture
+def valid_env_legacy(valid_service_role_key: str, clean_env):
+    """Set up a valid environment using deprecated SUPABASE_DB_URL."""
     os.environ["SUPABASE_URL"] = "https://test.supabase.co"
     os.environ["SUPABASE_SERVICE_ROLE_KEY"] = valid_service_role_key
     os.environ["SUPABASE_DB_URL"] = "postgresql://user:pass@host:5432/db"
@@ -365,8 +383,8 @@ class TestValidateWorkerEnv:
     def test_fail_fast_in_prod(self, valid_env):
         """Test fail_fast defaults to True in prod."""
         os.environ["ENVIRONMENT"] = "prod"
-        # Remove required DB URL to cause failure
-        del os.environ["SUPABASE_DB_URL"]
+        # Remove required DB URL to cause failure (valid_env uses DATABASE_URL)
+        del os.environ["DATABASE_URL"]
 
         with pytest.raises(SystemExit) as exc_info:
             validate_worker_env("test_worker", structured_logging=False)
@@ -375,10 +393,10 @@ class TestValidateWorkerEnv:
     def test_error_in_dev_also_fails(self, valid_env):
         """Test missing required config fails even in dev."""
         os.environ["ENVIRONMENT"] = "dev"
-        # Remove required DB URL
-        del os.environ["SUPABASE_DB_URL"]
+        # Remove required DB URL (valid_env uses DATABASE_URL)
+        del os.environ["DATABASE_URL"]
 
-        # Should fail since SUPABASE_DB_URL is now required
+        # Should fail since DATABASE_URL is now required
         result = validate_worker_env("test_worker", exit_on_error=False, structured_logging=False)
         assert result.is_valid is False
         assert len(result.errors) >= 1
@@ -386,7 +404,7 @@ class TestValidateWorkerEnv:
     def test_explicit_fail_fast_override(self, valid_env):
         """Test fail_fast causes exit on errors."""
         os.environ["ENVIRONMENT"] = "dev"
-        del os.environ["SUPABASE_DB_URL"]
+        del os.environ["DATABASE_URL"]
 
         # With fail_fast=True, should exit
         with pytest.raises(SystemExit):
@@ -498,3 +516,204 @@ class TestPreflightIntegration:
         assert "Environment:" in captured.out
         assert "staging" in captured.out
         assert "Git SHA:" in captured.out
+
+
+# ==============================================================================
+# STRICT PREFLIGHT CONTRACT TESTS
+# ==============================================================================
+
+
+class TestStrictPreflightContract:
+    """
+    Tests for the Strict Preflight Contract.
+
+    Contract:
+        - Errors are ALWAYS fatal (exit non-zero)
+        - Warnings are NEVER fatal unless PREFLIGHT_WARNINGS_FATAL=true
+        - Workers should not crash-loop on configuration warnings
+    """
+
+    def test_warning_only_returns_exit_0_in_prod(self, valid_env_legacy, capsys):
+        """
+        CRITICAL: Warning-only preflight returns exit code 0 even in prod.
+
+        This prevents workers from crash-looping on deprecation warnings.
+        """
+        os.environ["ENVIRONMENT"] = "prod"
+        # valid_env_legacy uses SUPABASE_DB_URL which emits a deprecation warning
+
+        # Should NOT exit - warnings are not fatal by default
+        result = validate_worker_env("prod_worker", exit_on_error=False, structured_logging=False)
+
+        # Should pass (no errors), but have warnings
+        assert result.is_valid is True
+        assert result.has_warnings is True
+        assert any("deprecated" in w.lower() for w in result.warnings)
+
+    def test_warning_only_does_not_exit_in_prod(self, valid_env_legacy):
+        """
+        CRITICAL: Workers with only warnings do NOT crash in production.
+
+        Even when ENVIRONMENT=prod, warnings should not cause sys.exit(1).
+        """
+        os.environ["ENVIRONMENT"] = "prod"
+
+        # This should NOT raise SystemExit
+        result = validate_worker_env(
+            "prod_worker_no_crash", exit_on_error=True, structured_logging=False
+        )
+        assert result.is_valid is True
+        assert result.has_warnings is True
+
+    def test_missing_database_url_is_fatal_in_prod(self, clean_env, valid_service_role_key):
+        """Missing DATABASE_URL is a fatal ERROR in production."""
+        os.environ["SUPABASE_URL"] = "https://test.supabase.co"
+        os.environ["SUPABASE_SERVICE_ROLE_KEY"] = valid_service_role_key
+        os.environ["ENVIRONMENT"] = "prod"
+        # Deliberately NOT setting DATABASE_URL or SUPABASE_DB_URL
+
+        with pytest.raises(SystemExit) as exc_info:
+            validate_worker_env("prod_worker", structured_logging=False)
+        assert exc_info.value.code == 1
+
+    def test_warnings_fatal_env_causes_exit(self, valid_env_legacy):
+        """PREFLIGHT_WARNINGS_FATAL=true causes exit on warnings."""
+        os.environ["PREFLIGHT_WARNINGS_FATAL"] = "true"
+
+        with pytest.raises(SystemExit) as exc_info:
+            validate_worker_env("strict_worker", structured_logging=False)
+        assert exc_info.value.code == 1
+
+    def test_warnings_fatal_default_is_false(self, clean_env):
+        """Verify PREFLIGHT_WARNINGS_FATAL defaults to False."""
+        config = get_preflight_config()
+        assert config["warnings_fatal"] is False
+
+    def test_fail_fast_default_is_true(self, clean_env):
+        """Verify PREFLIGHT_FAIL_FAST defaults to True."""
+        config = get_preflight_config()
+        assert config["fail_fast"] is True
+
+    def test_strict_mode_true_in_prod(self, clean_env):
+        """Verify PREFLIGHT_STRICT_MODE defaults to True in prod."""
+        os.environ["ENVIRONMENT"] = "prod"
+        config = get_preflight_config()
+        assert config["strict_mode"] is True
+
+    def test_strict_mode_false_in_dev(self, clean_env):
+        """Verify PREFLIGHT_STRICT_MODE defaults to False in dev."""
+        os.environ["ENVIRONMENT"] = "dev"
+        config = get_preflight_config()
+        assert config["strict_mode"] is False
+
+
+# ==============================================================================
+# SINGLE DSN CONTRACT TESTS
+# ==============================================================================
+
+
+class TestSingleDsnContract:
+    """
+    Tests for Single DSN Contract.
+
+    Contract:
+        - DATABASE_URL is the canonical variable
+        - SUPABASE_DB_URL is deprecated (emits warning)
+        - If DATABASE_URL is set, suppress SUPABASE_DB_URL deprecation warning
+    """
+
+    def test_database_url_is_canonical(self, clean_env):
+        """DATABASE_URL is accepted without warnings."""
+        os.environ["DATABASE_URL"] = "postgresql://user:pass@host:5432/db"
+        result = PreflightResult(worker_name="test")
+        _validate_supabase_db_url(result)
+
+        assert len(result.errors) == 0
+        assert len(result.warnings) == 0
+        assert "DATABASE_URL" in result.effective_config
+        assert "SET" in result.effective_config["DATABASE_URL"]
+
+    def test_supabase_db_url_emits_deprecation_warning(self, clean_env):
+        """SUPABASE_DB_URL alone emits deprecation warning."""
+        os.environ["SUPABASE_DB_URL"] = "postgresql://user:pass@host:5432/db"
+        result = PreflightResult(worker_name="test")
+        _validate_supabase_db_url(result)
+
+        assert len(result.errors) == 0
+        assert len(result.warnings) == 1
+        assert "deprecated" in result.warnings[0].lower()
+        assert "DATABASE_URL" in result.warnings[0]
+
+    def test_database_url_suppresses_deprecation_warning(self, clean_env):
+        """
+        CRITICAL: When DATABASE_URL is set, do NOT emit SUPABASE_DB_URL warning.
+
+        This prevents redundant warnings when both are configured.
+        """
+        os.environ["DATABASE_URL"] = "postgresql://user:pass@host:5432/db"
+        os.environ["SUPABASE_DB_URL"] = "postgresql://old:pass@legacy:5432/db"
+        result = PreflightResult(worker_name="test")
+        _validate_supabase_db_url(result)
+
+        # No warnings - DATABASE_URL takes precedence silently
+        assert len(result.errors) == 0
+        assert len(result.warnings) == 0
+        # Verify the canonical URL is tracked
+        assert "DATABASE_URL" in result.effective_config
+        assert "ignored" in result.effective_config.get("SUPABASE_DB_URL", "").lower()
+
+    def test_missing_both_is_error(self, clean_env):
+        """Missing both DATABASE_URL and SUPABASE_DB_URL is an error."""
+        result = PreflightResult(worker_name="test")
+        _validate_supabase_db_url(result)
+
+        assert len(result.errors) == 1
+        assert "required" in result.errors[0].lower()
+
+    def test_deprecated_var_still_functions(self, valid_env_legacy):
+        """SUPABASE_DB_URL still works (just emits warning)."""
+        result = validate_worker_env("legacy_worker", exit_on_error=False, structured_logging=False)
+        # Should pass - deprecation is a warning, not an error
+        assert result.is_valid is True
+
+
+# ==============================================================================
+# PREFLIGHT CONFIG TESTS
+# ==============================================================================
+
+
+class TestPreflightConfig:
+    """Tests for get_preflight_config function."""
+
+    def test_env_override_fail_fast(self, clean_env):
+        """PREFLIGHT_FAIL_FAST=false disables fail-fast."""
+        os.environ["PREFLIGHT_FAIL_FAST"] = "false"
+        config = get_preflight_config()
+        assert config["fail_fast"] is False
+
+    def test_env_override_warnings_fatal(self, clean_env):
+        """PREFLIGHT_WARNINGS_FATAL=true makes warnings fatal."""
+        os.environ["PREFLIGHT_WARNINGS_FATAL"] = "true"
+        config = get_preflight_config()
+        assert config["warnings_fatal"] is True
+
+    def test_env_override_strict_mode(self, clean_env):
+        """PREFLIGHT_STRICT_MODE can be overridden."""
+        os.environ["ENVIRONMENT"] = "dev"  # normally strict_mode=False in dev
+        os.environ["PREFLIGHT_STRICT_MODE"] = "true"
+        config = get_preflight_config()
+        assert config["strict_mode"] is True
+
+    @pytest.mark.parametrize("value", ["true", "1", "yes", "on", "TRUE", "True"])
+    def test_bool_parsing_truthy(self, clean_env, value):
+        """Various truthy values are parsed correctly."""
+        os.environ["PREFLIGHT_WARNINGS_FATAL"] = value
+        config = get_preflight_config()
+        assert config["warnings_fatal"] is True
+
+    @pytest.mark.parametrize("value", ["false", "0", "no", "off", "FALSE", "anything"])
+    def test_bool_parsing_falsy(self, clean_env, value):
+        """Various falsy values are parsed correctly."""
+        os.environ["PREFLIGHT_WARNINGS_FATAL"] = value
+        config = get_preflight_config()
+        assert config["warnings_fatal"] is False

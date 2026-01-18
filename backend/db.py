@@ -249,6 +249,66 @@ import re as _re
 _SHARED_POOLER_PATTERN = _re.compile(r"^(aws-[a-z0-9-]+)\.pooler\.supabase\.com$")
 _DEDICATED_POOLER_PATTERN = _re.compile(r"^db\.([a-z0-9]+)\.supabase\.co$")
 
+# URL encoding detection for password validation
+# RFC 3986 unreserved characters: A-Za-z0-9 - . _ ~
+_URL_ENCODED_PATTERN = _re.compile(r"%[0-9A-Fa-f]{2}")
+_UNRESERVED_CHARS_ONLY = _re.compile(r"^[A-Za-z0-9\-._~]+$")
+
+
+def _check_password_encoding(dsn: str) -> dict[str, bool | str]:
+    """
+    Check if DSN password looks properly URL-encoded.
+
+    Heuristics:
+    1. Contains %XX sequences (percent-encoded) → likely encoded
+    2. Only unreserved characters (A-Za-z0-9-._~) → safe, no encoding needed
+    3. Contains reserved/special chars without %XX → LIKELY BROKEN
+
+    Returns dict with:
+        - password_present: bool - whether password is in DSN
+        - looks_url_encoded: bool - contains %XX sequences
+        - unreserved_only: bool - only safe chars (no encoding needed)
+        - encoding_status: str - "encoded", "safe_plain", "needs_encoding", "missing"
+
+    NEVER returns the actual password.
+    """
+    try:
+        parsed = urlparse(dsn)
+        password = parsed.password
+
+        if not password:
+            return {
+                "password_present": False,
+                "looks_url_encoded": False,
+                "unreserved_only": False,
+                "encoding_status": "missing",
+            }
+
+        has_percent_encoding = bool(_URL_ENCODED_PATTERN.search(password))
+        is_unreserved_only = bool(_UNRESERVED_CHARS_ONLY.match(password))
+
+        if has_percent_encoding:
+            encoding_status = "encoded"
+        elif is_unreserved_only:
+            encoding_status = "safe_plain"
+        else:
+            # Contains special chars but no encoding - DANGER
+            encoding_status = "needs_encoding"
+
+        return {
+            "password_present": True,
+            "looks_url_encoded": has_percent_encoding,
+            "unreserved_only": is_unreserved_only,
+            "encoding_status": encoding_status,
+        }
+    except Exception:
+        return {
+            "password_present": False,
+            "looks_url_encoded": False,
+            "unreserved_only": False,
+            "encoding_status": "parse_error",
+        }
+
 
 def _parse_dsn_for_logging(dsn: str) -> dict[str, str | None]:
     """
@@ -516,17 +576,22 @@ async def init_db_pool(app: Any | None = None) -> None:
     )
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # OPERATOR-FACING POOLER METADATA LOG
+    # OPERATOR-FACING POOLER METADATA LOG (Single Structured Line)
     # ═══════════════════════════════════════════════════════════════════════════
     # Single-line structured log for Supabase pooler identity validation
+    # Includes password encoding heuristic to catch silent auth failures
     pooler_meta = _derive_pooler_metadata(dsn)
+    password_encoding = _check_password_encoding(dsn)
+
     logger.info(
-        "[DB] pooler_mode=%s host=%s port=%s user=%s project_ref=%s",
+        "[DB] pooler_mode=%s host=%s port=%s user=%s project_ref=%s sslmode=%s password_encoding=%s",
         pooler_meta.get("pooler_mode", "unknown"),
         pooler_meta.get("host", "unknown"),
         pooler_meta.get("port", "unknown"),
         pooler_meta.get("user_redacted", "***"),
         pooler_meta.get("project_ref", "unknown"),
+        dsn_info.get("sslmode", "not_set"),
+        password_encoding.get("encoding_status", "unknown"),
         extra={
             "pooler_mode": pooler_meta.get("pooler_mode"),
             "pooler_host": pooler_meta.get("host"),
@@ -534,8 +599,24 @@ async def init_db_pool(app: Any | None = None) -> None:
             "pooler_user_redacted": pooler_meta.get("user_redacted"),
             "pooler_project_ref": pooler_meta.get("project_ref"),
             "pooler_region": pooler_meta.get("region"),
+            "sslmode": dsn_info.get("sslmode"),
+            "password_present": password_encoding.get("password_present"),
+            "password_looks_url_encoded": password_encoding.get("looks_url_encoded"),
+            "password_encoding_status": password_encoding.get("encoding_status"),
         },
     )
+
+    # CRITICAL: Warn if password contains special chars without URL encoding
+    if password_encoding.get("encoding_status") == "needs_encoding":
+        logger.warning(
+            "[DB] PASSWORD MAY NEED URL ENCODING - contains special characters "
+            "without percent-encoding. This can cause silent auth failures. "
+            "Use urllib.parse.quote(password, safe='') to encode.",
+            extra={
+                "password_encoding_status": "needs_encoding",
+                "guidance": "Run: python -c \"from urllib.parse import quote; print(quote('YOUR_PASSWORD', safe=''))\"",
+            },
+        )
 
     # Warn if direct connection detected (FORBIDDEN in production)
     if pooler_meta.get("pooler_mode") == "direct":
