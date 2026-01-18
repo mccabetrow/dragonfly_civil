@@ -1,7 +1,7 @@
 """
 backend/core/dsn_guard.py
 =========================
-DSN Guard - Zero Drift Policy Enforcement
+DSN Guard - Zero Drift Policy Enforcement (World Class Edition)
 
 HARD RULES (Non-Negotiable):
 ============================
@@ -9,6 +9,9 @@ PROD Environment (SUPABASE_MODE=prod):
   - Host MUST contain: iaketsyhmqbwaabgykux
   - Port MUST be: 6543 (Transaction Pooler)
   - Direct connections (5432) are FORBIDDEN in prod
+
+  WAIVER: Set DB_CONNECTION_MODE=direct_waiver to allow 5432 in emergencies.
+          This logs a CRITICAL warning but allows the connection.
 
 DEV Environment (SUPABASE_MODE=dev):
   - Host MUST contain: ejiddanxtqcleyswqvkc OR localhost/127.0.0.1
@@ -24,11 +27,12 @@ Usage:
     validate_dsn_for_environment(dsn, environment)
 
 Author: Principal Site Reliability Engineer
-Date: 2026-01-15
+Date: 2026-01-18 (Updated with waiver support)
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from urllib.parse import urlparse
@@ -47,6 +51,13 @@ DEV_PROJECT_REF = "ejiddanxtqcleyswqvkc"
 
 # Required port for production (Transaction Pooler)
 PROD_REQUIRED_PORT = 6543
+
+# Direct connection port (allowed only with waiver)
+DIRECT_CONNECTION_PORT = 5432
+
+# Environment variable for direct connection waiver
+DIRECT_WAIVER_ENV_VAR = "DB_CONNECTION_MODE"
+DIRECT_WAIVER_VALUE = "direct_waiver"
 
 # Allowed dev hosts (includes local development)
 DEV_ALLOWED_HOSTS = (
@@ -167,12 +178,33 @@ def validate_dsn_for_environment(
                 raise DSNEnvironmentMismatchError(msg, environment, host, port)
             return False
 
-        # Rule 2: Port MUST be 6543 (Transaction Pooler)
+        # Rule 2: Port MUST be 6543 (Transaction Pooler) - unless waiver is active
         if port != PROD_REQUIRED_PORT:
+            # Check for direct connection waiver
+            waiver_value = os.environ.get(DIRECT_WAIVER_ENV_VAR, "").lower().strip()
+            has_waiver = waiver_value == DIRECT_WAIVER_VALUE
+
+            if port == DIRECT_CONNECTION_PORT and has_waiver:
+                # Waiver granted - allow but log CRITICAL warning
+                logger.critical(
+                    f"DSN Guard: ⚠️  DIRECT CONNECTION WAIVER ACTIVE ⚠️\n"
+                    f"  Port {DIRECT_CONNECTION_PORT} (direct) is being used in PROD.\n"
+                    f"  This bypasses connection pooling.\n"
+                    f"  Performance may be degraded under load.\n"
+                    f"  Remove {DIRECT_WAIVER_ENV_VAR}={DIRECT_WAIVER_VALUE} to enforce pooler."
+                )
+                logger.warning(
+                    f"DSN Guard: Proceeding with direct connection (waiver active). "
+                    f"Host: {host}, Port: {port}"
+                )
+                return True  # Allow with waiver
+
+            # No waiver - HARD CRASH
             msg = (
                 f"DSN Guard FATAL: PROD environment requires port {PROD_REQUIRED_PORT} (Transaction Pooler). "
                 f"Got port: {port}. "
-                f"Direct connections (5432) are FORBIDDEN in production!"
+                f"Direct connections (5432) are FORBIDDEN in production!\n"
+                f"  To use direct connection in emergency, set: {DIRECT_WAIVER_ENV_VAR}={DIRECT_WAIVER_VALUE}"
             )
             logger.critical(msg)
             logger.critical(f"DSN (redacted): {redacted}")
