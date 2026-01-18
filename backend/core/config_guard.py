@@ -715,24 +715,57 @@ def check_sslmode() -> tuple[bool, Optional[str]]:
     return True, None
 
 
+def _is_api_process() -> bool:
+    """Detect if running as API server (resilient) vs worker (strict)."""
+    # Explicit env var takes precedence
+    role = os.environ.get("DRAGONFLY_PROCESS_ROLE", "").lower()
+    if role == "api":
+        return True
+    if role in ("worker", "ingest", "enforcement"):
+        return False
+
+    # Heuristics based on how the process was started
+    import sys as _sys
+
+    script = _sys.argv[0] if _sys.argv else ""
+    # Workers have specific patterns in their invocation
+    worker_patterns = ("worker", "celery", "rq", "dramatiq", "ingest", "watcher")
+    if any(p in script.lower() for p in worker_patterns):
+        return False
+
+    # Default to API (resilient) - better to stay alive than crash
+    return True
+
+
 def validate_db_config() -> None:
     """
     Validate database configuration at startup.
 
+    INDESTRUCTIBLE BOOT: For API processes, this function logs errors but DOES NOT
+    exit. The API will boot in degraded mode and serve /health and /whoami while
+    /readyz returns 503.
+
+    For workers, configuration errors are still fatal (they can't do useful work
+    without a database).
+
     This function performs strict validation of DATABASE_URL:
-    - FATAL if SUPABASE_MIGRATE_DB_URL is present (any environment)
-    - FATAL if port is 5432 in production (must use 6543)
+    - FATAL (workers) / WARN (API) if SUPABASE_MIGRATE_DB_URL is present
+    - FATAL (workers) / WARN (API) if port is 5432 in production (must use 6543)
     - Warns if sslmode is not explicitly set
 
     SINGLE DSN CONTRACT: Uses DATABASE_URL (canonical) or SUPABASE_DB_URL (deprecated).
 
     Call this BEFORE db.start() in your application entrypoint.
 
-    Raises:
-        SystemExit: If fatal configuration issues are detected
+    For workers:
+        Raises SystemExit if fatal configuration issues are detected.
+
+    For API:
+        Logs errors but returns normally to allow degraded boot.
     """
     is_prod = _is_production()
     env = _get_env()
+    is_api = _is_api_process()
 
     # Use Single DSN Contract helper
     db_url = _get_database_url_for_guard()
@@ -749,19 +782,34 @@ def validate_db_config() -> None:
             file=sys.stderr,
         )
         logger.critical(
-            "Migration database URL detected in runtime environment - exiting",
-            extra={"environment": env},
+            "Migration database URL detected in runtime environment",
+            extra={"environment": env, "is_api": is_api},
         )
-        sys.exit(1)
+        if not is_api:
+            sys.exit(1)
+        # API: Continue in degraded mode
+        return
 
     if not db_url:
         if is_prod:
-            _log_banner("DATABASE CONFIGURATION ERROR", RED)
+            _log_banner("DATABASE CONFIGURATION WARNING", YELLOW if is_api else RED)
             print(
-                f"{RED}{CANONICAL_DB_VAR} is not set. Cannot start without database.{RESET}\n",
+                f"{YELLOW if is_api else RED}{CANONICAL_DB_VAR} is not set.{RESET}\n",
                 file=sys.stderr,
             )
-            sys.exit(1)
+            if is_api:
+                print(
+                    f"{YELLOW}API will start in DEGRADED MODE. /readyz will return 503.{RESET}\n",
+                    file=sys.stderr,
+                )
+                logger.warning(
+                    f"{CANONICAL_DB_VAR} not set - API starting in degraded mode",
+                    extra={"environment": env},
+                )
+                return  # API: Allow degraded boot
+            else:
+                print(f"{RED}Worker cannot start without database.{RESET}\n", file=sys.stderr)
+                sys.exit(1)
         else:
             logger.warning(f"{CANONICAL_DB_VAR} not set (acceptable in dev)")
             return
@@ -769,22 +817,21 @@ def validate_db_config() -> None:
     # CHECK 2: Port must be 6543 (pooler) in production
     port = _parse_db_port(db_url)
     if port == 5432 and is_prod:
-        _log_banner("FATAL: WRONG DATABASE PORT", RED)
+        _log_banner("WRONG DATABASE PORT", YELLOW if is_api else RED)
         print(
-            f"{RED}⛔ CRITICAL: Production Runtime is using Direct Connection (5432).{RESET}\n"
-            f"{RED}   Must use Pooler (6543).{RESET}\n"
-            f"\n"
-            f"{RED}Direct connections bypass the connection pooler and can exhaust{RESET}\n"
-            f"{RED}the database connection limit, causing cascading failures.{RESET}\n"
+            f"{YELLOW if is_api else RED}⛔ Production Runtime is using Direct Connection (5432).{RESET}\n"
+            f"{YELLOW if is_api else RED}   Must use Pooler (6543).{RESET}\n"
             f"\n"
             f"{YELLOW}FIX: Update {CANONICAL_DB_VAR} to use port 6543 and redeploy.{RESET}\n",
             file=sys.stderr,
         )
         logger.critical(
-            "Production using direct DB port 5432 instead of pooler 6543 - exiting",
-            extra={"port": port, "environment": env},
+            "Production using direct DB port 5432 instead of pooler 6543",
+            extra={"port": port, "environment": env, "is_api": is_api},
         )
-        sys.exit(1)
+        if not is_api:
+            sys.exit(1)
+        # API: Continue in degraded mode (connection will likely fail anyway)
 
     # CHECK 3: sslmode (warning only)
     sslmode = _parse_db_sslmode(db_url)

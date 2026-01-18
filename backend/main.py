@@ -203,24 +203,42 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         f"(process_role={db_state.process_role.value})"
     )
 
+    # ==========================================================================
+    # INDESTRUCTIBLE BOOT: All checks are try/except'd
+    # The API MUST start and bind to port even if DB or config is broken.
+    # /health returns 200, /readyz returns 503, /whoami shows diagnostics.
+    # ==========================================================================
+
     # 1. Verify safe environment - prevents credential/environment mismatches
     try:
         verify_safe_environment(_env_name)
         logger.info(f"Environment verified: [{_env_name.upper()}]")
     except Exception as e:
-        logger.critical(f"ENVIRONMENT VERIFICATION FAILED: {e}")
-        raise  # Prevent app from starting with mismatched credentials
+        # DEGRADED: Log but don't crash - API can still serve diagnostic endpoints
+        logger.error(f"ENVIRONMENT VERIFICATION FAILED (degraded mode): {e}")
+        # Mark db_state as having a config issue
+        db_state.mark_no_config()
 
     # 2. Generate signed boot report (will raise BootError if critical deps missing)
+    boot_report = None
     try:
         boot_report = generate_boot_report(env=_env_name)
         logger.info(f"Boot report signed: {boot_report.git_sha}")
     except BootError as e:
-        logger.critical(f"BOOT REFUSED: {e}")
-        raise  # Prevent app from starting
+        # DEGRADED: Log but don't crash
+        logger.error(f"BOOT REPORT FAILED (degraded mode): {e}")
+    except Exception as e:
+        logger.error(f"Unexpected boot report error (degraded mode): {e}")
 
     # 3. Validate database configuration (port 6543 required in prod)
-    validate_db_config()
+    # This is now non-fatal for API processes
+    try:
+        validate_db_config()
+    except SystemExit:
+        # Should not happen for API, but catch just in case
+        logger.error("validate_db_config called sys.exit - suppressing for API")
+    except Exception as e:
+        logger.error(f"Config validation error (degraded mode): {e}")
 
     # 4. Initialize database with explicit lifecycle (avoids deprecation warning)
     # DEGRADED MODE: This will NOT exit on failure for API processes
