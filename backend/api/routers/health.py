@@ -27,7 +27,8 @@ from pydantic import BaseModel
 from ... import __version__
 from ...api import ApiResponse, api_response, degraded_response
 from ...config import get_settings
-from ...core.db_state import db_state, is_db_connected
+from ...core import db_state as db_state_module
+from ...core.db_state import db_state
 from ...db import check_db_ready, fetch_val, get_pool, get_pool_health, get_supabase_client
 from ...middleware.version import get_version_info
 
@@ -371,7 +372,8 @@ async def root_readiness_check() -> JSONResponse:
     version_info = get_version_info()
 
     # Fast path #1: Check global is_db_connected flag (Indestructible Boot)
-    if not is_db_connected:
+    # NOTE: Must access via module to get dynamic value (not import-time copy)
+    if not db_state_module.is_db_connected:
         logger.info(
             "Readiness check: is_db_connected=False (degraded mode)",
             extra={
