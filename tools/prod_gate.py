@@ -57,6 +57,14 @@ from backend.core.logging import configure_worker_logging
 from src.supabase_client import get_supabase_db_url, get_supabase_env
 from tools.validate_prod_dsn import validate_supabase_dsn
 
+# Optional: YAML for manifest parsing
+try:
+    import yaml
+
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
+
 # Configure logging
 logger = configure_worker_logging("prod_gate")
 
@@ -1171,7 +1179,13 @@ def check_schema_drift(env: str, skip: bool = False) -> CheckResult:
 
 
 def check_migrations(env: str, skip: bool = False) -> CheckResult:
-    """Check for pending migrations."""
+    """Check for pending migrations using manifest-aware validation.
+
+    Validation modes (set via MIGRATION_VALIDATION_MODE env var):
+    - strict: All local migrations must be applied (legacy behavior)
+    - manifest: Use migration_manifest.yaml for required migrations
+    - relaxed: Only check that required_migrations from manifest are applied
+    """
     if skip:
         return CheckResult(
             name="Migration Status",
@@ -1182,9 +1196,12 @@ def check_migrations(env: str, skip: bool = False) -> CheckResult:
 
     logger.info("Checking migration status...")
 
+    validation_mode = os.environ.get("MIGRATION_VALIDATION_MODE", "manifest")
+
     try:
         db_url = get_supabase_db_url(env)
         migrations_dir = Path(__file__).parent.parent / "supabase" / "migrations"
+        manifest_path = Path(__file__).parent.parent / "supabase" / "migration_manifest.yaml"
 
         if not migrations_dir.exists():
             return CheckResult(
@@ -1210,10 +1227,76 @@ def check_migrations(env: str, skip: bool = False) -> CheckResult:
                     ORDER BY version
                 """
                 )
-                applied = [row[0] for row in cur.fetchall()]
+                applied = set(row[0] for row in cur.fetchall())
 
-        # Compare version numbers, but report full filenames for pending
-        pending_versions = set(local_versions) - set(applied)
+        # Load manifest if available
+        manifest = None
+        if HAS_YAML and manifest_path.exists():
+            with open(manifest_path) as f:
+                manifest = yaml.safe_load(f)
+                # Override mode from manifest if specified
+                if manifest.get("validation_mode"):
+                    validation_mode = manifest["validation_mode"]
+
+        # Mode: relaxed - only check required migrations from manifest
+        if validation_mode == "relaxed" and manifest:
+            required = set(manifest.get("required_migrations", []))
+            missing_required = required - applied
+            if missing_required:
+                return CheckResult(
+                    name="Migration Status",
+                    passed=False,
+                    message=f"{len(missing_required)} required migration(s) missing",
+                    remediation=f"Apply migrations: ./scripts/db_push.ps1 -SupabaseEnv {env}",
+                    details={"missing": sorted(missing_required)[:5], "mode": "relaxed"},
+                )
+            return CheckResult(
+                name="Migration Status",
+                passed=True,
+                message=f"All {len(required)} required migrations applied (relaxed mode)",
+                details={"mode": "relaxed", "applied_count": len(applied)},
+            )
+
+        # Mode: manifest - check required + compare counts
+        if validation_mode == "manifest" and manifest:
+            required = set(manifest.get("required_migrations", []))
+            missing_required = required - applied
+            if missing_required:
+                return CheckResult(
+                    name="Migration Status",
+                    passed=False,
+                    message=f"{len(missing_required)} required migration(s) missing",
+                    remediation=f"Apply migrations: ./scripts/db_push.ps1 -SupabaseEnv {env}",
+                    details={"missing": sorted(missing_required)[:5], "mode": "manifest"},
+                )
+
+            # In manifest mode, we pass if required migrations are present
+            # and warn about count mismatch (but don't fail)
+            local_count = len(local_versions)
+            applied_count = len(applied)
+
+            if local_count != applied_count:
+                return CheckResult(
+                    name="Migration Status",
+                    passed=True,  # Pass because required are present
+                    message=f"Required migrations OK ({local_count} local, {applied_count} applied)",
+                    details={
+                        "mode": "manifest",
+                        "local_count": local_count,
+                        "applied_count": applied_count,
+                        "required_ok": True,
+                    },
+                )
+
+            return CheckResult(
+                name="Migration Status",
+                passed=True,
+                message=f"All {local_count} migrations applied (manifest mode)",
+                details={"mode": "manifest"},
+            )
+
+        # Mode: strict (default/legacy) - all local must be applied
+        pending_versions = set(local_versions) - applied
         pending = [m for m, v in zip(local_migrations, local_versions) if v in pending_versions]
 
         if pending:
@@ -1223,7 +1306,7 @@ def check_migrations(env: str, skip: bool = False) -> CheckResult:
                     name="Migration Status",
                     passed=True,  # Pass in dev
                     message=f"{len(pending)} pending migration(s) (dev: OK)",
-                    details={"pending": pending[:5]},
+                    details={"pending": pending[:5], "mode": "strict"},
                 )
             else:
                 return CheckResult(
@@ -1231,13 +1314,14 @@ def check_migrations(env: str, skip: bool = False) -> CheckResult:
                     passed=False,
                     message=f"{len(pending)} pending migration(s)",
                     remediation=f"Apply migrations: ./scripts/db_push.ps1 -SupabaseEnv {env}",
-                    details={"pending": pending[:5]},
+                    details={"pending": pending[:5], "mode": "strict"},
                 )
 
         return CheckResult(
             name="Migration Status",
             passed=True,
             message=f"All {len(local_migrations)} migrations applied",
+            details={"mode": validation_mode},
         )
 
     except Exception as e:

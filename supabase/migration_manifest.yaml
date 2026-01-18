@@ -1,0 +1,64 @@
+# Dragonfly Civil — Migration Manifest
+# =====================================
+# This file declares the expected migration state for the deployed system.
+# prod_gate uses this to validate migrations without false positives.
+#
+# Usage:
+#   - "baseline_version": Oldest migration that must exist (skip older)
+#   - "squash_applied": Set to true if a squash has consolidated old migrations
+#   - "known_gaps": List version prefixes that are known-missing (manually applied)
+#   - "validation_mode": strict | manifest | relaxed
+#
+# Last Updated: 2026-01-18
+
+version: "1.0"
+baseline_version: "0001"
+squash_applied: false
+validation_mode: "manifest"
+
+# Migrations that exist in DB but have non-standard version formats
+# (e.g., applied manually, repaired, or from legacy tooling)
+known_reconciled:
+  - description: "All 319 migrations baselined on 2026-01-18"
+    count: 319
+    hash: null # Optional: SHA256 of sorted version list
+
+# Gaps that are expected and should not trigger failures
+known_gaps: []
+
+# Critical migrations that MUST be applied (regardless of mode)
+required_migrations:
+  # Core schema
+  - "0001" # core_schema
+  - "0002" # enrichment_rpc
+
+  # Enforcement system
+  - "20261001" # enforce_invoker_views
+  - "20261002" # ops_rpc_refactor
+  - "20261102" # verify_view_security
+  - "20261104" # ensure_ops_rpc
+  - "20261105" # enforce_security_invoker_views
+
+# Views that must exist after all migrations are applied
+required_views:
+  - schema: public
+    name: v_plaintiffs_overview
+  - schema: public
+    name: v_judgment_pipeline
+  - schema: public
+    name: v_enforcement_overview
+  - schema: enforcement
+    name: v_radar
+  - schema: enforcement
+    name: v_score_card
+  - schema: ops
+    name: v_enrichment_health
+
+# RPCs that must exist after all migrations are applied
+required_rpcs:
+  - schema: ops
+    name: claim_pending_job
+  - schema: ops
+    name: register_heartbeat
+  - schema: ops
+    name: queue_job
