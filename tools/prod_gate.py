@@ -60,7 +60,7 @@ logger = configure_worker_logging("prod_gate")
 # API URLs - MUST be set via env vars, no hardcoded fallbacks for prod
 PROD_API_URL = os.getenv(
     "DRAGONFLY_API_URL_PROD",
-    "https://dragonflycivil-production-d57a.up.railway.app",
+    "https://dragonfly-api-production.up.railway.app",
 )
 DEV_API_URL = os.getenv("DRAGONFLY_API_URL_DEV", "http://localhost:8000")
 
