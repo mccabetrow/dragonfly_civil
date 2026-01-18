@@ -291,7 +291,7 @@ $$;
 REVOKE ALL ON FUNCTION ingest.claim_stale_job(text, text, interval)
 FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ingest.claim_stale_job(text, text, interval) TO service_role;
-COMMENT ON FUNCTION ingest.claim_stale_job IS 'Atomically claim a job with stale detection. SECURITY DEFINER for worker access.';
+COMMENT ON FUNCTION ingest.claim_stale_job(text, text, interval) IS 'Atomically claim a job with stale detection. SECURITY DEFINER for worker access.';
 -- ===========================================================================
 -- STEP 10: Create check_import_idempotency function
 -- ===========================================================================
