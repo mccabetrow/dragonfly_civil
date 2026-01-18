@@ -1194,12 +1194,14 @@ def check_migrations(env: str, skip: bool = False) -> CheckResult:
                 remediation="Ensure supabase/migrations/ exists",
             )
 
-        # Get local migration files
+        # Get local migration files - extract version prefix (e.g., "0001" from "0001_core_schema")
         local_migrations = sorted(
             [f.stem for f in migrations_dir.glob("*.sql") if f.stem[0].isdigit()]
         )
+        # Extract just the version number (before first underscore) to match DB format
+        local_versions = [m.split("_")[0] for m in local_migrations]
 
-        # Get applied migrations from database
+        # Get applied migrations from database (version column stores just the prefix)
         with psycopg.connect(db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1210,7 +1212,9 @@ def check_migrations(env: str, skip: bool = False) -> CheckResult:
                 )
                 applied = [row[0] for row in cur.fetchall()]
 
-        pending = [m for m in local_migrations if m not in applied]
+        # Compare version numbers, but report full filenames for pending
+        pending_versions = set(local_versions) - set(applied)
+        pending = [m for m, v in zip(local_migrations, local_versions) if v in pending_versions]
 
         if pending:
             # In dev, pending migrations are a warning only
