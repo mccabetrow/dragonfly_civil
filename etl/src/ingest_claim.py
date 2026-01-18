@@ -185,7 +185,7 @@ class IngestClaimClient:
             cur.execute(
                 """
                 SELECT * FROM ingest.claim_import_run(
-                    %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -194,7 +194,6 @@ class IngestClaimClient:
                     file_hash,
                     filename,
                     import_kind,
-                    self.worker_id,
                 ),
             )
             row = cur.fetchone()

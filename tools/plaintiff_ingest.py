@@ -197,13 +197,24 @@ def _insert_plaintiffs_raw(
                 # Compute deterministic dedupe_key
                 # Formula: sha256(source_system || '|' || email || '|' || name_normalized)
                 name = row.get("plaintiff_name", row.get("name", "")).strip()
-                email = row.get("email", "").strip().lower()
+                email = row.get("email", row.get("contact_email", "")).strip().lower()
                 name_normalized = name.lower().strip()
 
                 dedupe_input = f"{source_system}|{email}|{name_normalized}"
                 dedupe_key = sha256(dedupe_input.encode()).hexdigest()
 
+                # Build address from available fields
+                address_parts = [
+                    row.get("address", row.get("address_line1", row.get("contact_address", ""))),
+                    row.get("city", ""),
+                    row.get("state", ""),
+                    row.get("postal_code", row.get("zip", "")),
+                ]
+                full_address = ", ".join(p for p in address_parts if p)
+
                 # Insert with ON CONFLICT DO NOTHING (idempotent)
+                # Matches schema: ingest.plaintiffs_raw
+                # Note: plaintiff_name_normalized is a GENERATED column, so we omit it
                 cur.execute(
                     """
                     INSERT INTO ingest.plaintiffs_raw (
@@ -211,17 +222,18 @@ def _insert_plaintiffs_raw(
                         row_index,
                         dedupe_key,
                         plaintiff_name,
-                        plaintiff_name_normalized,
-                        email,
-                        phone,
-                        address_line1,
-                        city,
-                        state,
-                        postal_code,
-                        raw_data,
+                        firm_name,
+                        short_name,
+                        contact_name,
+                        contact_email,
+                        contact_phone,
+                        contact_address,
+                        source_system,
+                        source_reference,
+                        raw_payload,
                         status
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending'
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending'
                     )
                     ON CONFLICT (dedupe_key) DO NOTHING
                     RETURNING id
@@ -231,13 +243,14 @@ def _insert_plaintiffs_raw(
                         i,
                         dedupe_key,
                         name,
-                        name_normalized,
+                        row.get("firm_name", row.get("company", "")),
+                        row.get("short_name", ""),
+                        row.get("contact_name", row.get("contact", "")),
                         email,
-                        row.get("phone", ""),
-                        row.get("address", row.get("address_line1", "")),
-                        row.get("city", ""),
-                        row.get("state", ""),
-                        row.get("postal_code", row.get("zip", "")),
+                        row.get("phone", row.get("contact_phone", "")),
+                        full_address,
+                        source_system,
+                        row.get("source_reference", row.get("reference", "")),
                         psycopg.types.json.Json(row),
                     ),
                 )
@@ -398,7 +411,7 @@ def run_ingestion(
                 return result
 
             # =================================================================
-            # STEP 5: Finalize with counts
+            # STEP 5: Finalize with counts (don't mark completed - let reconcile do it)
             # =================================================================
             client.finalize(
                 run_id=claim.run_id,
@@ -406,6 +419,7 @@ def run_ingestion(
                 rows_inserted=result.rows_inserted,
                 rows_skipped=result.rows_skipped,
                 rows_errored=result.rows_errored,
+                mark_completed=False,  # Let reconcile set final status
             )
 
             # =================================================================
